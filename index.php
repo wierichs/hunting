@@ -91,6 +91,7 @@ else {
 				<html> 
 					<head> 
 						<meta charset=\"utf-8\">
+						<meta name=\"viewport\" content=\"width=1024\" />
 						<title>".$revier."</title>
 						<script type=\"text/javascript\" src=\"GM_Utils/GPX2GM.js\"></script>
 						<style type=\"text/css\">
