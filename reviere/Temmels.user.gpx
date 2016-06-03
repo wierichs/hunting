@@ -21,8 +21,8 @@
 	</wpt>
 	<wpt lat="49.67405" lon="6.479595">
 		<ele>185.00000</ele>
-		<name>Ungarn Kanzel</name>
-		<cmt>&lt;a href="./edit.php?user=Ungarn%20Kanzel" target="_blank"&gt;move to current position&lt;/a&gt;</cmt>
+		<name>Bauwagen</name>
+		<cmt>&lt;a href="./edit.php?user=Bauwagen" target="_blank"&gt;move to current position&lt;/a&gt;</cmt>
 		<sym>trailer</sym>
 		<type>Generic</type>
 	</wpt>
