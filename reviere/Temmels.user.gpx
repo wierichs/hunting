@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.topografix.com/GPX/1/0" version="1.0" xsi:schemaLocation="http://www.topografix.com/GPX/1/0 http://www.topografix.com/GPX/1/0/gpx.xsd">
+	<wpt lat="49.670849" lon="6.481569">
+		<name>Schwarzwaldhaus</name>
+		<cmt>&lt;a href="./edit.php?user=Schwarzwaldhaus" target="_blank"&gt;move to current position&lt;/a&gt;</cmt>
+		<sym>trailer</sym>
+		<type>Generic</type>
+	</wpt>
+	<wpt lat="49.691905" lon="6.478154">
+		<name>Kluth Nord</name>
+		<cmt>&lt;a href="./edit.php?user=Kluth%20Nord" target="_blank"&gt;move to current position&lt;/a&gt;</cmt>
+		<sym>trailer</sym>
+		<type>Generic</type>
+	</wpt>
+	<wpt lat="49.683898" lon="6.463523">
+		<name>1234567890</name>
+		<sym>hunter</sym>
+		<cmt>Gerd</cmt>
+		<desc>Gerd</desc>
+		<type>hunter</type>
+	</wpt>
+	<wpt lat="49.67405" lon="6.479595">
+		<ele>185.00000</ele>
+		<name>Ungarn Kanzel</name>
+		<cmt>&lt;a href="./edit.php?user=Ungarn%20Kanzel" target="_blank"&gt;move to current position&lt;/a&gt;</cmt>
+		<sym>trailer</sym>
+		<type>Generic</type>
+	</wpt>
+	<wpt lat="49.662472" lon="6.492721">
+		<name>Kirschbaum</name>
+		<cmt>&lt;a href="./edit.php?user=Kirschbaum" target="_blank"&gt;move to current position&lt;/a&gt;</cmt>
+		<sym>ladder</sym>
+		<type>Generic</type>
+	</wpt>
+</gpx>
