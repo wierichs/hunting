@@ -1190,7 +1190,7 @@ JB.CheckBoxGroup = function(id,Texte,Label,Farbe,def_stat,clickFunc,clickFunc2) 
 		box.appendChild(ele);
 		if(clickFunc2) {
 			ele = document.createElement("img");
-			ele.src = JB.GPX2GM.Path+"Icons/lupe+.png";;
+			ele.src = JB.GPX2GM.Path+"Icons/"+encodeURIComponent("lupe+.png");
 			ele.style.cursor = "Pointer";
 			(function(func) {
 				ele.onclick = func;   
