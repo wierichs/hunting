@@ -30,12 +30,13 @@ p.center {
 
 p.bold {
  font-weight: 800;
- font-size: 30
+ font-size: 30;
 }
 
 table {
  border: none;
- width: 100%
+ width: 100%;
+ font-size: 20;
 }
 
 a:link {
