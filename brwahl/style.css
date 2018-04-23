@@ -5,14 +5,6 @@ body {
 	font-size: 16pt;
 }
 
-@page {
- size: landscape;
- margin-left: 2cm;
- margin-right: 2.5cm;
- margin-top: 2.5cm;
- margin-bottom: 2.5cm
-}
-
 p {
  margin-bottom: 0.25cm;
  direction: ltr;
