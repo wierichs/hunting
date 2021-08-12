@@ -20,7 +20,7 @@ if (!isset($_SESSION['revier'])) {
 }
 
 $gpxfolder = "./reviere/";
-if(!$mapview = $_REQUEST["map"]) $mapview = "OSM_Landscape";
+if(!$mapview = $_REQUEST["map"]) $mapview = "Hybrid";
 
 if(!$revier = $_REQUEST["revier"]) {
 	if(!$act = $_REQUEST["act"]) {
