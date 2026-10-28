@@ -12,6 +12,16 @@ Die Android-App erfasst Positionen während einer gestarteten Tracking-Sitzung, 
 
 Die Relaisfunktion benötigt daher Änderungen an der Android-App **und** an der Server-Schnittstelle der Jagdkarte. Eine App-seitige Änderung allein kann die Nachrichten nicht sicher im Namen eines anderen Trackers annehmen.
 
+### App-seitiger Implementierungsstand
+
+Die Android-App hat nun eine transportneutrale Nachrichtenhülle, eine SQLite-Outbox, einen HTTPS-Transport, eine Android-Keystore-Signaturidentität und eine Relay-Envelope-Implementierung. Die App registriert den öffentlichen RSA-Schlüssel mit dem bestehenden Tracker-Token, lädt den öffentlichen Supabase-Verschlüsselungsschlüssel und verpackt Positionsmeldungen mit AES-256-GCM sowie RSA-OAEP/SHA-256. Der Ursprung signiert die unveränderlichen Relay-Metadaten mit RSASSA-PKCS1-v1_5/SHA-256.
+
+Die App nutzt Google Nearby Connections mit P2P-Cluster-Strategie. Relay ist opt-in und nur während des aktiven Trackings verfügbar. Vor jeder lokalen Verbindung müssen Nutzer den Nearby-Sicherheitscode auf beiden Geräten vergleichen. Der Ursprung sendet eigene Relay-Umschläge; der Empfänger legt sie lokal ab und lädt sie mit seinem eigenen Geräteschlüssel hoch. Mehrhop-Weitergabe ist nicht aktiviert.
+
+Im korrespondierenden `wierichs.github.io/Jagdkarte`-Repository liegt die separate Supabase-Funktion `dog-location-relay`; die bestehende `dog-location`-Funktion bleibt unverändert. Der Server prüft Ursprungssignatur, Revierzugehörigkeit, Ablauf und Positionswerte und übergibt die Position an die vorhandene RPC. Die RPC speichert nur den letzten Stand und verhindert, dass gleiche oder ältere Zeitstempel ihn überschreiben; ein separates Nachrichten-ID-Ledger gibt es nicht. Deploy- und API-Details stehen dort in `hundestandort-api.md` und `supabase/README.md`.
+
+Der Kotlin-Build, die Envelope-Krypto-Unit-Tests und die Instrumentierungstest-Kompilierung sind erfolgreich. Es war kein Android-Gerät oder Emulator angeschlossen, daher sind Nearby-Pairing, Berechtigungsdialoge und realer Funktransfer noch nicht auf Hardware validiert.
+
 ## Grundprinzip
 
 Die App erhält eine allgemeine Kommunikationsschicht, die nicht an GPS oder die Jagdkarte gebunden ist. Fachmodule übergeben ihr Nachrichten; die Schicht speichert, transportiert und bestätigt diese. Für den Hundetracker ist die Nachricht zunächst eine Positionsmeldung.

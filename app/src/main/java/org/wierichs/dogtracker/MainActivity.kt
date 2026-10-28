@@ -22,6 +22,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -32,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +53,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import kotlinx.coroutines.delay
 import org.wierichs.dogtracker.ui.theme.DogTrackerTheme
+import org.wierichs.dogtracker.communication.RelayPairingPrompts
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,8 +76,10 @@ private fun TrackerScreen() {
         mutableStateOf(TrackerPreferences.intervalSeconds(context).toString())
     }
     var isTracking by rememberSaveable { mutableStateOf(TrackerPreferences.isTracking(context)) }
+    var relayEnabled by rememberSaveable { mutableStateOf(TrackerPreferences.relayEnabled(context)) }
     var status by remember { mutableStateOf(TrackerPreferences.status(context)) }
     var validationMessage by remember { mutableStateOf("") }
+    val pairingPrompt by RelayPairingPrompts.current.collectAsState()
 
     fun startTracking() {
         val normalizedToken = deviceToken.filterNot(Char::isWhitespace)
@@ -121,6 +127,62 @@ private fun TrackerScreen() {
             startTracking()
         } else {
             validationMessage = "Für das Tracking sind genauer Standort und Benachrichtigungen erforderlich."
+        }
+    }
+
+    val nearbyPermissions = buildList {
+        if (Build.VERSION.SDK_INT >= 31) {
+            add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            add(Manifest.permission.BLUETOOTH_CONNECT)
+            add(Manifest.permission.BLUETOOTH_SCAN)
+        }
+        if (Build.VERSION.SDK_INT == 31) add(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (Build.VERSION.SDK_INT >= 32) add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        if (Build.VERSION.SDK_INT >= 37) add(Manifest.permission.ACCESS_LOCAL_NETWORK)
+    }
+
+    val nearbyPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val allGranted = nearbyPermissions.all { permission ->
+            grants[permission] == true || ContextCompat.checkSelfPermission(context, permission) ==
+                PackageManager.PERMISSION_GRANTED
+        }
+        if (allGranted) {
+            TrackerPreferences.setRelayEnabled(context, true)
+            relayEnabled = true
+            status = "Relaisfreigabe aktiv. Tracker-Verbindungen werden per Sicherheitscode bestätigt."
+            if (isTracking) {
+                context.startService(
+                    Intent(context, LocationTrackingService::class.java).apply {
+                        action = LocationTrackingService.ACTION_RELAY_READY
+                    }
+                )
+            }
+        } else {
+            TrackerPreferences.setRelayEnabled(context, false)
+            relayEnabled = false
+            status = "Relaisfreigabe benötigt die Berechtigungen für Geräte in der Nähe."
+        }
+    }
+
+    fun enableNearbyRelay() {
+        if (nearbyPermissions.all {
+                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+            }
+        ) {
+            TrackerPreferences.setRelayEnabled(context, true)
+            relayEnabled = true
+            status = "Relaisfreigabe aktiv. Tracker-Verbindungen werden per Sicherheitscode bestätigt."
+            if (isTracking) {
+                context.startService(
+                    Intent(context, LocationTrackingService::class.java).apply {
+                        action = LocationTrackingService.ACTION_RELAY_READY
+                    }
+                )
+            }
+        } else {
+            nearbyPermissionLauncher.launch(nearbyPermissions.toTypedArray())
         }
     }
 
@@ -191,6 +253,35 @@ private fun TrackerScreen() {
             }
 
             Text("Ziel: Jagdkarte Hundestandort", style = MaterialTheme.typography.bodyMedium)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Als Tracker-Relais teilnehmen", style = MaterialTheme.typography.titleSmall)
+                    Text("Verschlüsselte Meldungen anderer Geräte über dieses Smartphone weiterleiten.", style = MaterialTheme.typography.bodySmall)
+                }
+                Checkbox(
+                    checked = relayEnabled,
+                    onCheckedChange = { enabled ->
+                        if (enabled) {
+                            enableNearbyRelay()
+                        } else {
+                            TrackerPreferences.setRelayEnabled(context, false)
+                            relayEnabled = false
+                            status = "Relaisfreigabe ausgeschaltet."
+                            if (isTracking) {
+                                context.startService(
+                                    Intent(context, LocationTrackingService::class.java).apply {
+                                        action = LocationTrackingService.ACTION_RELAY_STOP
+                                    }
+                                )
+                            }
+                        }
+                    }
+                )
+            }
 
             OutlinedTextField(
                 value = intervalSeconds,
@@ -269,5 +360,25 @@ private fun TrackerScreen() {
                 style = MaterialTheme.typography.bodySmall
             )
         }
+    }
+
+    pairingPrompt?.let { prompt ->
+        AlertDialog(
+            onDismissRequest = { RelayPairingPrompts.respond(prompt.endpointId, accept = false) },
+            title = { Text("Tracker-Verbindung prüfen") },
+            text = {
+                Text("Vergleiche diesen Sicherheitscode mit dem anderen Tracker: ${prompt.authenticationDigits}. Nur fortfahren, wenn beide Codes übereinstimmen.")
+            },
+            confirmButton = {
+                TextButton(onClick = { RelayPairingPrompts.respond(prompt.endpointId, accept = true) }) {
+                    Text("Code stimmt")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { RelayPairingPrompts.respond(prompt.endpointId, accept = false) }) {
+                    Text("Ablehnen")
+                }
+            }
+        )
     }
 }

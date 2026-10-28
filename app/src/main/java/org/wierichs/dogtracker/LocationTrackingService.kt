@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
+import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import android.annotation.SuppressLint
@@ -37,11 +38,19 @@ import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
+import org.wierichs.dogtracker.communication.CommunicationMessage
+import org.wierichs.dogtracker.communication.NearbyRelayTransport
+import org.wierichs.dogtracker.communication.RelayEnvelope
+import org.wierichs.dogtracker.communication.RelayEnvelopeEncoder
+import org.wierichs.dogtracker.communication.RelayServerEncryptionKey
+import org.wierichs.dogtracker.communication.RelaySigningIdentity
+import org.wierichs.dogtracker.communication.SqliteMessageStore
 
 class LocationTrackingService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val fusedLocationClient by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private var locationCallback: LocationCallback? = null
+    private var nearbyRelayTransport: NearbyRelayTransport? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -49,6 +58,20 @@ class LocationTrackingService : Service() {
         if (intent?.action == ACTION_STOP) {
             stopTracking()
             return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_RELAY_READY) {
+            if (TrackerPreferences.isTracking(this) && hasNearbyPermissions()) {
+                updateForegroundServiceTypes(includeNearbyRelay = true)
+            }
+            startNearbyRelayIfEligible()
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_RELAY_STOP) {
+            stopNearbyRelay()
+            if (TrackerPreferences.isTracking(this)) {
+                updateForegroundServiceTypes(includeNearbyRelay = false)
+            }
+            return START_STICKY
         }
 
         val endpoint = TrackerPreferences.endpoint(this)
@@ -76,17 +99,18 @@ class LocationTrackingService : Service() {
         TrackerPreferences.saveConfiguration(this, intervalSeconds)
         TrackerPreferences.setTracking(this, true)
         createNotificationChannel()
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            trackingNotification(),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-        )
+        val relayCanStart = TrackerPreferences.relayEnabled(this) && hasNearbyPermissions()
+        if (TrackerPreferences.relayEnabled(this) && !relayCanStart) {
+            TrackerPreferences.setStatus(this, "Relay pausiert: Berechtigungen für Geräte in der Nähe fehlen.")
+        }
+        updateForegroundServiceTypes(includeNearbyRelay = relayCanStart)
+        startNearbyRelayIfEligible()
         requestLocationUpdates(intervalSeconds)
         return START_STICKY
     }
 
     override fun onDestroy() {
+        stopNearbyRelay()
         locationCallback?.let { fusedLocationClient.removeLocationUpdates(it) }
         serviceScope.cancel()
         super.onDestroy()
@@ -130,13 +154,115 @@ class LocationTrackingService : Service() {
             .toString()
 
         serviceScope.launch(Dispatchers.IO) {
-            LocationOutbox.enqueue(this@LocationTrackingService, endpoint, payload)
-            scheduleUpload()
+            val pendingCount = SqliteMessageStore(this@LocationTrackingService).use { store ->
+                store.enqueue(
+                    CommunicationMessage.create(
+                        type = "location.fix",
+                        destination = endpoint,
+                        payload = payload.toByteArray(Charsets.UTF_8)
+                    )
+                )
+                createRelayEnvelopeIfReady(payload)?.let(store::enqueue)
+                store.pendingCount()
+            }
             TrackerPreferences.setStatus(
                 this@LocationTrackingService,
-                "Position erfasst: ${location.latitude}, ${location.longitude}"
+                "Position lokal gespeichert; Upload ausstehend ($pendingCount)."
             )
+            startNearbyRelayIfEligible()
+            nearbyRelayTransport?.sendPendingToAll()
+            scheduleUpload()
         }
+    }
+
+    private fun createRelayEnvelopeIfReady(locationPayload: String): CommunicationMessage? {
+        if (!TrackerPreferences.relayEnabled(this)) return null
+        val originDeviceId = TrackerPreferences.relayDeviceId(this) ?: return null
+        val keyId = TrackerPreferences.relayEncryptionKeyId(this) ?: return null
+        val publicKey = TrackerPreferences.relayEncryptionPublicKey(this) ?: return null
+        return runCatching {
+            val envelope = RelayEnvelopeEncoder.create(
+                originDeviceId = originDeviceId,
+                locationPayload = locationPayload.toByteArray(Charsets.UTF_8),
+                serverKey = RelayServerEncryptionKey(keyId, publicKey),
+                sign = RelaySigningIdentity::sign
+            )
+            CommunicationMessage(
+                messageId = envelope.messageId,
+                type = RelayEnvelope.MESSAGE_TYPE,
+                destination = TrackerPreferences.RELAY_ENDPOINT,
+                createdAtEpochMillis = System.currentTimeMillis(),
+                expiresAtEpochMillis = envelope.expiresAtEpochMillis,
+                payload = envelope.toByteArray()
+            )
+        }.getOrNull()
+    }
+
+    private fun startNearbyRelayIfEligible() {
+        if (!TrackerPreferences.isTracking(this) || !TrackerPreferences.relayEnabled(this)) return
+        if (!hasNearbyPermissions()) {
+            TrackerPreferences.setStatus(this, "Relay pausiert: Berechtigungen für Geräte in der Nähe fehlen.")
+            return
+        }
+        val deviceId = TrackerPreferences.relayDeviceId(this)
+        if (deviceId == null) {
+            TrackerPreferences.setStatus(this, "Relay wird nach erfolgreicher Geräteschlüssel-Registrierung gestartet.")
+            return
+        }
+        if (nearbyRelayTransport != null) return
+
+        nearbyRelayTransport = NearbyRelayTransport(
+            context = this,
+            localDeviceId = deviceId,
+            onIncomingEnvelope = { envelope -> storeIncomingRelayEnvelope(envelope) },
+            onTransportStatus = { status -> TrackerPreferences.setStatus(this, status) }
+        ).also(NearbyRelayTransport::start)
+    }
+
+    private fun storeIncomingRelayEnvelope(envelope: RelayEnvelope) {
+        serviceScope.launch(Dispatchers.IO) {
+            val message = CommunicationMessage(
+                messageId = envelope.messageId,
+                type = RelayEnvelope.MESSAGE_TYPE,
+                destination = TrackerPreferences.RELAY_ENDPOINT,
+                createdAtEpochMillis = System.currentTimeMillis(),
+                expiresAtEpochMillis = envelope.expiresAtEpochMillis,
+                payload = envelope.toByteArray()
+            )
+            val stored = runCatching {
+                SqliteMessageStore(this@LocationTrackingService).use { it.enqueue(message) }
+            }.isSuccess
+            if (stored) {
+                TrackerPreferences.setStatus(this@LocationTrackingService, "Relay-Nachricht lokal angenommen; Server-Upload ausstehend.")
+                scheduleUpload()
+            }
+        }
+    }
+
+    private fun stopNearbyRelay() {
+        nearbyRelayTransport?.stop()
+        nearbyRelayTransport = null
+    }
+
+    private fun hasNearbyPermissions(): Boolean = nearbyPermissions().all { permission ->
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun nearbyPermissions(): List<String> = buildList {
+        if (Build.VERSION.SDK_INT >= 31) {
+            add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            add(Manifest.permission.BLUETOOTH_CONNECT)
+            add(Manifest.permission.BLUETOOTH_SCAN)
+        }
+        if (Build.VERSION.SDK_INT == 31) add(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (Build.VERSION.SDK_INT >= 32) add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        if (Build.VERSION.SDK_INT >= 37) add(Manifest.permission.ACCESS_LOCAL_NETWORK)
+    }
+
+    private fun updateForegroundServiceTypes(includeNearbyRelay: Boolean) {
+        val serviceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+            if (includeNearbyRelay) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, trackingNotification(), serviceTypes)
     }
 
     private fun scheduleUpload() {
@@ -201,6 +327,8 @@ class LocationTrackingService : Service() {
     companion object {
         const val ACTION_START = "org.wierichs.dogtracker.action.START"
         const val ACTION_STOP = "org.wierichs.dogtracker.action.STOP"
+        const val ACTION_RELAY_READY = "org.wierichs.dogtracker.action.RELAY_READY"
+        const val ACTION_RELAY_STOP = "org.wierichs.dogtracker.action.RELAY_STOP"
         const val EXTRA_INTERVAL_SECONDS = "interval_seconds"
 
         private const val NOTIFICATION_CHANNEL_ID = "location_tracking"
