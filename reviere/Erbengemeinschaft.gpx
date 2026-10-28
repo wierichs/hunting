@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpsies="http://www.gpsies.com/GPX/1/0" creator="GPSies http://www.gpsies.com - GPSies Track" version="1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.gpsies.com/GPX/1/0 http://www.gpsies.com/gpsies.xsd">
+  <metadata>
+    <name>Erbengemeinschaft Wierichs</name>
+    <link href="">
+      <text></text>
+    </link>
+    <time>2016-06-29T11:05:00Z</time>
+  </metadata>
+  <wpt lat="51.25248" lon="6.64729">
+		<name>Zugang/Zufahrt</name>
+		<type>Generic</type>
+  </wpt>
+	<trk>
+    <name>Erbengemeinschaft Wierichs</name>
+    <trkseg>
+      <trkpt lat="51.25246" lon="6.64730">
+        <time>2016-06-29T11:05:00Z</time>
+      </trkpt>
+      <trkpt lat="51.25233" lon="6.64645">
+        <time>2016-06-29T11:05:00Z</time>
+      </trkpt>
+			<trkpt lat="51.25216" lon="6.64654">
+        <time>2016-06-29T11:05:00Z</time>
+      </trkpt>
+      <trkpt lat="51.25154" lon="6.64687">
+        <time>2016-06-29T11:05:00Z</time>
+      </trkpt>
+      <trkpt lat="51.25138" lon="6.64578">
+        <time>2016-06-29T11:05:00Z</time>
+      </trkpt>
+      <trkpt lat="51.25202" lon="6.64545">
+        <time>2016-06-29T11:05:00Z</time>
+      </trkpt>
+      <trkpt lat="51.25215" lon="6.64645">
+        <time>2016-06-29T11:05:00Z</time>
+      </trkpt>
+      <trkpt lat="51.25237" lon="6.64634">
+        <time>2016-06-29T11:05:00Z</time>
+      </trkpt>
+      <trkpt lat="51.25250" lon="6.64727">
+        <time>2016-06-29T11:05:00Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>
+
