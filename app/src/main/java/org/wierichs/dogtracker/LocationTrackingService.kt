@@ -45,6 +45,8 @@ import org.wierichs.dogtracker.communication.RelayEnvelopeEncoder
 import org.wierichs.dogtracker.communication.RelayServerEncryptionKey
 import org.wierichs.dogtracker.communication.RelaySigningIdentity
 import org.wierichs.dogtracker.communication.SqliteMessageStore
+import org.wierichs.dogtracker.communication.RelayGateway
+import org.wierichs.dogtracker.communication.RelayGatewayService
 
 class LocationTrackingService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -57,6 +59,12 @@ class LocationTrackingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             stopTracking()
+            return START_NOT_STICKY
+        }
+        if (RelayGateway.state.value.active || RelayGateway.state.value.starting) {
+            TrackerPreferences.setStatus(this, "DogTracker pausiert: Revier-Relaisfreigabe ist aktiv.")
+            TrackerPreferences.setTracking(this, false)
+            stopSelf(startId)
             return START_NOT_STICKY
         }
         if (intent?.action == ACTION_RELAY_READY) {
@@ -248,16 +256,7 @@ class LocationTrackingService : Service() {
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun nearbyPermissions(): List<String> = buildList {
-        if (Build.VERSION.SDK_INT >= 31) {
-            add(Manifest.permission.BLUETOOTH_ADVERTISE)
-            add(Manifest.permission.BLUETOOTH_CONNECT)
-            add(Manifest.permission.BLUETOOTH_SCAN)
-        }
-        if (Build.VERSION.SDK_INT == 31) add(Manifest.permission.ACCESS_FINE_LOCATION)
-        if (Build.VERSION.SDK_INT >= 32) add(Manifest.permission.NEARBY_WIFI_DEVICES)
-        if (Build.VERSION.SDK_INT >= 37) add(Manifest.permission.ACCESS_LOCAL_NETWORK)
-    }
+    private fun nearbyPermissions(): List<String> = RelayGatewayService.requiredRelayPermissions()
 
     private fun updateForegroundServiceTypes(includeNearbyRelay: Boolean) {
         val serviceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or

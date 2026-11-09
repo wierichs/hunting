@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+/supabase/.env*
+/supabase/*.env
+/supabase/.temp/

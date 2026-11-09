@@ -12,8 +12,8 @@ internal object TrackerPreferences {
     private const val KEY_RELAY_ENCRYPTION_KEY_ID = "relay_encryption_key_id"
     private const val KEY_RELAY_ENCRYPTION_PUBLIC_KEY = "relay_encryption_public_key"
     private const val KEY_RELAY_ENABLED = "relay_enabled"
-    const val ENDPOINT = "https://qgtgeawsdxynnqsuanbl.supabase.co/functions/v1/dog-location"
-    const val RELAY_ENDPOINT = "https://qgtgeawsdxynnqsuanbl.supabase.co/functions/v1/dog-location-relay"
+    val ENDPOINT = BackendConfiguration.dogLocationEndpoint
+    val RELAY_ENDPOINT = BackendConfiguration.dogRelayEndpoint
 
     private fun preferences(context: Context) =
         context.applicationContext.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)

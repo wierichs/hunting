@@ -9,11 +9,33 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.util.UUID
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class SqliteMessageStoreMigrationTest {
+    @Test
+    fun serverReceiptAtomicallyReplacesEnvelopeAndSurvivesReopening() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "relay-receipt-${UUID.randomUUID()}.db"
+        val envelope = CommunicationMessage.create("relay.envelope", "https://example.test/relay", "envelope".toByteArray())
+        val receipt = CommunicationMessage.create("relay.receipt", "https://example.test/relay", "signed receipt".toByteArray())
+        try {
+            SqliteMessageStore(context, name).use { store ->
+                store.enqueue(envelope)
+                store.acknowledgeWithReceipt(envelope.messageId, receipt)
+                store.acknowledgeWithReceipt(envelope.messageId, receipt)
+                assertNull(store.findPending(envelope.messageId))
+                assertEquals(1, store.pendingCount())
+            }
+            SqliteMessageStore(context, name).use { store ->
+                assertNull(store.findPending(envelope.messageId))
+                assertArrayEquals(receipt.payload, store.findPending(receipt.messageId)!!.message.payload)
+            }
+        } finally { context.deleteDatabase(name) }
+    }
+
     @Test
     fun upgradePreservesLegacyPendingLocationsInOrder() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

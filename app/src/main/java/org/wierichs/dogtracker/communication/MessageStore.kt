@@ -133,6 +133,35 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
         writableDatabase.delete(TABLE_NAME, "message_id = ?", arrayOf(messageId))
     }
 
+    fun findPending(messageId: String): StoredMessage? = readableDatabase.query(
+        TABLE_NAME,
+        arrayOf("local_id", "message_id", "message_type", "destination", "created_at", "expires_at", "payload"),
+        "message_id = ?", arrayOf(messageId), null, null, null, "1"
+    ).use { cursor ->
+        if (!cursor.moveToFirst()) return@use null
+        val expiresIndex = cursor.getColumnIndexOrThrow("expires_at")
+        StoredMessage(cursor.getLong(cursor.getColumnIndexOrThrow("local_id")), CommunicationMessage(
+            messageId = cursor.getString(cursor.getColumnIndexOrThrow("message_id")),
+            type = cursor.getString(cursor.getColumnIndexOrThrow("message_type")),
+            destination = cursor.getString(cursor.getColumnIndexOrThrow("destination")),
+            createdAtEpochMillis = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+            expiresAtEpochMillis = if (cursor.isNull(expiresIndex)) null else cursor.getLong(expiresIndex),
+            payload = cursor.getBlob(cursor.getColumnIndexOrThrow("payload"))
+        ))
+    }
+
+    fun acknowledgeWithReceipt(messageId: String, receipt: CommunicationMessage) {
+        require(receipt.messageId != messageId)
+        writableDatabase.beginTransaction()
+        try {
+            if (findPending(receipt.messageId) == null) insert(writableDatabase, receipt)
+            writableDatabase.delete(TABLE_NAME, "message_id = ?", arrayOf(messageId))
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+    }
+
     override fun pendingCount(): Int = readableDatabase.rawQuery(
         "SELECT COUNT(*) FROM $TABLE_NAME",
         null

@@ -17,17 +17,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -54,6 +60,9 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import kotlinx.coroutines.delay
 import org.wierichs.dogtracker.ui.theme.DogTrackerTheme
 import org.wierichs.dogtracker.communication.RelayPairingPrompts
+import org.wierichs.dogtracker.jagdkarte.JagdkarteScreen
+import org.wierichs.dogtracker.communication.RelayGateway
+import org.wierichs.dogtracker.communication.RelayGatewayService
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,9 +70,57 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             DogTrackerTheme {
-                TrackerScreen()
+                JagdkarteApp()
             }
         }
+    }
+}
+
+@Composable
+private fun JagdkarteApp() {
+    val context = LocalContext.current
+    var trackerSelected by rememberSaveable { mutableStateOf(false) }
+    val pairingPrompt by RelayPairingPrompts.current.collectAsState()
+    Scaffold(bottomBar = {
+        NavigationBar {
+            NavigationBarItem(selected = !trackerSelected, onClick = { trackerSelected = false },
+                icon = { Icon(Icons.Default.Place, null) },
+                label = { Text("Jagdkarte") })
+            NavigationBarItem(selected = trackerSelected, onClick = { trackerSelected = true },
+                icon = { Icon(Icons.Default.LocationOn, null) },
+                label = { Text("DogTracker") })
+        }
+    }) { padding ->
+        Surface(Modifier.fillMaxSize().padding(padding)) {
+            if (trackerSelected) TrackerScreen() else JagdkarteScreen(onUseDeviceToken = { token ->
+                if (TrackerPreferences.isTracking(context)) {
+                    false
+                } else {
+                    TrackerPreferences.saveDeviceToken(context, token)
+                    trackerSelected = true
+                    true
+                }
+            })
+        }
+    }
+    pairingPrompt?.let { prompt ->
+        AlertDialog(
+            onDismissRequest = { RelayPairingPrompts.respond(prompt.endpointId, accept = false) },
+            title = { Text("Tracker-Verbindung prüfen") },
+            text = {
+                Text("Vergleiche diesen Sicherheitscode mit dem anderen Tracker: ${prompt.authenticationDigits}. Nur fortfahren, wenn beide Codes übereinstimmen.")
+            },
+            confirmButton = {
+                TextButton(onClick = { RelayPairingPrompts.respond(prompt.endpointId, accept = true) }) {
+                    Text("Code stimmt")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { RelayPairingPrompts.respond(prompt.endpointId, accept = false) }) {
+                    Text("Ablehnen")
+                }
+            }
+        )
     }
 }
 
@@ -79,9 +136,12 @@ private fun TrackerScreen() {
     var relayEnabled by rememberSaveable { mutableStateOf(TrackerPreferences.relayEnabled(context)) }
     var status by remember { mutableStateOf(TrackerPreferences.status(context)) }
     var validationMessage by remember { mutableStateOf("") }
-    val pairingPrompt by RelayPairingPrompts.current.collectAsState()
 
     fun startTracking() {
+        if (RelayGateway.state.value.active || RelayGateway.state.value.starting) {
+            validationMessage = "Zuerst die Revier-Relaisfreigabe in der Jagdkarte beenden."
+            return
+        }
         val normalizedToken = deviceToken.filterNot(Char::isWhitespace)
         val interval = intervalSeconds.toLongOrNull()
         if (!normalizedToken.matches(Regex("[0-9a-fA-F]{64}"))) {
@@ -130,16 +190,7 @@ private fun TrackerScreen() {
         }
     }
 
-    val nearbyPermissions = buildList {
-        if (Build.VERSION.SDK_INT >= 31) {
-            add(Manifest.permission.BLUETOOTH_ADVERTISE)
-            add(Manifest.permission.BLUETOOTH_CONNECT)
-            add(Manifest.permission.BLUETOOTH_SCAN)
-        }
-        if (Build.VERSION.SDK_INT == 31) add(Manifest.permission.ACCESS_FINE_LOCATION)
-        if (Build.VERSION.SDK_INT >= 32) add(Manifest.permission.NEARBY_WIFI_DEVICES)
-        if (Build.VERSION.SDK_INT >= 37) add(Manifest.permission.ACCESS_LOCAL_NETWORK)
-    }
+    val nearbyPermissions = RelayGatewayService.requiredRelayPermissions()
 
     val nearbyPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -194,7 +245,7 @@ private fun TrackerScreen() {
         }
     }
 
-    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+    Scaffold(modifier = Modifier.fillMaxSize(), contentWindowInsets = WindowInsets(0, 0, 0, 0)) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -362,23 +413,4 @@ private fun TrackerScreen() {
         }
     }
 
-    pairingPrompt?.let { prompt ->
-        AlertDialog(
-            onDismissRequest = { RelayPairingPrompts.respond(prompt.endpointId, accept = false) },
-            title = { Text("Tracker-Verbindung prüfen") },
-            text = {
-                Text("Vergleiche diesen Sicherheitscode mit dem anderen Tracker: ${prompt.authenticationDigits}. Nur fortfahren, wenn beide Codes übereinstimmen.")
-            },
-            confirmButton = {
-                TextButton(onClick = { RelayPairingPrompts.respond(prompt.endpointId, accept = true) }) {
-                    Text("Code stimmt")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { RelayPairingPrompts.respond(prompt.endpointId, accept = false) }) {
-                    Text("Ablehnen")
-                }
-            }
-        )
-    }
 }

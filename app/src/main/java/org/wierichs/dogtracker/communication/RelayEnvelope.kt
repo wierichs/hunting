@@ -105,12 +105,14 @@ internal object RelayEnvelopeEncoder {
         serverKey: RelayServerEncryptionKey,
         sign: (ByteArray) -> ByteArray,
         nowEpochMillis: Long = System.currentTimeMillis(),
-        messageId: String = UUID.randomUUID().toString()
+        messageId: String = UUID.randomUUID().toString(),
+        lifetimeMillis: Long = MAX_RELAY_LIFETIME_MILLIS
     ): RelayEnvelope {
         require(UUID_PATTERN.matches(originDeviceId))
         require(UUID_PATTERN.matches(messageId))
         require(locationPayload.isNotEmpty() && locationPayload.size <= MAX_LOCATION_BYTES)
         require(KEY_ID_PATTERN.matches(serverKey.keyId))
+        require(lifetimeMillis in 1..MAX_RELAY_LIFETIME_MILLIS)
 
         val serverPublicKey = importServerPublicKey(serverKey.publicKey)
         val aesKey = KeyGenerator.getInstance("AES").apply { init(AES_KEY_SIZE_BITS) }.generateKey()
@@ -123,7 +125,7 @@ internal object RelayEnvelopeEncoder {
         rsaCipher.init(Cipher.ENCRYPT_MODE, serverPublicKey, oaepParameters())
         val encryptedAesKey = rsaCipher.doFinal(aesKey.encoded)
 
-        val expiresAt = canonicalInstantFormatter.format(Instant.ofEpochMilli(nowEpochMillis + MAX_RELAY_LIFETIME_MILLIS))
+        val expiresAt = canonicalInstantFormatter.format(Instant.ofEpochMilli(Math.addExact(nowEpochMillis, lifetimeMillis)))
         val encodedEncryptedKey = encodeBase64Url(encryptedAesKey)
         val encodedNonce = encodeBase64Url(nonce)
         val encodedCiphertext = encodeBase64Url(encryptedPayload)

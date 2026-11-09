@@ -18,8 +18,8 @@ internal object DeviceTokenStorage {
     private const val KEY_CIPHERTEXT = "ciphertext"
     private const val GCM_TAG_SIZE_BITS = 128
 
-    fun read(context: Context): String? = runCatching {
-        val preferences = context.applicationContext.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
+    fun read(context: Context, fileName: String = FILE_NAME): String? = runCatching {
+        val preferences = context.applicationContext.getSharedPreferences(fileName, Context.MODE_PRIVATE)
         val iv = preferences.getString(KEY_IV, null) ?: return null
         val ciphertext = preferences.getString(KEY_CIPHERTEXT, null) ?: return null
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -31,13 +31,19 @@ internal object DeviceTokenStorage {
         String(cipher.doFinal(Base64.decode(ciphertext, Base64.NO_WRAP)), Charsets.UTF_8)
     }.getOrNull()
 
-    fun write(context: Context, token: String) {
+    fun write(context: Context, token: String, fileName: String = FILE_NAME) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, secretKey())
         val ciphertext = cipher.doFinal(token.toByteArray(Charsets.UTF_8))
-        context.applicationContext.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE).edit {
+        context.applicationContext.getSharedPreferences(fileName, Context.MODE_PRIVATE).edit {
             putString(KEY_IV, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             putString(KEY_CIPHERTEXT, Base64.encodeToString(ciphertext, Base64.NO_WRAP))
+        }
+    }
+
+    fun clear(context: Context, fileName: String) {
+        context.applicationContext.getSharedPreferences(fileName, Context.MODE_PRIVATE).edit {
+            clear()
         }
     }
 

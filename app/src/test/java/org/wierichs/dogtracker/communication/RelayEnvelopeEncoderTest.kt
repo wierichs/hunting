@@ -11,6 +11,9 @@ import javax.crypto.spec.OAEPParameterSpec
 import javax.crypto.spec.PSource
 import javax.crypto.spec.GCMParameterSpec
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -38,6 +41,7 @@ class RelayEnvelopeEncoderTest {
             sign = signer,
             nowEpochMillis = now
         )
+        assertEquals(now + 86_400_000, envelope.expiresAtEpochMillis)
 
         val encryptedAesKey = Base64.getUrlDecoder().decode(envelope.encryptedKey)
         val rsaCipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding")
@@ -72,5 +76,23 @@ class RelayEnvelopeEncoderTest {
         assertArrayEquals(payload, decryptedPayload)
         assertTrue(verifier.verify(Base64.getUrlDecoder().decode(envelope.signature)))
         assertTrue(envelope.expiresAt.endsWith(".000Z"))
+    }
+
+    @Test
+    fun participantEnvelopeRetainsLegacyWireFormatWithShortLifetime() {
+        val pair = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+        val now = Instant.parse("2026-11-02T10:00:00Z").toEpochMilli()
+        val payload = """{"message_type":"participant.location","sequence":"1","latitude":51.0,"longitude":7.0}""".toByteArray()
+        val envelope = RelayEnvelopeEncoder.create(
+            originDeviceId = "a16cb2bc-6dca-40bb-8e10-fc33b4d9272e",
+            locationPayload = payload,
+            serverKey = RelayServerEncryptionKey("relay-1", Base64.getUrlEncoder().withoutPadding().encodeToString(pair.public.encoded)),
+            sign = { input -> Signature.getInstance("SHA256withRSA").run { initSign(pair.private); update(input); sign() } },
+            nowEpochMillis = now,
+            lifetimeMillis = 90_000
+        )
+        assertEquals(now + 90_000, envelope.expiresAtEpochMillis)
+        assertNotNull(RelayEnvelope.parse(envelope.toByteArray(), now))
+        assertNull(RelayEnvelope.parse(envelope.toByteArray(), now + 90_000))
     }
 }

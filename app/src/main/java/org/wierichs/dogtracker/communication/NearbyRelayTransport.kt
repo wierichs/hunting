@@ -62,7 +62,9 @@ internal class NearbyRelayTransport(
     context: Context,
     private val localDeviceId: String,
     private val onIncomingEnvelope: (RelayEnvelope) -> Unit,
-    private val onTransportStatus: (String) -> Unit
+    private val onTransportStatus: (String) -> Unit,
+    private val pendingPackets: (() -> List<ByteArray>)? = null,
+    private val onIncomingDocument: (ByteArray) -> Unit = {}
 ) {
     private val appContext = context.applicationContext
     private val client = Nearby.getConnectionsClient(appContext)
@@ -76,7 +78,9 @@ internal class NearbyRelayTransport(
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             if (payload.type != Payload.Type.BYTES) return
             val bytes = payload.asBytes() ?: return
-            RelayEnvelope.parse(bytes)?.let(onIncomingEnvelope)
+            if (bytes.size > 8192) return
+            val envelope = RelayEnvelope.parse(bytes)
+            if (envelope != null) onIncomingEnvelope(envelope) else onIncomingDocument(bytes)
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) = Unit
@@ -113,6 +117,7 @@ internal class NearbyRelayTransport(
         override fun onDisconnected(endpointId: String) {
             connectedEndpoints.remove(endpointId)
             requestedEndpoints.remove(endpointId)
+            sentMessageIds.removeAll { it.startsWith("$endpointId:") }
         }
     }
 
@@ -141,14 +146,14 @@ internal class NearbyRelayTransport(
         val strategy = Strategy.P2P_CLUSTER
         client.startAdvertising(
             sessionId,
-            appContext.packageName,
+            "org.wierichs.dogtracker",
             lifecycleCallback,
             AdvertisingOptions.Builder().setStrategy(strategy).build()
         ).addOnFailureListener {
             onTransportStatus("Nearby-Relais konnte nicht gestartet werden.")
         }
         client.startDiscovery(
-            appContext.packageName,
+            "org.wierichs.dogtracker",
             discoveryCallback,
             DiscoveryOptions.Builder().setStrategy(strategy).build()
         ).addOnFailureListener {
@@ -170,21 +175,35 @@ internal class NearbyRelayTransport(
     }
 
     fun sendPendingToAll() {
+        sentMessageIds.clear()
         connectedEndpoints.forEach(::sendPendingTo)
     }
 
     private fun sendPendingTo(endpointId: String) {
+        pendingPackets?.let { provider ->
+            provider().take(MAX_MESSAGES_PER_SYNC).forEach { bytes ->
+                val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+                    .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                sendPacket(endpointId, digest, bytes)
+            }
+            return
+        }
         val messages = SqliteMessageStore(appContext).use { store ->
             store.pendingOfType(RelayEnvelope.MESSAGE_TYPE, MAX_MESSAGES_PER_SYNC)
         }
         messages.forEach { stored ->
             val envelope = RelayEnvelope.parse(stored.message.payload) ?: return@forEach
-            if (envelope.originDeviceId != localDeviceId || !sentMessageIds.add(envelope.messageId)) return@forEach
-            client.sendPayload(endpointId, Payload.fromBytes(stored.message.payload))
-                .addOnFailureListener {
-                    sentMessageIds.remove(envelope.messageId)
-                    onTransportStatus("Relay-Nachricht konnte nicht übergeben werden.")
-                }
+            if (envelope.originDeviceId != localDeviceId) return@forEach
+            sendPacket(endpointId, envelope.messageId, stored.message.payload)
+        }
+    }
+
+    private fun sendPacket(endpointId: String, id: String, bytes: ByteArray) {
+        val key = "$endpointId:$id"
+        if (bytes.size > 8192 || !sentMessageIds.add(key)) return
+        client.sendPayload(endpointId, Payload.fromBytes(bytes)).addOnFailureListener {
+            sentMessageIds.remove(key)
+            onTransportStatus("Relay-Nachricht konnte nicht übergeben werden.")
         }
     }
 

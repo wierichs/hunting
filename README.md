@@ -1,4 +1,169 @@
-# Hundetracker
+# Jagdkarte fuer Android
+
+Dieser Branch stellt die Funktionalitaet der Jagdkarte zusaetzlich als native
+Android-App mit Kotlin, Jetpack Compose und einer nativen osmdroid-Karte bereit,
+ohne WebView. Die Android-App ergaenzt die PWA und soll sie nicht abloesen.
+Die PWA bleibt als eigenstaendiges Angebot mit ihrem jetzigen Funktionsumfang
+bestehen; ihre Funktionen werden weder entfernt noch auf Android verlagert.
+Die bestehende Hundetracker-Funktion bleibt als Ansicht **DogTracker** erhalten.
+Das separate Web-Projekt wird nicht veraendert. Beide Clients verwenden dieselben
+vorhandenen Supabase-Daten und Berechtigungen. Erweiterungen des gemeinsamen
+Backends muessen zu den bestehenden PWA-Funktionen und Schnittstellen
+rueckwaertskompatibel bleiben.
+
+Die Android-App hat die eigene App-ID `org.wierichs.jagdkarte`. Sie kann neben
+`org.wierichs.dogtracker` installiert werden; dessen Einstellungen und
+Geraetekopplung werden nicht automatisch uebernommen. Mindestversion: Android 12.
+
+## Stand der Portierung
+
+Die Funktionen werden schrittweise zusaetzlich nativ angeboten. Der aktuelle
+Android-Funktionsumfang ist kleiner als der der PWA; deren bestehendes Angebot
+bleibt davon unberuehrt.
+
+- Native OpenStreetMap-Karte mit Zoom, Verschieben und Quellenangabe.
+- Anmeldung und Registrierung mit E-Mail-Code gegen das bestehende Supabase-Auth.
+	Benutzer- und Tracker-Geheimnisse liegen getrennt, Keystore-verschluesselt im
+	privaten App-Speicher. Benutzersitzungen werden erneuert; Abmelden entfernt die
+	lokale Sitzung auch bei einem Serverfehler.
+- Auswahl eigener und geteilter, bereits vorhandener Revierprofile. Die
+	serverseitigen RLS-Regeln bestimmen den Zugriff.
+- Gespeicherte Polygon-/MultiPolygon-Grenzen einschliesslich Aussparungen,
+	Markierungen und deren Ablaufzeiten.
+- Native Markeranlage mit Kartenpositionswahl, Markerart, Bezeichnung und Notiz.
+	Owner und Bearbeiter koennen Einrichtungen und Standplaetze planen; Mitglieder
+	koennen Anschuss und Wildsichtung mit einem frischen GPS-Fix im Revier melden.
+- Teilnehmer- und Hundepositionen im aktiven Jagdmodus, Aktualisierung alle
+	30 Sekunden bei sichtbarer Kartenansicht. Teilnehmerpositionen verschwinden
+	nach 90 Sekunden; Hundepositionen bleiben auch ausserhalb der Reviergrenze
+	sichtbar und werden nach zwei Minuten als veraltet markiert.
+- Explizite Teilnehmer-Standortfreigabe pro ausgewaehltem Revier. Ein frischer
+	GPS-Fix und die Grenzpruefung mit JTS sind erforderlich. Freigabe und
+	Berechtigung werden nicht aus einer frueheren Android-Zustimmung abgeleitet.
+	Beim Wechsel, Abmelden, Ausschalten des Jagdmodus oder Pausieren der Ansicht
+	endet die Uebertragung. Beim Fortsetzen derselben Ansicht kann eine noch
+	aktivierte Freigabe wieder anlaufen. Nach einem Neustart ist sie aus.
+- Jagdmodus-Steuerung durch Owner und Bearbeiter sowie Hunderegistrierung und
+	Smartphone-Kopplung ueber die vorhandenen, serverseitig geschuetzten RPCs.
+	Einmalige Schluessel erscheinen als QR-Code in einem gegen Screenshots
+	geschuetzten Dialog; eine neue Kopplung muss bestaetigt werden.
+- Vorhandener DogTracker mit Foreground Service, persistenter Outbox und
+	experimentellem Ein-Hop-Relay. Der Nearby-Sicherheitsdialog ist auch auf der
+	Kartenansicht erreichbar.
+- Gemeinsame Kommunikationsbasis mit optionaler Revier-Relaisfreigabe ohne
+	Hundekopplung, kurzer Teilnehmer-Outbox und signierten Serverbestaetigungen.
+	Die neue Serverstufe ist vorbereitet, aber noch nicht deployed. Einrichtung:
+	[supabase/README.md](supabase/README.md).
+
+Kartenkacheln werden im privaten App-Cache gespeichert. Das ist kein garantierter
+Offline-Kartenbestand. Private Revierdaten werden nicht als dauerhafte
+Offline-Kopie gespeichert. Ohne Verbindung werden keine alten Kartenpositionen
+als aktuelle Live-Daten weiter angezeigt. Kann eine Teilnehmerposition beim
+Stoppen nicht entfernt werden, kann sie bis zur 90-Sekunden-Grenze sichtbar
+bleiben. Ohne Relaisfreigabe werden Teilnehmerpositionen nicht offline
+nachgesendet. Mit bereitgestelltem Relay-Server bleiben eigene Meldungen nur
+bis zu 90 Sekunden ab Messzeit ausstehend; eine Historie wird nicht aufgebaut.
+
+### Noch offene Web-Funktionen
+
+Oeffentliche Regionensuche und Datenquellen, Anlegen und Loeschen von Revieren,
+JWD-/GeoJSON-Import und Export, Grenzbearbeitung, Einladungen und Gastlinks,
+Anzeigenamen, Hundeloeschung,
+spezielle Markersymbole, Offline-Kartenverwaltung sowie
+die vollstaendige Hilfe sind noch nicht portiert. Reviere koennen weiterhin
+in der unabhaengig verfuegbaren PWA verwaltet werden.
+
+### Markierungen setzen
+
+1. Anmelden und ein bestehendes Revier auswaehlen, dessen Grenze hinterlegt ist.
+2. **Markierung setzen** waehlen, die Karte unter der Positionsnadel verschieben
+   und **Hier setzen** bestaetigen. Alternativ einen Kartenpunkt lange beruehren.
+3. Markerart, optionale Bezeichnung und Notiz eingeben und **Speichern** waehlen.
+   Ohne Bezeichnung wird der Name der Markerart verwendet.
+
+Owner und Bearbeiter koennen gespeicherte Marker auf der Karte antippen, ihre
+Bezeichnung und Notiz bearbeiten oder den Marker nach ausdruecklicher
+Bestaetigung loeschen. Markerart und Position bleiben dabei unveraendert. Die App
+laedt Rolle und Revier vor dem Schreibzugriff erneut; die bestehenden
+Serverrechte entscheiden abschliessend. Fuer Aenderungen ist eine
+Internetverbindung erforderlich. Bei fehlender Serverbestaetigung bleibt der
+Dialog mit den Eingaben geoeffnet; es gibt keinen automatischen Wiederholungsversuch.
+
+Das Ziel muss innerhalb der Reviergrenze und ausserhalb von Aussparungen liegen.
+Gaeste sehen nur **Anschuss** und **Wildsichtung**. Dafuer fragt die App beim
+Speichern einmalig einen aktuellen, genauen GPS-Standort ab; auch dieser muss
+innerhalb des Reviers liegen. Die Standortfreigabe wird dadurch nicht aktiviert.
+Owner und Bearbeiter koennen ausserdem die Einrichtungen des Web-Katalogs und
+**Standplatz** anlegen. Diese Planung benoetigt keinen GPS-Zugriff. Wie im
+bestehenden Serververtrag haengt die Markeranlage nicht vom Jagdmodus ab.
+
+Die App liest Rolle und Grenze vor jedem Schreibzugriff erneut. Dauerhafte
+Einrichtungen werden ueber den vorhandenen Tabellen-Insert angelegt, temporaere
+Marker ausschliesslich ueber `create_temporary_hunting_marker`. Die bestehenden
+Serverrechte bleiben unveraendert. Die 48-Stunden-Frist fuer Anschuss,
+Wildsichtung und Standplatz legt allein der Server fest; der Client sendet kein
+Ablaufdatum. Bezeichnungen sind auf 80, Notizen auf 300 Zeichen begrenzt.
+
+Fuer die Anlage ist eine Internetverbindung erforderlich. Nach Erfolg wird die
+Karte aktualisiert; bei Fehlern bleibt der Dialog mit den Eingaben geoeffnet.
+Es gibt keinen automatischen Wiederholungsversuch und keine Offline-Warteschlange
+fuer Marker. Nach einer unterbrochenen Serverantwort vor einem erneuten Versuch
+pruefen, ob der Marker bereits angelegt wurde. Ein Profil-/Kontowechsel verwirft
+den offenen Entwurf.
+
+### Kommunikation und Servergrenzen
+
+Das [Kommunikationskonzept](CommunicationConcept.md) bleibt die Zielarchitektur.
+Die bestehende Hundekommunikation wird weiterverwendet, nicht durch einen zweiten
+Tracker ersetzt. Jagdkarte und DogTracker nutzen unabhaengig von ihrer App-ID
+die gemeinsame Nearby-Dienstkennung `org.wierichs.dogtracker`.
+
+Der neue Endpunkt `location-relay` und eine additive Migration ergaenzen nun
+Benutzergeraete, gruppenbezogene Schluesselregistrierung, Widerruf, typisierte
+Teilnehmermeldungen und atomare Nachrichten-ID-Deduplizierung. Verzeichnisse
+und Empfangsbestaetigungen werden serverseitig signiert. Diese Stufe muss vor
+Nutzung separat in Supabase bereitgestellt und abgenommen werden; es gab
+keinen Serverdeploy. Ohne Bereitstellung bleibt die normale Jagdkarte nutzbar,
+die neue Relaisfreigabe kann jedoch nicht erfolgreich eingerichtet werden.
+
+Benutzer-JWTs und Hundeschluessel bleiben auf ihrem jeweiligen Geraet und
+werden nie an ein Relais gegeben. Gateway und eigener Standort sind getrennte
+Einwilligungen. Die Gateway-Benachrichtigung kann im Hintergrund weiterlaufen,
+waehrend eigene Teilnehmerfixes weiterhin nur bei aktiver Karte erfasst werden.
+Alte DogTracker-Nachrichten koennen weitergeleitet werden; alte APKs
+unterstuetzen die neuen Rueckbestaetigungen noch nicht. Grenzen,
+Schluesselverwaltung und Bereitstellung: [supabase/README.md](supabase/README.md).
+
+### Einrichtung und Pruefung
+
+Die App verwendet die oeffentliche Supabase-Projektkonfiguration der Web-App.
+Voraussetzung ist das dort dokumentierte aktuelle Datenbankschema samt Auth-
+E-Mail-Vorlagen und `dog-location`/`dog-location-relay`. Die native Anmeldung
+verwendet eingegebene E-Mail-Codes; Web-Magic-Links bleiben Web-Links.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug
+.\gradlew.bat :app:connectedDebugAndroidTest
+```
+
+Ein JDK und das Android SDK muessen eingerichtet sein. Die zweite Pruefung
+benoetigt einen laufenden Emulator oder ein angeschlossenes Geraet. Die APK liegt
+unter `app/build/outputs/apk/debug/app-debug.apk`.
+
+Verifiziert: 27 JVM-Tests fuer Nachrichten, Relay-Kryptografie, Grenzpruefung,
+Positionsalter, Teilnehmer-RPC sowie Marker-Schreib-, Bearbeitungs- und
+Loeschvertraege sowie 18 Instrumentierungstests auf dem API-37-Emulator fuer
+App-Start, Navigation, Login-Dialog, SQLite-Migration, atomare
+Relay-Bestaetigungen, Keystore, Kartenpositionswahl, Marker-Dialoge,
+Markerbearbeitung, Loeschbestaetigung und ausdrueckliche Relaiszustimmung.
+Die Marker-Dialoge werden mit lokalen Testdaten, ohne Produktionsschreibzugriff
+und auch bei 320 dp geprueft. Eine Anmeldung gegen Produktionsdaten, echte Rollen-/RLS-Schreibtests,
+reale GPS-Erfassung und Nearby-Transfers zwischen mehreren physischen Geraeten
+sind noch nicht abgenommen. Fuer die neue Serverstufe gibt es zusaetzlich
+20 lokale Deno-/PostgreSQL-Fixture-Tests; sie ersetzen keine echte
+Supabase-/PostGIS-Abnahme und keinen physischen Nearby-Transfer.
+
+## DogTracker
 
 Der Hundetracker übermittelt den GPS-Standort eines Smartphones an ein Hund-Profil in der [Jagdkarte](https://wierichs.github.io/Jagdkarte/). So kann das Smartphone beim Hund mitgeführt werden und dessen Position im zugehörigen Revierprofil sichtbar machen.
 
