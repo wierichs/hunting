@@ -54,6 +54,8 @@ bleibt davon unberuehrt.
 	Hundekopplung, kurzer Teilnehmer-Outbox und signierten Serverbestaetigungen.
 	Die neue Serverstufe ist vorbereitet, aber noch nicht deployed. Einrichtung:
 	[Anleitung zur Relay-Serverstufe](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md).
+	Nearby kann Android-Berechtigungen fuer groben und praezisen Standortzugriff
+	zur Geraetesuche verlangen. Das aktiviert nicht die eigene Revierfreigabe.
 
 Kartenkacheln werden im privaten App-Cache gespeichert. Das ist kein garantierter
 Offline-Kartenbestand. Private Revierdaten werden nicht als dauerhafte

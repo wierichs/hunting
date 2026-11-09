@@ -134,7 +134,8 @@ class RelayGatewayService : Service() {
             add(Manifest.permission.BLUETOOTH_ADVERTISE)
             add(Manifest.permission.BLUETOOTH_CONNECT)
             add(Manifest.permission.BLUETOOTH_SCAN)
-            if (sdk <= 32) add(Manifest.permission.ACCESS_FINE_LOCATION)
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
             if (sdk >= 33) add(Manifest.permission.NEARBY_WIFI_DEVICES)
             if (sdk >= 37) add(Manifest.permission.ACCESS_LOCAL_NETWORK)
         }

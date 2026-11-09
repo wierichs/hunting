@@ -3,6 +3,7 @@ package org.wierichs.dogtracker.communication
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
 import com.google.android.gms.nearby.connection.ConnectionInfo
@@ -149,15 +150,15 @@ internal class NearbyRelayTransport(
             "org.wierichs.dogtracker",
             lifecycleCallback,
             AdvertisingOptions.Builder().setStrategy(strategy).build()
-        ).addOnFailureListener {
-            onTransportStatus("Nearby-Relais konnte nicht gestartet werden.")
+        ).addOnFailureListener { failure ->
+            onTransportStatus("Nearby-Relais konnte nicht gestartet werden (Code ${failure.statusCode()}).")
         }
         client.startDiscovery(
             "org.wierichs.dogtracker",
             discoveryCallback,
             DiscoveryOptions.Builder().setStrategy(strategy).build()
-        ).addOnFailureListener {
-            onTransportStatus("Nearby-Suche konnte nicht gestartet werden.")
+        ).addOnFailureListener { failure ->
+            onTransportStatus("Nearby-Suche konnte nicht gestartet werden (Code ${failure.statusCode()}).")
         }
         onTransportStatus("Suche nach freigegebenen Trackern in der Nähe …")
     }
@@ -210,4 +211,7 @@ internal class NearbyRelayTransport(
     companion object {
         private const val MAX_MESSAGES_PER_SYNC = 50
     }
+
+    private fun Exception.statusCode(): String = (this as? ApiException)?.statusCode?.toString()
+        ?: javaClass.simpleName
 }

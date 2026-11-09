@@ -84,10 +84,12 @@ class UnifiedRelayProtocolTest {
     }
 
     @Test fun nearbyPermissionsMatchAndroidVersionBoundaries() {
+        assertTrue(RelayGatewayService.requiredRelayPermissions(32).contains("android.permission.ACCESS_COARSE_LOCATION"))
         assertTrue(RelayGatewayService.requiredRelayPermissions(32).contains("android.permission.ACCESS_FINE_LOCATION"))
         assertFalse(RelayGatewayService.requiredRelayPermissions(32).contains("android.permission.NEARBY_WIFI_DEVICES"))
+        assertTrue(RelayGatewayService.requiredRelayPermissions(33).contains("android.permission.ACCESS_COARSE_LOCATION"))
         assertTrue(RelayGatewayService.requiredRelayPermissions(33).contains("android.permission.NEARBY_WIFI_DEVICES"))
-        assertFalse(RelayGatewayService.requiredRelayPermissions(33).contains("android.permission.ACCESS_FINE_LOCATION"))
+        assertTrue(RelayGatewayService.requiredRelayPermissions(33).contains("android.permission.ACCESS_FINE_LOCATION"))
         assertTrue(RelayGatewayService.requiredRelayPermissions(37).contains("android.permission.ACCESS_LOCAL_NETWORK"))
     }
 }
