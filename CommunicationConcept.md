@@ -22,7 +22,7 @@ Die Android-App hat nun eine transportneutrale Nachrichtenhülle, eine SQLite-Ou
 
 Die App nutzt Google Nearby Connections mit P2P-Cluster-Strategie. Relay ist opt-in und nur während des aktiven Trackings verfügbar. Vor jeder lokalen Verbindung müssen Nutzer den Nearby-Sicherheitscode auf beiden Geräten vergleichen. Der Ursprung sendet eigene Relay-Umschläge; der Empfänger legt sie lokal ab und lädt sie mit seinem eigenen Geräteschlüssel hoch. Mehrhop-Weitergabe ist nicht aktiviert.
 
-Im korrespondierenden `wierichs.github.io/Jagdkarte`-Repository liegt die separate Supabase-Funktion `dog-location-relay`; die bestehende `dog-location`-Funktion bleibt unverändert. Der Server prüft Ursprungssignatur, Revierzugehörigkeit, Ablauf und Positionswerte und übergibt die Position an die vorhandene RPC. Die RPC speichert nur den letzten Stand und verhindert, dass gleiche oder ältere Zeitstempel ihn überschreiben; ein separates Nachrichten-ID-Ledger gibt es nicht. Deploy- und API-Details stehen dort in `hundestandort-api.md` und `supabase/README.md`.
+Im korrespondierenden `wierichs.github.io/Jagdkarte`-Repository liegt die separate Supabase-Funktion `dog-location-relay`; die bestehende `dog-location`-Funktion bleibt unverändert. Der Server prüft Ursprungssignatur, Revierzugehörigkeit, Ablauf und Positionswerte und übergibt die Position an die vorhandene RPC. Die RPC speichert nur den letzten Stand und verhindert, dass gleiche oder ältere Zeitstempel ihn überschreiben; ein separates Nachrichten-ID-Ledger gibt es nicht. Deploy- und API-Details stehen dort in `hundestandort-api.md` und [supabase/README.md](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/README.md).
 
 Der Kotlin-Build, die Envelope-Krypto-Unit-Tests und die Instrumentierungstest-Kompilierung sind erfolgreich. Es war kein Android-Gerät oder Emulator angeschlossen, daher sind Nearby-Pairing, Berechtigungsdialoge und realer Funktransfer noch nicht auf Hardware validiert.
 
@@ -41,7 +41,8 @@ geoeffneten Ansicht angezeigt. Anmeldung, Revierdarstellung und
 Teilnehmer-Standortfreigabe sind native Implementierungen, keine WebView.
 
 Der bisherige DogTracker-Serververtrag bleibt unveraendert. Eine neue, separate
-Stufe `location-relay` ist nun in diesem Branch implementiert: Benutzergeraete
+Stufe `location-relay` liegt nun im Supabase-Verzeichnis des PWA-Repositories:
+Benutzergeraete
 werden mit verifiziertem Benutzerkonto pro Revier registriert und widerrufen.
 Ein Benutzerkonto wird nicht als Hundegeraet ausgegeben. Die Registrierung und
 Erneuerung benoetigen Internet; signierte Verzeichnisse erlauben anschliessend
@@ -70,11 +71,11 @@ Die vorhandene Verschluesselung und das DogTracker-Wire-Format werden
 weiterverwendet. Alte DogTracker-APKs verstehen neue Rueckbestaetigungen noch
 nicht. Neue Signaturschluessel fuer Verzeichnisse/Bestaetigungen sind getrennt
 von den bestehenden Verschluesselungsschluesseln zu verwalten. Bereitstellung,
-Warteschlangenlimits und offene Abnahmen stehen in
-[supabase/README.md](supabase/README.md).
+Warteschlangenlimits und offene Abnahmen stehen in der
+[Anleitung zur Relay-Serverstufe](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md).
 
 Die Serverstufe ist lokal gegen Kryptografie-, HTTP- und PostgreSQL-Fixtures
-getestet, aber noch nicht deployed. Das Web-Repository und die produktive
+getestet, aber noch nicht deployed. Die PWA-Web-App und die produktive
 Supabase-Installation wurden nicht veraendert. Die unten genannten
 Abnahmekriterien sind insbesondere fuer reale Funkabbrueche, mehrere physische
 Geraete und echte Supabase-/PostGIS-Rechte noch nicht vollstaendig abgenommen.

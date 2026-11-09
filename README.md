@@ -53,7 +53,7 @@ bleibt davon unberuehrt.
 - Gemeinsame Kommunikationsbasis mit optionaler Revier-Relaisfreigabe ohne
 	Hundekopplung, kurzer Teilnehmer-Outbox und signierten Serverbestaetigungen.
 	Die neue Serverstufe ist vorbereitet, aber noch nicht deployed. Einrichtung:
-	[supabase/README.md](supabase/README.md).
+	[Anleitung zur Relay-Serverstufe](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md).
 
 Kartenkacheln werden im privaten App-Cache gespeichert. Das ist kein garantierter
 Offline-Kartenbestand. Private Revierdaten werden nicht als dauerhafte
@@ -132,7 +132,7 @@ Einwilligungen. Die Gateway-Benachrichtigung kann im Hintergrund weiterlaufen,
 waehrend eigene Teilnehmerfixes weiterhin nur bei aktiver Karte erfasst werden.
 Alte DogTracker-Nachrichten koennen weitergeleitet werden; alte APKs
 unterstuetzen die neuen Rueckbestaetigungen noch nicht. Grenzen,
-Schluesselverwaltung und Bereitstellung: [supabase/README.md](supabase/README.md).
+Schluesselverwaltung und Bereitstellung: [Anleitung zur Relay-Serverstufe](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md).
 
 ### Einrichtung und Pruefung
 
