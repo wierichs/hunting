@@ -20,6 +20,21 @@ class HuntingMarkerTest {
 
     private fun draft(type: HuntingMarkerType) = HuntingMarkerDraft(type, " Test ", " Notiz ", inside)
 
+    @Test fun markerCatalogMatchesPwaIdsLabelsAndAssets() {
+        assertEquals(listOf("hochsitz", "bock", "erdsitz", "salzlecke", "huette", "leiter", "kanzel", "wagen",
+            "kirrung", "falle", "wildkamera", "anschuss", "wildsichtung", "standplatz", "sonstiges"),
+            HuntingMarkerType.entries.map { it.id })
+        assertEquals("Jagdhu\u00fctte", HuntingMarkerType.HUETTE.label)
+        assertEquals("drueckjagdbock.svg", HuntingMarkerType.BOCK.iconAsset)
+        assertEquals(HuntingMarkerType.SONSTIGES, HuntingMarkerType.fromId("unbekannt"))
+    }
+
+    @Test fun markerIconSizesMatchPwaScalesAndDefaultToStandard() {
+        assertEquals(listOf(0.8f, 1f, 1.25f), HuntingMarkerSize.entries.map { it.scale })
+        assertEquals(HuntingMarkerSize.STANDARD, HuntingMarkerSize.fromId(null))
+        assertEquals(HuntingMarkerSize.STANDARD, HuntingMarkerSize.fromId("invalid"))
+    }
+
     @Test fun guestsCanOnlyCreateAnschussAndWildsichtung() {
         assertEquals(setOf("anschuss", "wildsichtung"),
             HuntingMarkerType.entries.filter { it.canCreate(false) }.map { it.id }.toSet())
@@ -116,11 +131,44 @@ class HuntingMarkerTest {
         }
     }
 
-    @Test fun markerDeletionIsOwnerEditorOnlyAndScopedToProfile() {
+    @Test fun editorsCanDeleteAnyMarkerAndGuestsOnlyTheirOwnTemporaryMarkers() {
         val markerId = "c76274b7-e21a-440e-ad0d-c51c6f6345e0"
+        val ownTemporary = HuntingMapPoint(51.5, 7.5, "Anschuss", "", MapPointKind.FACILITY,
+            markerId = markerId, markerTypeId = "anschuss", createdBy = "guest")
         assertEquals("rest/v1/hunting_markers?id=eq.$markerId&profile_id=eq.${profile.id}",
-            markerDeletePath(profile, true, markerId))
-        assertThrows(IllegalStateException::class.java) { markerDeletePath(profile, false, markerId) }
-        assertThrows(IllegalArgumentException::class.java) { markerDeletePath(profile, true, "invalid") }
+            markerDeletePath(profile, true, "editor", ownTemporary.copy(createdBy = "another-member")))
+        assertEquals("rest/v1/hunting_markers?id=eq.$markerId&profile_id=eq.${profile.id}",
+            markerDeletePath(profile, false, "guest", ownTemporary))
+        assertThrows(IllegalStateException::class.java) {
+            markerDeletePath(profile, false, "other-guest", ownTemporary)
+        }
+        for (markerType in listOf("hochsitz", "sonstiges")) {
+            assertThrows(IllegalStateException::class.java) {
+                markerDeletePath(profile, false, "guest", ownTemporary.copy(markerTypeId = markerType))
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            markerDeletePath(profile, true, "editor", ownTemporary.copy(markerId = "invalid"))
+        }
+    }
+
+    @Test fun markerMoveUsesAuthorizedRpcAndRequiresCurrentLocationInsideBoundary() {
+        val markerId = "c76274b7-e21a-440e-ad0d-c51c6f6345e0"
+        val request = markerMoveRequest(profile, true, markerId, inside)
+        assertEquals("rest/v1/rpc/move_hunting_marker_to_location", request.path)
+        assertEquals(markerId, request.body.getString("p_marker_id"))
+        assertEquals(inside.latitude, request.body.getDouble("p_latitude"), 0.0)
+        assertEquals(inside.longitude, request.body.getDouble("p_longitude"), 0.0)
+        assertThrows(IllegalStateException::class.java) {
+            markerMoveRequest(profile, false, markerId, inside)
+        }
+        for (coordinates in listOf(outside, hole, MarkerCoordinates(Double.NaN, 7.5))) {
+            assertThrows(IllegalArgumentException::class.java) {
+                markerMoveRequest(profile, true, markerId, coordinates)
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            markerMoveRequest(profile, true, "invalid", inside)
+        }
     }
 }

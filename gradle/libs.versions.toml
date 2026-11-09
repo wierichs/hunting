@@ -14,11 +14,13 @@ playServicesCodeScanner = "16.1.0"
 playServicesNearby = "19.3.0"
 osmdroid = "6.1.20"
 jts = "1.20.0"
+androidSvg = "1.4"
 
 [libraries]
 osmdroid = { group = "org.osmdroid", name = "osmdroid-android", version.ref = "osmdroid" }
 jts-core = { group = "org.locationtech.jts", name = "jts-core", version.ref = "jts" }
 jts-geojson = { group = "org.locationtech.jts.io", name = "jts-io-common", version.ref = "jts" }
+androidsvg = { group = "com.caverock", name = "androidsvg-aar", version.ref = "androidSvg" }
 json-test = { group = "org.json", name = "json", version = "20250517" }
 zxing-core = { group = "com.google.zxing", name = "core", version = "3.5.3" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

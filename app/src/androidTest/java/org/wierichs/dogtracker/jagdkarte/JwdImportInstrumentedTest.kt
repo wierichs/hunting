@@ -1,0 +1,65 @@
+package org.wierichs.dogtracker.jagdkarte
+
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class JwdImportInstrumentedTest {
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    @Test
+    fun importConfirmationShowsNewProfileSummaryAndImportsOnConfirmation() {
+        val imported = JwdImportedProfile("JWD Revier", JSONObject("""{
+            "type":"Polygon","coordinates":[[[6,50],[8,50],[8,52],[6,52],[6,50]]]
+        }"""), emptyList(), 2)
+        var imports = 0
+        var importedProfileId = ""
+        composeRule.setContent {
+            MaterialTheme {
+                RevierImportDialog(listOf(imported), onImport = { imports++; "profile-id" },
+                    onImported = { importedProfileId = it }, onDismiss = {})
+            }
+        }
+
+        composeRule.onNodeWithText("Revierdatei importieren?").assertIsDisplayed()
+        composeRule.onNodeWithText("JWD Revier").assertIsDisplayed()
+        composeRule.onNodeWithText("0 dauerhafte Einrichtung(en)").assertIsDisplayed()
+        composeRule.onNodeWithText("2 befriedete(r) Bereich(e)").assertIsDisplayed()
+        composeRule.onNodeWithText("Profil importieren").performClick()
+        composeRule.runOnIdle {
+            assertEquals(1, imports)
+            assertEquals("profile-id", importedProfileId)
+        }
+    }
+
+    @Test
+    fun importConfirmationAllowsChoosingOneFeatureFromGeoJsonCollection() {
+        val candidates = listOf(
+            JwdImportedProfile("Gemeinde Nord", JSONObject(), emptyList(), 0),
+            JwdImportedProfile("Gemeinde Sued", JSONObject(), emptyList(), 1)
+        )
+        var importedName = ""
+        composeRule.setContent {
+            MaterialTheme {
+                RevierImportDialog(candidates, onImport = { importedName = it.name; "profile-id" },
+                    onImported = {}, onDismiss = {})
+            }
+        }
+
+        composeRule.onNodeWithText("GeoJSON-Feature").performClick()
+        composeRule.onNodeWithText("2. Gemeinde Sued").performClick()
+        composeRule.onNodeWithText("Profil importieren").performClick()
+        composeRule.runOnIdle { assertEquals("Gemeinde Sued", importedName) }
+    }
+}

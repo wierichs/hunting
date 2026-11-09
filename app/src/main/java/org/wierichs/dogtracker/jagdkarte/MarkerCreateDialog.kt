@@ -136,18 +136,71 @@ internal fun MarkerCreateDialog(
     @Composable
     internal fun MarkerEditDialog(
         marker: HuntingMapPoint,
+        canEdit: Boolean,
+        canDelete: Boolean,
         onUpdate: suspend (String, String) -> Unit,
         onDelete: suspend () -> Unit,
+        onMove: suspend (MarkerCoordinates) -> Unit,
+        onCreateGuestLink: suspend () -> String,
+        onShareGuestLink: (String) -> Unit,
         onUpdated: () -> Unit,
         onDeleted: () -> Unit,
+        onMoved: () -> Unit,
         onDismiss: () -> Unit
     ) {
+        val context = LocalContext.current
         val scope = rememberCoroutineScope()
         var title by remember(marker.markerId) { mutableStateOf(marker.title) }
         var notes by remember(marker.markerId) { mutableStateOf(marker.markerNotes) }
-        var confirmingDelete by remember(marker.markerId) { mutableStateOf(false) }
+        var confirmingDelete by remember(marker.markerId) { mutableStateOf(!canEdit) }
         var busy by remember { mutableStateOf(false) }
         var error by remember { mutableStateOf("") }
+        var guestLinkStatus by remember { mutableStateOf("") }
+
+        fun createAndShareGuestLink() {
+            busy = true
+            error = ""
+            guestLinkStatus = ""
+            scope.launch {
+                try {
+                    onShareGuestLink(onCreateGuestLink())
+                    guestLinkStatus = "Gastlink erstellt. Er ist 7 Tage gueltig."
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    error = failure.message ?: "Gastlink konnte nicht erstellt werden."
+                } finally {
+                    busy = false
+                }
+            }
+        }
+
+        fun moveToCurrentLocation() {
+            busy = true
+            error = ""
+            scope.launch {
+                try {
+                    val location = freshLocation(context)
+                    onMove(MarkerCoordinates(location.latitude, location.longitude))
+                    onMoved()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    error = failure.message ?: "Markierung konnte nicht verschoben werden."
+                } finally {
+                    busy = false
+                }
+            }
+        }
+
+        val movePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true) {
+                moveToCurrentLocation()
+            } else {
+                busy = false
+                error = "Fuer das Verschieben ist ein genauer Standort erforderlich."
+            }
+        }
 
         fun save() {
             busy = true
@@ -185,33 +238,50 @@ internal fun MarkerCreateDialog(
 
         AlertDialog(
             onDismissRequest = { if (!busy) onDismiss() },
-            title = { Text(if (confirmingDelete) "Markierung loeschen?" else "Markierung bearbeiten") },
+            title = { Text(if (confirmingDelete) {
+                if (canEdit) "Markierung loeschen?" else "Eigene Meldung loeschen?"
+            } else "Markierung bearbeiten") },
             text = {
                 Column(Modifier.fillMaxWidth().heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(marker.markerTypeId.orEmpty(), style = MaterialTheme.typography.labelLarge)
                     if (confirmingDelete) {
-                        Text("Diese Markierung wird dauerhaft geloescht.")
-                    } else {
+                        Text(if (canEdit) "Diese Markierung wird dauerhaft geloescht."
+                            else "Deine temporaere Markierung wird dauerhaft geloescht.")
+                    } else if (canEdit) {
                         OutlinedTextField(title, onValueChange = { title = it.take(80) }, enabled = !busy, singleLine = true,
                             label = { Text("Bezeichnung") }, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(notes, onValueChange = { notes = it.take(300) }, enabled = !busy, minLines = 2, maxLines = 4,
                             label = { Text("Notiz") }, supportingText = { Text("${notes.length}/300") }, modifier = Modifier.fillMaxWidth())
+                        TextButton(enabled = !busy, onClick = {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                                moveToCurrentLocation()
+                            } else {
+                                busy = true
+                                movePermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
+                            }
+                        }) { Text("An aktuellen Standort verschieben") }
+                        TextButton(enabled = !busy, onClick = { createAndShareGuestLink() }) { Text("Gastlink teilen") }
                     }
                     if (busy) CircularProgressIndicator()
+                    if (guestLinkStatus.isNotBlank()) Text(guestLinkStatus, style = MaterialTheme.typography.bodySmall)
                     if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
                 }
             },
             confirmButton = {
-                TextButton(enabled = !busy && (confirmingDelete || title.isNotBlank()),
+                TextButton(enabled = !busy && canDelete && (confirmingDelete || title.isNotBlank()),
                     onClick = { if (confirmingDelete) delete() else save() }) {
-                    Text(if (confirmingDelete) "Endgueltig loeschen" else "Speichern")
+                    Text(if (confirmingDelete) {
+                        if (canEdit) "Endgueltig loeschen" else "Meldung loeschen"
+                    } else "Speichern")
                 }
             },
             dismissButton = {
                 if (confirmingDelete) {
-                    TextButton(enabled = !busy, onClick = { confirmingDelete = false }) { Text("Zurueck") }
-                } else {
+                    TextButton(enabled = !busy, onClick = { if (canEdit) confirmingDelete = false else onDismiss() }) {
+                        Text(if (canEdit) "Zurueck" else "Abbrechen")
+                    }
+                } else if (canEdit) {
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         TextButton(enabled = !busy, onClick = { confirmingDelete = true }) { Text("Loeschen") }
                         TextButton(enabled = !busy, onClick = onDismiss) { Text("Schliessen") }

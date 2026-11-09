@@ -6,6 +6,7 @@ import androidx.core.content.edit
 internal object TrackerPreferences {
     private const val FILE_NAME = "tracker_settings"
     private const val KEY_INTERVAL_SECONDS = "interval_seconds"
+    private const val KEY_MARKER_ICON_SIZE = "marker_icon_size"
     private const val KEY_IS_TRACKING = "is_tracking"
     private const val KEY_STATUS = "status"
     private const val KEY_RELAY_DEVICE_ID = "relay_device_id"
@@ -28,6 +29,15 @@ internal object TrackerPreferences {
 
     fun status(context: Context): String =
         preferences(context).getString(KEY_STATUS, "Noch nicht gestartet.") ?: "Noch nicht gestartet."
+
+    fun markerIconSize(context: Context): String = preferences(context)
+        .getString(KEY_MARKER_ICON_SIZE, "standard")
+        ?.takeIf { it in MARKER_ICON_SIZES } ?: "standard"
+
+    fun setMarkerIconSize(context: Context, size: String) {
+        require(size in MARKER_ICON_SIZES)
+        preferences(context).edit { putString(KEY_MARKER_ICON_SIZE, size) }
+    }
 
     fun deviceToken(context: Context): String? = DeviceTokenStorage.read(context)
 
@@ -78,4 +88,6 @@ internal object TrackerPreferences {
     fun setStatus(context: Context, status: String) {
         preferences(context).edit { putString(KEY_STATUS, status) }
     }
+
+    private val MARKER_ICON_SIZES = setOf("small", "standard", "large")
 }

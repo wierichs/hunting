@@ -53,6 +53,7 @@ android {
 
 dependencies {
     implementation(libs.osmdroid)
+    implementation(libs.androidsvg)
     implementation(libs.jts.core)
     implementation(libs.jts.geojson)
     implementation(libs.zxing.core)

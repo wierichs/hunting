@@ -6,13 +6,14 @@ internal enum class HuntingMarkerType(
     val id: String,
     val label: String,
     val temporary: Boolean = false,
-    val requiresCurrentLocation: Boolean = false
+    val requiresCurrentLocation: Boolean = false,
+    val iconAsset: String = "$id.svg"
 ) {
     HOCHSITZ("hochsitz", "Hochsitz"),
-    BOCK("bock", "Bock"),
+    BOCK("bock", "Bock", iconAsset = "drueckjagdbock.svg"),
     ERDSITZ("erdsitz", "Erdsitz"),
     SALZLECKE("salzlecke", "Salzlecke"),
-    HUETTE("huette", "Jagdhuette"),
+    HUETTE("huette", "Jagdhu\u00fctte"),
     LEITER("leiter", "Leiter"),
     KANZEL("kanzel", "Kanzel"),
     WAGEN("wagen", "Wagen"),
@@ -25,6 +26,10 @@ internal enum class HuntingMarkerType(
     SONSTIGES("sonstiges", "Sonstiges");
 
     fun canCreate(canEdit: Boolean): Boolean = canEdit || requiresCurrentLocation
+
+    companion object {
+        fun fromId(id: String?): HuntingMarkerType = entries.firstOrNull { it.id == id } ?: SONSTIGES
+    }
 }
 
 internal data class MarkerCoordinates(val latitude: Double, val longitude: Double)
@@ -37,6 +42,16 @@ internal data class HuntingMarkerDraft(
 )
 
 internal data class MarkerWriteRequest(val path: String, val body: JSONObject)
+
+internal enum class HuntingMarkerSize(val id: String, val label: String, val scale: Float) {
+    SMALL("small", "Klein", 0.8f),
+    STANDARD("standard", "Standard", 1f),
+    LARGE("large", "Gro\u00df", 1.25f);
+
+    companion object {
+        fun fromId(id: String?): HuntingMarkerSize = entries.firstOrNull { it.id == id } ?: STANDARD
+    }
+}
 
 internal fun markerWriteRequest(
     profile: HuntingProfile,
@@ -93,10 +108,38 @@ internal fun markerUpdateRequest(
         JSONObject().put("title", normalizedTitle).put("notes", normalizedNotes))
 }
 
-internal fun markerDeletePath(profile: HuntingProfile, canEdit: Boolean, markerId: String): String {
-    check(canEdit) { "Nur Owner und Bearbeiter duerfen Markierungen loeschen." }
+internal fun canDeleteHuntingMarker(canEdit: Boolean, userId: String, marker: HuntingMapPoint): Boolean =
+    canEdit || (userId.isNotBlank() && marker.createdBy == userId &&
+        HuntingMarkerType.fromId(marker.markerTypeId).temporary)
+
+internal fun markerDeletePath(
+    profile: HuntingProfile,
+    canEdit: Boolean,
+    userId: String,
+    marker: HuntingMapPoint
+): String {
+    check(canDeleteHuntingMarker(canEdit, userId, marker)) {
+        "Du darfst nur deine eigenen temporaeren Markierungen loeschen."
+    }
+    val markerId = marker.markerId ?: error("Markierung nicht gefunden.")
     require(MARKER_ID_PATTERN.matches(markerId)) { "Ungueltige Markierung." }
     return "rest/v1/hunting_markers?id=eq.$markerId&profile_id=eq.${profile.id}"
+}
+
+internal fun markerMoveRequest(
+    profile: HuntingProfile,
+    canEdit: Boolean,
+    markerId: String,
+    coordinates: MarkerCoordinates
+): MarkerWriteRequest {
+    check(canEdit) { "Nur Owner und Bearbeiter duerfen Markierungen verschieben." }
+    require(MARKER_ID_PATTERN.matches(markerId)) { "Ungueltige Markierung." }
+    require(locationInsideBoundary(profile.boundary, coordinates.latitude, coordinates.longitude)) {
+        "Dein aktueller Standort liegt ausserhalb des Reviers."
+    }
+    return MarkerWriteRequest("rest/v1/rpc/move_hunting_marker_to_location", JSONObject()
+        .put("p_marker_id", markerId).put("p_latitude", coordinates.latitude)
+        .put("p_longitude", coordinates.longitude))
 }
 
 private val MARKER_ID_PATTERN = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")

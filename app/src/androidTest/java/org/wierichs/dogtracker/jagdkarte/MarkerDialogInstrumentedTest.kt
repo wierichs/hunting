@@ -23,9 +23,11 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.caverock.androidsvg.SVG
 import java.io.File
 import java.time.Instant
 import org.json.JSONObject
+import org.wierichs.dogtracker.TrackerPreferences
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -42,6 +44,28 @@ class MarkerDialogInstrumentedTest {
     private val profile = HuntingProfile("revier", "Testrevier", "owner", false, JSONObject("""{
         "type":"Polygon","coordinates":[[[6,50],[8,50],[8,52],[6,52],[6,50]]]
     }"""))
+
+    @Test
+    fun allMarkerCatalogIconsRenderAtTheExpectedSize() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        HuntingMarkerType.entries.forEach { type ->
+            val picture = SVG.getFromAsset(context.assets, "markers/${type.iconAsset}").renderToPicture(120, 144)
+            assertEquals(120, picture.width)
+            assertEquals(144, picture.height)
+        }
+    }
+
+    @Test
+    fun markerIconSizePreferencePersistsOnDevice() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val previous = TrackerPreferences.markerIconSize(context)
+        try {
+            TrackerPreferences.setMarkerIconSize(context, "large")
+            assertEquals("large", TrackerPreferences.markerIconSize(context))
+        } finally {
+            TrackerPreferences.setMarkerIconSize(context, previous)
+        }
+    }
 
     @Test
     fun editorCanSaveFacilityWithoutRequestingGps() {
@@ -152,6 +176,33 @@ class MarkerDialogInstrumentedTest {
     }
 
     @Test
+    fun mapLegendShowsPwaRolesDogAndBoundary() {
+        val now = Instant.now()
+        val points = listOf(
+            HuntingMapPoint(51.5, 7.5, "Mitglied", "", MapPointKind.PARTICIPANT, now,
+                participantRole = HuntingParticipantRole.GUEST),
+            HuntingMapPoint(51.6, 7.6, "Bearbeiter", "", MapPointKind.PARTICIPANT, now,
+                participantRole = HuntingParticipantRole.EDITOR),
+            HuntingMapPoint(51.7, 7.7, "Chef", "", MapPointKind.PARTICIPANT, now,
+                participantRole = HuntingParticipantRole.OWNER),
+            HuntingMapPoint(51.8, 7.8, "Hund", "", MapPointKind.DOG, now.minusSeconds(121))
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                NativeHuntingMap(HuntingSnapshot(profile, points, false), now, Modifier.fillMaxSize(),
+                    onChooseLocation = { false })
+            }
+        }
+        composeRule.onNodeWithText("Legende anzeigen", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithText("Jagdbezirksgrenze", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Mitglied", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Bearbeiter", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Chef", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Hund", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Legende ausblenden", useUnmergedTree = true).performClick()
+    }
+
+    @Test
     fun markerEditSavesOnlyTextFields() {
         val marker = HuntingMapPoint(51.5, 7.5, "Sitz am Wald", "hochsitz: Alt", MapPointKind.FACILITY,
             markerId = "c76274b7-e21a-440e-ad0d-c51c6f6345e0", markerTypeId = "hochsitz", markerNotes = "Alt")
@@ -160,8 +211,10 @@ class MarkerDialogInstrumentedTest {
         var updated = false
         composeRule.setContent {
             MaterialTheme {
-                MarkerEditDialog(marker, onUpdate = { title, notes -> savedTitle = title; savedNotes = notes },
-                    onDelete = {}, onUpdated = { updated = true }, onDeleted = {}, onDismiss = {})
+                MarkerEditDialog(marker, canEdit = true, canDelete = true,
+                    onUpdate = { title, notes -> savedTitle = title; savedNotes = notes },
+                    onDelete = {}, onMove = {}, onCreateGuestLink = { "https://example.test/#gast=token" },
+                    onShareGuestLink = {}, onUpdated = { updated = true }, onDeleted = {}, onMoved = {}, onDismiss = {})
             }
         }
         composeRule.onNodeWithText("Bezeichnung").performTextClearance()
@@ -183,8 +236,10 @@ class MarkerDialogInstrumentedTest {
         var deleted = false
         composeRule.setContent {
             MaterialTheme {
-                MarkerEditDialog(marker, onUpdate = { _, _ -> }, onDelete = { deleted = true },
-                    onUpdated = {}, onDeleted = {}, onDismiss = {})
+                MarkerEditDialog(marker, canEdit = true, canDelete = true,
+                    onUpdate = { _, _ -> }, onDelete = { deleted = true },
+                    onMove = {}, onCreateGuestLink = { "https://example.test/#gast=token" }, onShareGuestLink = {},
+                    onUpdated = {}, onDeleted = {}, onMoved = {}, onDismiss = {})
             }
         }
         composeRule.onNodeWithText("Loeschen").performClick()
@@ -192,6 +247,44 @@ class MarkerDialogInstrumentedTest {
         composeRule.runOnIdle { assertEquals(false, deleted) }
         composeRule.onNodeWithText("Endgueltig loeschen").performClick()
         composeRule.runOnIdle { assertTrue(deleted) }
+    }
+
+    @Test
+    fun guestCanOnlyDeleteTheirOwnTemporaryMarker() {
+        val marker = HuntingMapPoint(51.5, 7.5, "Eigener Anschuss", "anschuss", MapPointKind.FACILITY,
+            markerId = "c76274b7-e21a-440e-ad0d-c51c6f6345e0", markerTypeId = "anschuss", createdBy = "guest")
+        var deleted = false
+        composeRule.setContent {
+            MaterialTheme {
+                MarkerEditDialog(marker, canEdit = false, canDelete = true,
+                    onUpdate = { _, _ -> error("Gast darf den Markertext nicht bearbeiten.") },
+                    onDelete = { deleted = true }, onMove = { error("Gast darf Marker nicht verschieben.") },
+                    onCreateGuestLink = { error("Gast darf keine Gastlinks erstellen.") }, onShareGuestLink = {},
+                    onUpdated = {}, onDeleted = {}, onMoved = {}, onDismiss = {})
+            }
+        }
+        composeRule.onNodeWithText("Eigene Meldung loeschen?").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Bezeichnung").assertCountEquals(0)
+        composeRule.onNodeWithText("Meldung loeschen").performClick()
+        composeRule.runOnIdle { assertTrue(deleted) }
+    }
+
+    @Test
+    fun markerCanCreateAndSharePositionSpecificGuestLink() {
+        val marker = HuntingMapPoint(51.5, 7.5, "Sitz am Wald", "hochsitz: Notiz", MapPointKind.FACILITY,
+            markerId = "c76274b7-e21a-440e-ad0d-c51c6f6345e0", markerTypeId = "hochsitz", markerNotes = "Notiz")
+        var sharedLink = ""
+        composeRule.setContent {
+            MaterialTheme {
+                MarkerEditDialog(marker, canEdit = true, canDelete = true,
+                    onUpdate = { _, _ -> }, onDelete = {}, onMove = {},
+                    onCreateGuestLink = { "https://wierichs.github.io/Jagdkarte/#gast=" + "A".repeat(43) },
+                    onShareGuestLink = { sharedLink = it }, onUpdated = {}, onDeleted = {}, onMoved = {}, onDismiss = {})
+            }
+        }
+        composeRule.onNodeWithText("Gastlink teilen").performClick()
+        composeRule.onNodeWithText("Gastlink erstellt. Er ist 7 Tage gueltig.").assertIsDisplayed()
+        composeRule.runOnIdle { assertTrue(sharedLink.startsWith("https://wierichs.github.io/Jagdkarte/#gast=")) }
     }
 
     private fun captureScreenshot(name: String, dialog: Boolean = true) {

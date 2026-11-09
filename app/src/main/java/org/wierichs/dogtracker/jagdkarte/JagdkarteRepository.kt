@@ -2,7 +2,11 @@ package org.wierichs.dogtracker.jagdkarte
 
 import android.content.Context
 import java.net.URL
+import java.security.SecureRandom
 import java.time.Instant
+import java.util.Locale
+import java.util.Base64
+import java.util.UUID
 import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -18,10 +22,30 @@ internal data class HuntingProfile(
     val name: String,
     val ownerId: String,
     val huntingMode: Boolean,
-    val boundary: JSONObject?
+    val boundary: JSONObject?,
+    val ownerEmail: String? = null
 )
 
 internal enum class MapPointKind { FACILITY, PARTICIPANT, DOG }
+
+internal enum class HuntingParticipantRole(val id: String) {
+    GUEST("guest"),
+    EDITOR("editor"),
+    OWNER("owner");
+
+    companion object {
+        fun fromId(id: String?): HuntingParticipantRole = entries.firstOrNull { it.id == id } ?: GUEST
+    }
+}
+
+internal fun participantMarkerIconAsset(role: HuntingParticipantRole): String = when (role) {
+    HuntingParticipantRole.GUEST -> "location-member.svg"
+    HuntingParticipantRole.EDITOR -> "location-editor.svg"
+    HuntingParticipantRole.OWNER -> "location-owner.svg"
+}
+
+internal fun dogLocationIconAsset(stale: Boolean): String =
+    if (stale) "location-dog-stale.svg" else "location-dog.svg"
 
 internal data class HuntingMapPoint(
     val latitude: Double,
@@ -33,7 +57,9 @@ internal data class HuntingMapPoint(
     val expiresAt: Instant? = null,
     val markerId: String? = null,
     val markerTypeId: String? = null,
-    val markerNotes: String = ""
+    val markerNotes: String = "",
+    val participantRole: HuntingParticipantRole = HuntingParticipantRole.GUEST,
+    val createdBy: String? = null
 ) {
     fun visibleAt(now: Instant): Boolean = when {
         !latitude.isFinite() || !longitude.isFinite() -> false
@@ -60,10 +86,111 @@ internal class JagdkarteApiException(val status: Int, val errorCode: String, mes
 
 internal fun participantNames(array: JSONArray): Map<String, String> = (0 until array.length()).associate { index ->
     val row = array.getJSONObject(index)
-    val name = row.optString("display_name").takeUnless { it.isBlank() || it == "null" }
-        ?: row.optString("participant_email").takeUnless { it.isBlank() || it == "null" }
+    val name = row.optString("display_name").trim().takeUnless { it.isBlank() || it == "null" }
+        ?: row.optString("participant_email").trim().takeUnless { it.isBlank() || it == "null" }
         ?: "Teilnehmer"
     row.getString("participant_user_id") to name
+}
+
+internal fun participantRoles(array: JSONArray): Map<String, HuntingParticipantRole> =
+    (0 until array.length()).associate { index ->
+        val row = array.getJSONObject(index)
+        row.getString("participant_user_id") to HuntingParticipantRole.fromId(row.optString("participant_role"))
+    }
+
+internal fun ownerEmailsByProfileId(array: JSONArray): Map<String, String> = buildMap {
+    for (index in 0 until array.length()) {
+        val row = array.getJSONObject(index)
+        val email = row.optString("owner_email").trim()
+        if (email.isNotBlank() && email != "null") put(row.getString("profile_id"), email)
+    }
+}
+
+internal fun profileSelectionLabel(profile: HuntingProfile, userId: String): String =
+    if (profile.ownerId == userId) {
+        "${profile.name} (Eigen)"
+    } else {
+        "${profile.name} (Geteilt) @${profile.ownerEmail ?: profile.ownerId.take(8)}"
+    }
+
+internal fun displayNameWriteBody(userId: String, displayName: String): JSONObject {
+    require(Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+        .matches(userId)) { "Ungueltige Benutzerkennung." }
+    val normalizedName = displayName.trim()
+    require(normalizedName.length <= 60) { "Der Anzeigename darf hoechstens 60 Zeichen enthalten." }
+    return JSONObject().put("user_id", userId)
+        .put("display_name", normalizedName.ifBlank { JSONObject.NULL })
+        .put("updated_at", Instant.now().toString())
+}
+
+internal enum class HuntingProfileMemberRole(val id: String, val label: String) {
+    GUEST("guest", "Gast"),
+    EDITOR("editor", "Bearbeiter");
+
+    companion object {
+        fun fromId(id: String?): HuntingProfileMemberRole = entries.firstOrNull { it.id == id } ?: GUEST
+    }
+}
+
+private val INVITATION_EMAIL_PATTERN = Regex("^[^\\s@]+@[^\\s@.]+(?:\\.[^\\s@.]+)+$")
+
+internal fun normalizeInvitationEmail(email: String): String {
+    val normalizedEmail = email.trim().lowercase(Locale.ROOT)
+    require(normalizedEmail.length in 3..254 && INVITATION_EMAIL_PATTERN.matches(normalizedEmail)) {
+        "Bitte eine gueltige E-Mail-Adresse eingeben."
+    }
+    return normalizedEmail
+}
+
+internal fun inviteMemberRequestBody(profileId: String, email: String, role: HuntingProfileMemberRole): JSONObject {
+    require(Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+        .matches(profileId)) { "Ungueltige Revierkennung." }
+    val normalizedEmail = normalizeInvitationEmail(email)
+    return JSONObject().put("p_profile_id", profileId).put("p_email", normalizedEmail).put("p_role", role.id)
+}
+
+internal class InvitationEmailDeliveryException(message: String) : Exception(message)
+
+internal data class GuestLinkTarget(val profileId: String, val markerId: String)
+
+private val GUEST_LINK_TOKEN_PATTERN = Regex("^[A-Za-z0-9_-]{43}$")
+private val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+
+internal fun createGuestLinkToken(): String {
+    val bytes = ByteArray(32)
+    SecureRandom().nextBytes(bytes)
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+}
+
+internal fun guestLinkTokenFromFragment(fragment: String?): String? {
+    val components = fragment?.removePrefix("#")?.split('&') ?: return null
+    val token = components.firstNotNullOfOrNull { component ->
+        val separator = component.indexOf('=')
+        if (separator > 0 && component.substring(0, separator) == "gast") component.substring(separator + 1) else null
+    }
+    return token?.takeIf { GUEST_LINK_TOKEN_PATTERN.matches(it) }
+}
+
+internal fun guestLinkUrl(token: String): String {
+    require(GUEST_LINK_TOKEN_PATTERN.matches(token)) { "Ungueltiger Gastlink-Token." }
+    return "https://wierichs.github.io/Jagdkarte/#gast=$token"
+}
+
+internal fun guestLinkTargetFromJson(json: JSONObject): GuestLinkTarget {
+    val profileId = json.optString("profile_id")
+    val markerId = json.optString("marker_id")
+    require(UUID_PATTERN.matches(profileId) && UUID_PATTERN.matches(markerId)) {
+        "Gastlink enthaelt kein gueltiges Revierziel."
+    }
+    return GuestLinkTarget(profileId, markerId)
+}
+
+internal fun createdProfileIdFromResponse(response: String): String? {
+    val objectId = runCatching { JSONObject(response).optString("id") }.getOrNull()
+    val arrayId = if (objectId.isNullOrBlank() || objectId == "null") {
+        runCatching { JSONArray(response).optJSONObject(0)?.optString("id") }.getOrNull()
+    } else null
+    return (objectId ?: arrayId)?.takeIf { UUID_PATTERN.matches(it) }
 }
 
 internal class JagdkarteRepository(context: Context) {
@@ -89,6 +216,23 @@ internal class JagdkarteRepository(context: Context) {
         }
     }
 
+    suspend fun acceptProfileInvitations() = authenticated { token ->
+        request("rest/v1/rpc/accept_hunting_profile_invitations", "POST", JSONObject(), token)
+        Unit
+    }
+
+    suspend fun ownDisplayName(): String? = authenticated { token ->
+        val result = JSONArray(request(
+            "rest/v1/hunting_user_profiles?select=display_name&user_id=eq.${uuid(userId)}", bearer = token))
+        result.optJSONObject(0)?.optString("display_name")?.trim()?.takeIf { it.isNotBlank() && it != "null" }
+    }
+
+    suspend fun saveOwnDisplayName(displayName: String) = authenticated { token ->
+        val body = displayNameWriteBody(userId, displayName)
+        request("rest/v1/hunting_user_profiles?on_conflict=user_id", "POST", body, token, upsert = true)
+        Unit
+    }
+
     suspend fun signOut() = withContext(Dispatchers.IO) {
         sessionMutex.withLock {
             try {
@@ -103,28 +247,44 @@ internal class JagdkarteRepository(context: Context) {
     }
 
     suspend fun profiles(): List<HuntingProfile> = authenticated { token ->
-        parseProfiles(JSONArray(request(
+        val profiles = parseProfiles(JSONArray(request(
             "rest/v1/hunting_profiles?select=id,district_name,owner_id,hunting_mode,boundary_geojson&order=district_name",
             bearer = token
         )))
+        val sharedProfileIds = profiles.filter { it.ownerId != userId }.map { it.id }
+        if (sharedProfileIds.isEmpty()) return@authenticated profiles
+        val ownerEmails = try {
+            ownerEmailsByProfileId(JSONArray(request("rest/v1/rpc/get_hunting_profile_owner_emails", "POST",
+                JSONObject().put("p_profile_ids", JSONArray(sharedProfileIds)), token)))
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            emptyMap()
+        }
+        profiles.map { it.copy(ownerEmail = ownerEmails[it.id]) }
     }
 
     suspend fun snapshot(profileId: String): HuntingSnapshot = authenticated { token ->
         val profile = loadProfile(token, profileId)
         val canEdit = canEditProfile(token, profile)
         val points = mutableListOf<HuntingMapPoint>()
-        rows(request("rest/v1/hunting_markers?select=id,title,notes,type_id,latitude,longitude,expires_at&profile_id=eq.$profileId", bearer = token)) { row ->
+        rows(request("rest/v1/hunting_markers?select=id,title,notes,type_id,latitude,longitude,expires_at,created_by&profile_id=eq.$profileId", bearer = token)) { row ->
             points += point(row, row.getString("title"), "${row.optString("type_id")}: ${row.optString("notes")}", MapPointKind.FACILITY)
                 .copy(expiresAt = row.instant("expires_at"), markerId = row.getString("id"),
-                    markerTypeId = row.optString("type_id"), markerNotes = row.optString("notes"))
+                    markerTypeId = row.optString("type_id"), markerNotes = row.optString("notes"),
+                    createdBy = row.optString("created_by").takeIf { it.isNotBlank() && it != "null" })
         }
         if (profile.huntingMode) {
-            val participants = participantNames(JSONArray(request("rest/v1/rpc/get_hunting_profile_participants", "POST",
-                JSONObject().put("p_profile_id", profileId), token)))
+            val participantRows = JSONArray(request("rest/v1/rpc/get_hunting_profile_participants", "POST",
+                JSONObject().put("p_profile_id", profileId), token))
+            val participants = participantNames(participantRows)
+            val participantRoles = participantRoles(participantRows)
             rows(request("rest/v1/hunting_profile_locations?select=user_id,latitude,longitude,accuracy,updated_at&profile_id=eq.$profileId", bearer = token)) { row ->
-                points += point(row, participants[row.getString("user_id")] ?: "Teilnehmer",
+                val participantId = row.getString("user_id")
+                points += point(row, participants[participantId] ?: "Teilnehmer",
                     "Genauigkeit: ${row.optDouble("accuracy").toInt()} m", MapPointKind.PARTICIPANT)
-                    .copy(timestamp = row.instant("updated_at"))
+                    .copy(timestamp = row.instant("updated_at"),
+                        participantRole = participantRoles[participantId] ?: HuntingParticipantRole.GUEST)
             }
             val dogs = mutableMapOf<String, String>()
             rows(request("rest/v1/hunting_dogs?select=id,name&profile_id=eq.$profileId", bearer = token)) { row ->
@@ -158,10 +318,78 @@ internal class JagdkarteRepository(context: Context) {
 
     suspend fun deleteMarker(profileId: String, marker: HuntingMapPoint) = authenticated { token ->
         val profile = loadProfile(token, profileId)
-        val path = markerDeletePath(profile, canEditProfile(token, profile), marker.markerId ?: error("Markierung nicht gefunden."))
+        val path = markerDeletePath(profile, canEditProfile(token, profile), userId, marker)
         val deleted = JSONArray(request(path, "DELETE", bearer = token, returnRepresentation = true))
         check(deleted.length() == 1) { "Markierung nicht gefunden oder keine Berechtigung." }
         Unit
+    }
+
+    suspend fun moveMarkerToLocation(profileId: String, markerId: String, coordinates: MarkerCoordinates) = authenticated { token ->
+        val profile = loadProfile(token, profileId)
+        val move = markerMoveRequest(profile, canEditProfile(token, profile), markerId, coordinates)
+        request(move.path, "POST", move.body, token)
+        Unit
+    }
+
+    suspend fun inviteMember(profileId: String, email: String, role: HuntingProfileMemberRole) = authenticated { token ->
+        val profile = loadProfile(token, profileId)
+        check(canEditProfile(token, profile)) { "Nur Owner und Bearbeiter duerfen Benutzer einladen." }
+        val body = inviteMemberRequestBody(profile.id, email, role)
+        request("rest/v1/rpc/invite_hunting_profile_member", "POST", body, token)
+        try {
+            request("auth/v1/otp", "POST", JSONObject()
+                .put("email", body.getString("p_email")).put("create_user", true))
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            throw InvitationEmailDeliveryException(
+                "Einladung gespeichert, E-Mail konnte nicht versendet werden: ${failure.message ?: "Versand fehlgeschlagen."}")
+        }
+        Unit
+    }
+
+    suspend fun createGuestLink(profileId: String, markerId: String): String = authenticated { token ->
+        val profile = loadProfile(token, profileId)
+        check(canEditProfile(token, profile)) { "Nur Owner und Bearbeiter duerfen Gastlinks erstellen." }
+        require(UUID_PATTERN.matches(markerId)) { "Ungueltige Markierungskennung." }
+        val guestToken = createGuestLinkToken()
+        request("rest/v1/rpc/create_hunting_profile_guest_link", "POST", JSONObject()
+            .put("p_profile_id", profile.id).put("p_marker_id", markerId).put("p_token", guestToken), token)
+        guestLinkUrl(guestToken)
+    }
+
+    suspend fun acceptGuestLink(token: String): GuestLinkTarget = authenticated { accessToken ->
+        require(GUEST_LINK_TOKEN_PATTERN.matches(token)) { "Gastlink ungueltig oder abgelaufen." }
+        guestLinkTargetFromJson(JSONObject(request("rest/v1/rpc/accept_hunting_profile_guest_link", "POST",
+            JSONObject().put("p_token", token), accessToken)))
+    }
+
+    suspend fun importJwdProfile(imported: JwdImportedProfile): String = authenticated { token ->
+        val featureId = "jwd-${UUID.randomUUID()}"
+        val createBody = JSONObject().put("p_source_id", "user-imports")
+            .put("p_feature_id", featureId).put("p_district_name", imported.name)
+        val createdProfile = request("rest/v1/rpc/create_hunting_profile", "POST", createBody, token)
+        val profileId = createdProfileIdFromResponse(createdProfile)
+            ?: error("Das Revierprofil wurde ohne Profil-ID angelegt.")
+        try {
+            request("rest/v1/rpc/set_hunting_profile_boundary", "POST", JSONObject()
+                .put("p_profile_id", profileId).put("p_geometry", imported.boundary), token)
+            if (imported.facilities.isNotEmpty()) {
+                val markers = JSONArray()
+                imported.facilities.forEach { facility ->
+                    markers.put(JSONObject().put("profile_id", profileId).put("type_id", facility.typeId)
+                        .put("title", facility.title).put("notes", facility.notes).put("created_by", userId)
+                        .put("latitude", facility.latitude).put("longitude", facility.longitude))
+                }
+                request("rest/v1/hunting_markers", "POST", markers, token)
+            }
+        } catch (failure: Exception) {
+            runCatching {
+                request("rest/v1/hunting_profiles?id=eq.$profileId", "DELETE", bearer = token)
+            }.exceptionOrNull()?.let(failure::addSuppressed)
+            throw failure
+        }
+        profileId
     }
 
     private fun loadProfile(token: String, profileId: String): HuntingProfile = parseProfiles(JSONArray(request(
@@ -253,7 +481,7 @@ internal class JagdkarteRepository(context: Context) {
         session = value
     }
 
-    private fun request(path: String, method: String = "GET", body: JSONObject? = null, bearer: String? = null,
+    private fun request(path: String, method: String = "GET", body: Any? = null, bearer: String? = null,
         upsert: Boolean = false, returnRepresentation: Boolean = false): String {
         val connection = URL("$BASE_URL/$path").openConnection() as HttpsURLConnection
         return try {

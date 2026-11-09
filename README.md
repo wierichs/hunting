@@ -52,7 +52,8 @@ bleibt davon unberuehrt.
 	Kartenansicht erreichbar.
 - Gemeinsame Kommunikationsbasis mit optionaler Revier-Relaisfreigabe ohne
 	Hundekopplung, kurzer Teilnehmer-Outbox und signierten Serverbestaetigungen.
-	Die neue Serverstufe ist vorbereitet, aber noch nicht deployed. Einrichtung:
+	Die neue Serverstufe wurde manuell im Supabase-Testprojekt deployed und
+	abgenommen; sie ist nicht in Produktion deployed. Einrichtung:
 	[Anleitung zur Relay-Serverstufe](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md).
 	Nearby kann Android-Berechtigungen fuer groben und praezisen Standortzugriff
 	zur Geraetesuche verlangen. Das aktiviert nicht die eigene Revierfreigabe.
@@ -66,14 +67,13 @@ bleiben. Ohne Relaisfreigabe werden Teilnehmerpositionen nicht offline
 nachgesendet. Mit bereitgestelltem Relay-Server bleiben eigene Meldungen nur
 bis zu 90 Sekunden ab Messzeit ausstehend; eine Historie wird nicht aufgebaut.
 
-### Noch offene Web-Funktionen
+### Android-Portierungsstatus
 
-Oeffentliche Regionensuche und Datenquellen, Anlegen und Loeschen von Revieren,
-JWD-/GeoJSON-Import und Export, Grenzbearbeitung, Einladungen und Gastlinks,
-Anzeigenamen, Hundeloeschung,
-spezielle Markersymbole, Offline-Kartenverwaltung sowie
-die vollstaendige Hilfe sind noch nicht portiert. Reviere koennen weiterhin
-in der unabhaengig verfuegbaren PWA verwaltet werden.
+Die noch offenen beziehungsweise zu pruefenden PWA-Funktionen und ihr
+Umsetzungs-/Abnahmestatus stehen in der ungeordneten
+[Portierungsstatus-Dokumentation](PORTIERUNGSSTATUS.md). Die Reihenfolge ist
+keine Priorisierung; den jeweils aktuellen Arbeitspunkt legen wir gemeinsam
+fest. Die PWA bleibt unabhaengig verfuegbar und voll funktionsfaehig.
 
 ### Markierungen setzen
 
@@ -123,10 +123,11 @@ die gemeinsame Nearby-Dienstkennung `org.wierichs.dogtracker`.
 Der neue Endpunkt `location-relay` und eine additive Migration ergaenzen nun
 Benutzergeraete, gruppenbezogene Schluesselregistrierung, Widerruf, typisierte
 Teilnehmermeldungen und atomare Nachrichten-ID-Deduplizierung. Verzeichnisse
-und Empfangsbestaetigungen werden serverseitig signiert. Diese Stufe muss vor
-Nutzung separat in Supabase bereitgestellt und abgenommen werden; es gab
-keinen Serverdeploy. Ohne Bereitstellung bleibt die normale Jagdkarte nutzbar,
-die neue Relaisfreigabe kann jedoch nicht erfolgreich eingerichtet werden.
+und Empfangsbestaetigungen werden serverseitig signiert. Diese Stufe wurde
+manuell im Supabase-Testprojekt bereitgestellt und dort abgenommen; sie wurde
+nicht in Produktion deployed. Ohne Bereitstellung in einem Zielprojekt bleibt
+die normale Jagdkarte nutzbar, die neue Relaisfreigabe kann dort jedoch nicht
+erfolgreich eingerichtet werden.
 
 Benutzer-JWTs und Hundeschluessel bleiben auf ihrem jeweiligen Geraet und
 werden nie an ein Relais gegeben. Gateway und eigener Standort sind getrennte

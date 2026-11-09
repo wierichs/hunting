@@ -61,25 +61,38 @@ import kotlinx.coroutines.delay
 import org.wierichs.dogtracker.ui.theme.DogTrackerTheme
 import org.wierichs.dogtracker.communication.RelayPairingPrompts
 import org.wierichs.dogtracker.jagdkarte.JagdkarteScreen
+import org.wierichs.dogtracker.jagdkarte.guestLinkTokenFromFragment
 import org.wierichs.dogtracker.communication.RelayGateway
 import org.wierichs.dogtracker.communication.RelayGatewayService
 
 class MainActivity : ComponentActivity() {
+    private val pendingGuestLinkToken = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingGuestLinkToken.value = guestLinkTokenFromFragment(intent?.data?.fragment)
         enableEdgeToEdge()
         setContent {
             DogTrackerTheme {
-                JagdkarteApp()
+                JagdkarteApp(pendingGuestLinkToken.value, onGuestLinkReceived = { pendingGuestLinkToken.value = null })
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingGuestLinkToken.value = guestLinkTokenFromFragment(intent.data?.fragment)
     }
 }
 
 @Composable
-private fun JagdkarteApp() {
+private fun JagdkarteApp(pendingGuestLinkToken: String?, onGuestLinkReceived: () -> Unit) {
     val context = LocalContext.current
     var trackerSelected by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(pendingGuestLinkToken) {
+        if (pendingGuestLinkToken != null) trackerSelected = false
+    }
     val pairingPrompt by RelayPairingPrompts.current.collectAsState()
     Scaffold(bottomBar = {
         NavigationBar {
@@ -92,7 +105,8 @@ private fun JagdkarteApp() {
         }
     }) { padding ->
         Surface(Modifier.fillMaxSize().padding(padding)) {
-            if (trackerSelected) TrackerScreen() else JagdkarteScreen(onUseDeviceToken = { token ->
+            if (trackerSelected) TrackerScreen() else JagdkarteScreen(
+                onUseDeviceToken = { token ->
                 if (TrackerPreferences.isTracking(context)) {
                     false
                 } else {
@@ -100,7 +114,10 @@ private fun JagdkarteApp() {
                     trackerSelected = true
                     true
                 }
-            })
+            },
+                incomingGuestLinkToken = pendingGuestLinkToken,
+                onGuestLinkReceived = onGuestLinkReceived
+            )
         }
     }
     pairingPrompt?.let { prompt ->
