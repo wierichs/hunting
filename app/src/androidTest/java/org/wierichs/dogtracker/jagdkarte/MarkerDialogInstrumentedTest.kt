@@ -1,6 +1,12 @@
 package org.wierichs.dogtracker.jagdkarte
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Picture
+import android.graphics.Point
+import android.graphics.drawable.PictureDrawable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.Modifier
@@ -26,6 +32,10 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.caverock.androidsvg.SVG
 import java.io.File
 import java.time.Instant
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polygon
 import org.json.JSONObject
 import org.wierichs.dogtracker.TrackerPreferences
 import org.junit.Assert.assertEquals
@@ -149,7 +159,7 @@ class MarkerDialogInstrumentedTest {
                 NativeHuntingMap(null, Instant.now(), Modifier.fillMaxSize(), onChooseLocation = { false })
             }
         }
-        composeRule.onAllNodesWithText("Markierung setzen", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Markierung setzen", useUnmergedTree = true).assertCountEquals(0)
     }
 
     @Test
@@ -161,18 +171,116 @@ class MarkerDialogInstrumentedTest {
                     onChooseLocation = { chosen = it; true })
             }
         }
-        composeRule.onNodeWithText("Markierung setzen", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithContentDescription("Markierung setzen", useUnmergedTree = true).performClick()
         composeRule.onNodeWithContentDescription("Zielposition", useUnmergedTree = true).assertIsDisplayed()
         captureScreenshot("marker-position", dialog = false)
-        composeRule.onNodeWithText("Hier setzen", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithContentDescription("Hier setzen", useUnmergedTree = true).performClick()
         composeRule.runOnIdle {
             assertTrue(chosen!!.latitude in 50.0..52.0)
             assertTrue(chosen!!.longitude in 6.0..8.0)
         }
-        composeRule.onNodeWithText("Markierung setzen", useUnmergedTree = true).assertIsDisplayed()
-        composeRule.onNodeWithText("Markierung setzen", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithContentDescription("Markierung setzen", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Markierung setzen", useUnmergedTree = true).performClick()
         composeRule.onNodeWithContentDescription("Positionswahl abbrechen", useUnmergedTree = true).performClick()
         composeRule.onAllNodesWithContentDescription("Zielposition", useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun markersNearBoundaryStayInsideWhenZoomingOutAndIn() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val boundary = geometryPolygons(profile.boundary).single().first()
+        val markerCoordinates = listOf(
+            GeoPoint(50.001, 7.0),
+            GeoPoint(51.999, 7.0),
+            GeoPoint(51.0, 6.001),
+            GeoPoint(51.0, 7.999)
+        )
+        markerCoordinates.forEach { coordinate ->
+            assertTrue(locationInsideBoundary(profile.boundary, coordinate.latitude, coordinate.longitude))
+        }
+        var failureMessage: String? = null
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val map = MapView(context)
+            map.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.EXACTLY)
+            )
+            map.maxZoomLevel = MAX_HUNTING_MAP_ZOOM
+            map.layout(0, 0, 1080, 1920)
+            val iconWidth = (40 * context.resources.displayMetrics.density).toInt()
+            val iconHeight = (48 * context.resources.displayMetrics.density).toInt()
+            val svgPicture = markerSvgPicture(context, "markers/hochsitz.svg", iconWidth, iconHeight)
+            val markerPicture = Picture().apply {
+                beginRecording(iconWidth, iconHeight).apply {
+                    drawPicture(svgPicture)
+                    drawCircle(iconWidth / 2f, iconHeight * (46f / 48f), 3f * context.resources.displayMetrics.density,
+                        Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.MAGENTA })
+                }
+                endRecording()
+            }
+            markerCoordinates.forEach { coordinate ->
+                for (zoom in listOf(4.0, 8.0, 12.0, 16.0, MAX_HUNTING_MAP_ZOOM)) {
+                    map.overlays.clear()
+                    map.overlays.add(Polygon(map).apply {
+                        setPoints(boundary)
+                        outlinePaint.color = Color.GREEN
+                        fillPaint.color = Color.argb(48, 0, 255, 0)
+                    })
+                    map.overlays.add(Marker(map).apply {
+                        position = coordinate
+                        setAnchor(0.5f, 46f / 48f)
+                        icon = PictureDrawable(markerPicture)
+                    })
+                    map.controller.setCenter(coordinate)
+                    map.controller.setZoom(zoom)
+                    assertEquals(zoom, map.zoomLevelDouble, 0.001)
+                    val projectedMarker = map.projection.toPixels(coordinate, Point())
+                    val renderedMap = Bitmap.createBitmap(1080, 1920, Bitmap.Config.ARGB_8888)
+                    map.draw(Canvas(renderedMap))
+                    var redPinNearCoordinate = false
+                    var closestRedPixel: Point? = null
+                    var closestRedDistanceSquared = Int.MAX_VALUE
+                    var minRedX = renderedMap.width
+                    var minRedY = renderedMap.height
+                    var maxRedX = -1
+                    var maxRedY = -1
+                    val searchRadius = (12 * context.resources.displayMetrics.density).toInt()
+                    val iconLeft = projectedMarker.x - iconWidth / 2
+                    val iconTop = projectedMarker.y - (iconHeight * 46f / 48f).toInt()
+                    for (y in 0 until renderedMap.height) {
+                        for (x in 0 until renderedMap.width) {
+                            val pixel = renderedMap.getPixel(x, y)
+                            if (Color.red(pixel) <= 150 || Color.green(pixel) !in 20..120 || Color.blue(pixel) !in 30..140) continue
+                            if (x in iconLeft - 4..iconLeft + iconWidth + 4 &&
+                                y in iconTop - 4..iconTop + iconHeight + 4) {
+                                minRedX = minOf(minRedX, x)
+                                minRedY = minOf(minRedY, y)
+                                maxRedX = maxOf(maxRedX, x)
+                                maxRedY = maxOf(maxRedY, y)
+                            }
+                            val distanceSquared = (x - projectedMarker.x) * (x - projectedMarker.x) +
+                                (y - projectedMarker.y) * (y - projectedMarker.y)
+                            if (distanceSquared < closestRedDistanceSquared) {
+                                closestRedDistanceSquared = distanceSquared
+                                closestRedPixel = Point(x, y)
+                            }
+                            if (distanceSquared <= searchRadius * searchRadius) redPinNearCoordinate = true
+                        }
+                    }
+                    val redWidth = maxRedX - minRedX + 1
+                    val redHeight = maxRedY - minRedY + 1
+                    if (!redPinNearCoordinate || redWidth < iconWidth * 0.75 || redHeight < iconHeight * 0.75) {
+                        failureMessage = "Rendered SVG pin stayed away from $coordinate at zoom $zoom " +
+                            "(projected point $projectedMarker, closest red pixel $closestRedPixel, " +
+                            "distanceSquared $closestRedDistanceSquared, expected icon ${iconWidth}x$iconHeight, " +
+                            "red bounds ${redWidth}x$redHeight)"
+                    }
+                    renderedMap.recycle()
+                }
+            }
+            map.onDetach()
+        }
+        assertNull(failureMessage)
     }
 
     @Test
@@ -193,13 +301,32 @@ class MarkerDialogInstrumentedTest {
                     onChooseLocation = { false })
             }
         }
-        composeRule.onNodeWithText("Legende anzeigen", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithContentDescription("Legende anzeigen", useUnmergedTree = true).performClick()
         composeRule.onNodeWithText("Jagdbezirksgrenze", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithText("Mitglied", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithText("Bearbeiter", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithText("Chef", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithText("Hund", useUnmergedTree = true).assertIsDisplayed()
-        composeRule.onNodeWithText("Legende ausblenden", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithContentDescription("Legende ausblenden", useUnmergedTree = true).performClick()
+    }
+
+    @Test
+    fun mapControlsToggleBoundaryAndFullScreen() {
+        var fullScreen = false
+        var ownLocationRequested = false
+        composeRule.setContent {
+            MaterialTheme {
+                NativeHuntingMap(HuntingSnapshot(profile, emptyList(), true), Instant.now(), Modifier.fillMaxSize(),
+                    onChooseLocation = { false }, onToggleOwnLocation = { ownLocationRequested = true },
+                    onToggleFullScreen = { fullScreen = !fullScreen })
+            }
+        }
+        composeRule.onNodeWithContentDescription("Eigenen Standort anzeigen", useUnmergedTree = true).performClick()
+        composeRule.runOnIdle { assertTrue(ownLocationRequested) }
+        composeRule.onNodeWithContentDescription("Reviergrenze ausblenden", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithContentDescription("Reviergrenze anzeigen", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Karte im Vollbild", useUnmergedTree = true).performClick()
+        composeRule.runOnIdle { assertTrue(fullScreen) }
     }
 
     @Test
@@ -217,6 +344,7 @@ class MarkerDialogInstrumentedTest {
                     onShareGuestLink = {}, onUpdated = { updated = true }, onDeleted = {}, onMoved = {}, onDismiss = {})
             }
         }
+        composeRule.onNodeWithText("Koordinaten: 51.500000, 7.500000").assertIsDisplayed()
         composeRule.onNodeWithText("Bezeichnung").performTextClearance()
         composeRule.onNodeWithText("Bezeichnung").performTextInput("Neuer Sitz")
         composeRule.onNodeWithText("Notiz").performTextClearance()

@@ -27,7 +27,7 @@ internal fun RelayGatewayControls(
     onStop: () -> Unit
 ) {
     var consent by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Relaisfreigabe", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
             Switch(state.active || state.starting, onCheckedChange = { enabled ->

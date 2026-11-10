@@ -90,18 +90,23 @@ class MainActivity : ComponentActivity() {
 private fun JagdkarteApp(pendingGuestLinkToken: String?, onGuestLinkReceived: () -> Unit) {
     val context = LocalContext.current
     var trackerSelected by rememberSaveable { mutableStateOf(false) }
+    var mapFullScreen by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(pendingGuestLinkToken) {
         if (pendingGuestLinkToken != null) trackerSelected = false
     }
     val pairingPrompt by RelayPairingPrompts.current.collectAsState()
     Scaffold(bottomBar = {
-        NavigationBar {
-            NavigationBarItem(selected = !trackerSelected, onClick = { trackerSelected = false },
-                icon = { Icon(Icons.Default.Place, null) },
-                label = { Text("Jagdkarte") })
-            NavigationBarItem(selected = trackerSelected, onClick = { trackerSelected = true },
-                icon = { Icon(Icons.Default.LocationOn, null) },
-                label = { Text("DogTracker") })
+        if (!mapFullScreen || trackerSelected) {
+            NavigationBar {
+                NavigationBarItem(selected = !trackerSelected, onClick = { trackerSelected = false },
+                    icon = { Icon(Icons.Default.Place, null) },
+                    label = { Text("Jagdkarte") })
+                NavigationBarItem(selected = trackerSelected, onClick = {
+                    trackerSelected = true
+                    mapFullScreen = false
+                }, icon = { Icon(Icons.Default.LocationOn, null) },
+                    label = { Text("DogTracker") })
+            }
         }
     }) { padding ->
         Surface(Modifier.fillMaxSize().padding(padding)) {
@@ -116,7 +121,9 @@ private fun JagdkarteApp(pendingGuestLinkToken: String?, onGuestLinkReceived: ()
                 }
             },
                 incomingGuestLinkToken = pendingGuestLinkToken,
-                onGuestLinkReceived = onGuestLinkReceived
+                onGuestLinkReceived = onGuestLinkReceived,
+                isFullScreen = mapFullScreen,
+                onFullScreenChanged = { mapFullScreen = it }
             )
         }
     }

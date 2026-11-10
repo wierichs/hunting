@@ -1,6 +1,7 @@
 package org.wierichs.dogtracker.jagdkarte
 
 import org.json.JSONObject
+import java.util.Locale
 
 internal enum class HuntingMarkerType(
     val id: String,
@@ -33,6 +34,9 @@ internal enum class HuntingMarkerType(
 }
 
 internal data class MarkerCoordinates(val latitude: Double, val longitude: Double)
+
+internal fun markerCoordinateLabel(latitude: Double, longitude: Double): String =
+    String.format(Locale.US, "%.6f, %.6f", latitude, longitude)
 
 internal data class HuntingMarkerDraft(
     val type: HuntingMarkerType,

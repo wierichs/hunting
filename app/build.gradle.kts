@@ -51,6 +51,13 @@ android {
     }
 }
 
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        val apkFileName = if (variant.buildType == "debug") "Jagdkarte-debug.apk" else "Jagdkarte.apk"
+        variant.outputs.forEach { output -> output.outputFileName.set(apkFileName) }
+    }
+}
+
 dependencies {
     implementation(libs.osmdroid)
     implementation(libs.androidsvg)
@@ -61,6 +68,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.icons)
+    implementation(libs.androidx.compose.icons.extended)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)

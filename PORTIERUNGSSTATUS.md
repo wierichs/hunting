@@ -27,9 +27,23 @@ Arbeitsgegenstand wird nur nach gemeinsamer Festlegung eingetragen.
 
 ## Aktueller Fokus
 
+Die erste Ueberarbeitung des Bedienkonzepts der nativen Kartenansicht ist
+umgesetzt: Revierwahl und Verwaltung sind kompakter angeordnet, Verwaltungs-
+aktionen liegen in einem Sheet, und Kartenaktionen sind als beschriftete Icons
+direkt erreichbar. Eigener Standort, Revier einpassen, Grenzanzeige,
+Legende und Vollbild belegen keine zusaetzlichen Layoutzeilen. Die visuelle
+Abnahme auf kleinen und grossen Displays steht noch aus; bis dahin bleibt die
+weitere Portierung offener Funktionen zurueckgestellt.
+
+Dabei sind auch die offenen Kartenfunktionen gemeinsam einzuordnen:
+Satellitenansicht sowie weitere noch nicht implementierte Kartenwerkzeuge.
+Bereits umgesetzte Funktionen und deren ausstehende Abnahmen bleiben davon
+unberuehrt.
+
 JWD- und GeoJSON-Import sind umgesetzt. Das Zusammenfuehren in bestehende
 Profile sowie interaktive Grenzbearbeitung bleiben offen; Live-Import und
-Dateiauswahl muessen noch manuell abgenommen werden.
+Dateiauswahl muessen noch manuell abgenommen werden. Diese Punkte sind derzeit
+nicht der aktuelle Arbeitsfokus.
 
 ## Offene beziehungsweise zu pruefende Funktionen
 

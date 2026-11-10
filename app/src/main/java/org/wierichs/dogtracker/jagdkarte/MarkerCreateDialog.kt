@@ -245,6 +245,8 @@ internal fun MarkerCreateDialog(
                 Column(Modifier.fillMaxWidth().heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(marker.markerTypeId.orEmpty(), style = MaterialTheme.typography.labelLarge)
+                    Text("Koordinaten: ${markerCoordinateLabel(marker.latitude, marker.longitude)}",
+                        style = MaterialTheme.typography.bodySmall)
                     if (confirmingDelete) {
                         Text(if (canEdit) "Diese Markierung wird dauerhaft geloescht."
                             else "Deine temporaere Markierung wird dauerhaft geloescht.")

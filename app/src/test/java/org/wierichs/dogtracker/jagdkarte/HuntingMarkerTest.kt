@@ -35,6 +35,10 @@ class HuntingMarkerTest {
         assertEquals(HuntingMarkerSize.STANDARD, HuntingMarkerSize.fromId("invalid"))
     }
 
+    @Test fun markerCoordinatesUseStableLatitudeLongitudeFormat() {
+        assertEquals("51.123456, 7.654321", markerCoordinateLabel(51.1234564, 7.6543214))
+    }
+
     @Test fun guestsCanOnlyCreateAnschussAndWildsichtung() {
         assertEquals(setOf("anschuss", "wildsichtung"),
             HuntingMarkerType.entries.filter { it.canCreate(false) }.map { it.id }.toSet())

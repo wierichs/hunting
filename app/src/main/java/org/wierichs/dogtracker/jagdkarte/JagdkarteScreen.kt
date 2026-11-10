@@ -11,6 +11,7 @@ import android.os.Build
 import android.provider.OpenableColumns
 import android.widget.ImageView
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,20 +38,33 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -101,11 +115,14 @@ import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
+import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
+import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import org.wierichs.dogtracker.communication.RelayGateway
 import org.wierichs.dogtracker.communication.RelayGatewayService
 import org.wierichs.dogtracker.TrackerPreferences
 
 private const val MAX_JWD_FILE_SIZE_BYTES = 10 * 1024 * 1024
+internal const val MAX_HUNTING_MAP_ZOOM = 20.0
 
 private fun readRevierDocument(context: android.content.Context, uri: Uri): List<JwdImportedProfile> {
     val fileName = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
@@ -129,10 +146,13 @@ private fun readRevierDocument(context: android.content.Context, uri: Uri): List
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 internal fun JagdkarteScreen(
     onUseDeviceToken: (String) -> Boolean,
     incomingGuestLinkToken: String? = null,
-    onGuestLinkReceived: () -> Unit = {}
+    onGuestLinkReceived: () -> Unit = {},
+    isFullScreen: Boolean = false,
+    onFullScreenChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -147,6 +167,7 @@ internal fun JagdkarteScreen(
     var loading by remember { mutableStateOf(false) }
     var revision by remember { mutableStateOf(0) }
     var menuOpen by remember { mutableStateOf(false) }
+    var managementOpen by remember { mutableStateOf(false) }
     var accountOpen by remember { mutableStateOf(false) }
     var displayName by remember { mutableStateOf("") }
     var displayNameBusy by remember { mutableStateOf(false) }
@@ -154,6 +175,7 @@ internal fun JagdkarteScreen(
     var markerIconSize by remember { mutableStateOf(HuntingMarkerSize.fromId(TrackerPreferences.markerIconSize(context))) }
     var now by remember { mutableStateOf(Instant.now()) }
     var sharing by remember { mutableStateOf(false) }
+    var ownLocationVisible by remember { mutableStateOf(false) }
     var sharingStatus by remember { mutableStateOf("") }
     var permissionProfileId by remember { mutableStateOf<String?>(null) }
     var signingOut by remember { mutableStateOf(false) }
@@ -200,6 +222,14 @@ internal fun JagdkarteScreen(
             selectedId == permissionProfileId && snapshot?.profile?.huntingMode == true
         permissionProfileId = null
         if (!sharing) sharingStatus = "Genauer Standort wurde nicht freigegeben."
+    }
+    val mapLocationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            ownLocationVisible = true
+        } else {
+            status = "Standortberechtigung nicht erteilt."
+        }
     }
     val jwdExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -412,107 +442,38 @@ internal fun JagdkarteScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Jagdkarte", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-            IconButton(onClick = { revision++ }, enabled = signedIn && !loading) {
-                Icon(Icons.Default.Refresh, "Aktualisieren")
-            }
-            IconButton(onClick = { accountOpen = true }, enabled = !signingOut) {
-                Icon(Icons.Default.AccountCircle, "Benutzerkonto")
-            }
-        }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) {
-                TextButton(onClick = { menuOpen = true }, enabled = profiles.isNotEmpty()) {
-                    Text(profiles.find { it.id == selectedId }?.name ?: "Revier auswaehlen",
-                        maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, modifier = Modifier.heightIn(max = 360.dp)) {
-                    profiles.forEach { profile ->
-                        DropdownMenuItem(text = {
-                            Text(profileSelectionLabel(profile, repository.userId))
-                        }, onClick = {
-                            if (gatewayState.active || gatewayState.starting) RelayGateway.stop(context)
-                            sharing = false
-                            sharingStatus = ""
-                            snapshot = null
-                            selectedId = profile.id
-                            menuOpen = false
-                        })
+        if (!isFullScreen) {
+            Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    TextButton(onClick = { menuOpen = true }, enabled = profiles.isNotEmpty()) {
+                        Text(profiles.find { it.id == selectedId }?.name ?: "Revier auswaehlen",
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Icon(Icons.Default.ArrowDropDown, null)
                     }
-                }
-            }
-            if (loading) CircularProgressIndicator(Modifier.padding(8.dp))
-            if (!signedIn) Button(onClick = { accountOpen = true }, enabled = !signingOut) { Text("Anmelden") }
-        }
-        if (signedIn) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.End) {
-                TextButton(enabled = !jwdImportBusy, onClick = {
-                    jwdImportLauncher.launch(arrayOf("*/*"))
-                }) { Text(if (jwdImportBusy) "Datei wird geprueft ..." else "Revierdatei importieren") }
-            }
-        }
-        snapshot?.let { current ->
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Jagdmodus", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                if (current.canEdit) {
-                    Switch(current.profile.huntingMode, onCheckedChange = { enabled ->
-                        modePending = true
-                        if (!enabled) sharing = false
-                        scope.launch {
-                            try {
-                                repository.setHuntingMode(current.profile.id, enabled)
-                                if (selectedId == current.profile.id) revision++
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (failure: Exception) {
-                                status = failure.message ?: "Jagdmodus konnte nicht geaendert werden."
-                            } finally {
-                                modePending = false
-                            }
-                        }
-                    }, enabled = !modePending)
-                } else {
-                    Text(if (current.profile.huntingMode) "Aktiv" else "Aus")
-                }
-                TextButton(onClick = { dogsOpen = true }) { Text("Hunde") }
-                if (current.canEdit) TextButton(onClick = { inviteProfile = current.profile }) { Text("Einladen") }
-                TextButton(enabled = current.profile.boundary != null && !jwdExportBusy,
-                    onClick = { startJwdExport(current) }) {
-                    Text(if (jwdExportBusy) "Exportieren ..." else "JWD exportieren")
-                }
-            }
-        }
-        if (snapshot != null || gatewayState.active || gatewayState.starting || gatewayState.status.isNotBlank()) {
-            RelayGatewayControls(canStart = signedIn && snapshot?.profile?.huntingMode == true && !TrackerPreferences.isTracking(context),
-                state = gatewayState, onEnable = {
-                    val id = selectedId
-                    if (id != null) {
-                        val required = RelayGatewayService.requiredRelayPermissions() +
-                            if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()
-                        if (required.all { androidx.core.content.ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
-                            runCatching { RelayGateway.start(context, id) }.onFailure { status = "Relaisdienst konnte nicht gestartet werden." }
-                        } else {
-                            relayPermissionProfileId = id
-                            relayPermissionLauncher.launch(required.toTypedArray())
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false },
+                        modifier = Modifier.heightIn(max = 360.dp)) {
+                        profiles.forEach { profile ->
+                            DropdownMenuItem(text = { Text(profileSelectionLabel(profile, repository.userId)) }, onClick = {
+                                if (gatewayState.active || gatewayState.starting) RelayGateway.stop(context)
+                                sharing = false
+                                sharingStatus = ""
+                                snapshot = null
+                                selectedId = profile.id
+                                menuOpen = false
+                            })
                         }
                     }
-                }, onStop = { RelayGateway.stop(context) })
-        }
-        if (snapshot?.profile?.huntingMode == true || sharing) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(sharing, onCheckedChange = { enabled ->
-                    if (!enabled) {
-                        sharing = false
-                    } else if (androidx.core.content.ContextCompat.checkSelfPermission(context,
-                            Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                        sharing = true
-                    } else {
-                        permissionProfileId = selectedId
-                        locationPermission.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
-                    }
-                }, enabled = selectedId != null)
-                Text("Standort mit diesem Revier teilen", style = MaterialTheme.typography.bodyMedium)
+                }
+                if (loading) CircularProgressIndicator(Modifier.size(24.dp).padding(4.dp))
+                IconButton(onClick = { revision++ }, enabled = signedIn && !loading) {
+                    Icon(Icons.Default.Refresh, "Aktualisieren")
+                }
+                IconButton(onClick = { managementOpen = true }, enabled = signedIn) {
+                    Icon(Icons.Default.MoreVert, "Revier und Verwaltung")
+                }
+                IconButton(onClick = { accountOpen = true }, enabled = !signingOut) {
+                    Icon(Icons.Default.AccountCircle, "Benutzerkonto")
+                }
             }
         }
         NativeHuntingMap(snapshot, now, Modifier.weight(1f).fillMaxWidth(), onChooseLocation = { coordinates ->
@@ -528,20 +489,105 @@ internal fun JagdkarteScreen(
         }, markerIconSize = markerIconSize, focusMarkerId = guestFocusMarkerId,
             focusRequest = guestFocusRequest, currentUserId = repository.userId, onMarkerSelected = { markerId ->
             editingMarker = snapshot?.points?.firstOrNull { it.markerId == markerId }
-        })
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f).padding(8.dp)) {
-                snapshot?.let {
-                    Text(if (it.profile.huntingMode) "Jagdmodus aktiv" else "Jagdmodus aus",
-                        style = MaterialTheme.typography.labelLarge)
+        }, statusMessage = status,
+            ownLocationVisible = ownLocationVisible,
+            onToggleOwnLocation = {
+                if (ownLocationVisible) ownLocationVisible = false
+                else if (androidx.core.content.ContextCompat.checkSelfPermission(context,
+                        Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) ownLocationVisible = true
+                else mapLocationPermission.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.ACCESS_FINE_LOCATION))
+            },
+            onManage = { managementOpen = true },
+            isFullScreen = isFullScreen,
+            onToggleFullScreen = { onFullScreenChanged(!isFullScreen) })
+    }
+
+    if (managementOpen) {
+        ModalBottomSheet(onDismissRequest = { managementOpen = false }) {
+            val current = snapshot
+            Column(Modifier.fillMaxWidth().heightIn(max = 600.dp).verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Revier und Verwaltung", style = MaterialTheme.typography.titleLarge)
+                current?.let { profile ->
+                    Text("Freigaben", style = MaterialTheme.typography.titleSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Jagdmodus", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                        if (profile.canEdit) {
+                            Switch(profile.profile.huntingMode, onCheckedChange = { enabled ->
+                                modePending = true
+                                if (!enabled) sharing = false
+                                scope.launch {
+                                    try {
+                                        repository.setHuntingMode(profile.profile.id, enabled)
+                                        if (selectedId == profile.profile.id) revision++
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (failure: Exception) {
+                                        status = failure.message ?: "Jagdmodus konnte nicht geaendert werden."
+                                    } finally {
+                                        modePending = false
+                                    }
+                                }
+                            }, enabled = !modePending)
+                        } else Text(if (profile.profile.huntingMode) "Aktiv" else "Aus")
+                    }
+                    if (snapshot != null || gatewayState.active || gatewayState.starting || gatewayState.status.isNotBlank()) {
+                        RelayGatewayControls(canStart = signedIn && profile.profile.huntingMode &&
+                            !TrackerPreferences.isTracking(context), state = gatewayState, onEnable = {
+                            val id = selectedId
+                            if (id != null) {
+                                val required = RelayGatewayService.requiredRelayPermissions() +
+                                    if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()
+                                if (required.all { androidx.core.content.ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
+                                    runCatching { RelayGateway.start(context, id) }
+                                        .onFailure { status = "Relaisdienst konnte nicht gestartet werden." }
+                                } else {
+                                    relayPermissionProfileId = id
+                                    relayPermissionLauncher.launch(required.toTypedArray())
+                                }
+                            }
+                        }, onStop = { RelayGateway.stop(context) })
+                    }
+                    if (profile.profile.huntingMode || sharing) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Standort mit diesem Revier teilen", Modifier.weight(1f),
+                                style = MaterialTheme.typography.labelLarge)
+                            Switch(sharing, onCheckedChange = { enabled ->
+                                if (!enabled) sharing = false
+                                else if (androidx.core.content.ContextCompat.checkSelfPermission(context,
+                                        Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) sharing = true
+                                else {
+                                    permissionProfileId = selectedId
+                                    locationPermission.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,
+                                        Manifest.permission.ACCESS_FINE_LOCATION))
+                                }
+                            }, enabled = selectedId != null)
+                        }
+                    }
+                    Text("Revieraktionen", style = MaterialTheme.typography.titleSmall)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { dogsOpen = true }, modifier = Modifier.weight(1f)) { Text("Hunde") }
+                        if (profile.canEdit) TextButton(onClick = { inviteProfile = profile.profile },
+                            modifier = Modifier.weight(1f)) { Text("Einladen") }
+                    }
+                    TextButton(enabled = profile.profile.boundary != null && !jwdExportBusy,
+                        onClick = { managementOpen = false; startJwdExport(profile) },
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text(if (jwdExportBusy) "JWD exportieren ..." else "JWD exportieren")
+                    }
                 }
-                if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodySmall, maxLines = 3)
-                if (invitationStatus.isNotBlank()) Text(invitationStatus, style = MaterialTheme.typography.bodySmall, maxLines = 3)
-                if (sharingStatus.isNotBlank()) Text(sharingStatus, style = MaterialTheme.typography.bodySmall, maxLines = 3)
+                if (signedIn) TextButton(enabled = !jwdImportBusy, onClick = {
+                    managementOpen = false
+                    jwdImportLauncher.launch(arrayOf("*/*"))
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (jwdImportBusy) "Import laeuft ..." else "Revierdatei importieren")
+                }
+                if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodySmall)
+                if (invitationStatus.isNotBlank()) Text(invitationStatus, style = MaterialTheme.typography.bodySmall)
+                if (sharingStatus.isNotBlank()) Text(sharingStatus, style = MaterialTheme.typography.bodySmall)
             }
-            TextButton(onClick = {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.openstreetmap.org/copyright")))
-            }) { Text("© OpenStreetMap", style = MaterialTheme.typography.labelSmall) }
         }
     }
 
@@ -810,7 +856,13 @@ internal fun NativeHuntingMap(
     focusMarkerId: String? = null,
     focusRequest: Int = 0,
     currentUserId: String = "",
-    onMarkerSelected: (String) -> Unit = {}
+    onMarkerSelected: (String) -> Unit = {},
+    statusMessage: String = "",
+    ownLocationVisible: Boolean = false,
+    onToggleOwnLocation: () -> Unit = {},
+    onManage: () -> Unit = {},
+    isFullScreen: Boolean = false,
+    onToggleFullScreen: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -822,16 +874,18 @@ internal fun NativeHuntingMap(
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
             minZoomLevel = 3.0
-            maxZoomLevel = 19.0
+            maxZoomLevel = MAX_HUNTING_MAP_ZOOM
             controller.setZoom(7.0)
             controller.setCenter(GeoPoint(51.2, 7.0))
         }
     }
+    val ownLocationOverlay = remember(map) { MyLocationNewOverlay(GpsMyLocationProvider(context), map) }
     var fittedProfileId by remember { mutableStateOf<String?>(null) }
     var focusedGuestRequest by remember { mutableStateOf(-1) }
     var renderedContent by remember { mutableStateOf<Any?>(null) }
     var choosingPosition by remember(snapshot?.profile?.id) { mutableStateOf(false) }
     var locationLegendExpanded by remember { mutableStateOf(false) }
+    var boundaryVisible by remember(snapshot?.profile?.id) { mutableStateOf(true) }
     val chooseLocation by rememberUpdatedState(onChooseLocation)
     val selectMarker by rememberUpdatedState(onMarkerSelected)
     DisposableEffect(map, lifecycle) {
@@ -854,7 +908,7 @@ internal fun NativeHuntingMap(
         AndroidView(factory = { map }, modifier = Modifier.fillMaxSize().clipToBounds(), update = { view ->
             val points = snapshot?.points.orEmpty().filter { it.visibleAt(now) }
             val boundary = snapshot?.profile?.boundary
-            val renderKey = listOf(snapshot?.profile?.id, boundary?.toString(), points,
+            val renderKey = listOf(snapshot?.profile?.id, boundary?.toString(), boundaryVisible, ownLocationVisible, points,
                 points.map { it.staleAt(now) }, markerIconSize, focusMarkerId, focusRequest)
             if (renderedContent != renderKey) {
                 renderedContent = renderKey
@@ -865,22 +919,24 @@ internal fun NativeHuntingMap(
                 }))
                 val bounds = mutableListOf<GeoPoint>()
                 geometryPolygons(boundary).forEach { rings ->
-                    val polygon = Polygon(view).apply {
-                        title = snapshot?.profile?.name
-                        outlinePaint.color = android.graphics.Color.rgb(24, 105, 70)
-                        outlinePaint.strokeWidth = 4f
-                        fillPaint.color = android.graphics.Color.argb(28, 24, 105, 70)
-                        setPoints(rings.first())
-                        holes = rings.drop(1)
+                    if (boundaryVisible) {
+                        val polygon = Polygon(view).apply {
+                            title = snapshot?.profile?.name
+                            outlinePaint.color = android.graphics.Color.rgb(24, 105, 70)
+                            outlinePaint.strokeWidth = 4f
+                            fillPaint.color = android.graphics.Color.argb(28, 24, 105, 70)
+                            setPoints(rings.first())
+                            holes = rings.drop(1)
+                        }
+                        view.overlays.add(polygon)
                     }
                     bounds.addAll(rings.first())
-                    view.overlays.add(polygon)
                 }
                 points.forEach { point ->
                     view.overlays.add(Marker(view).apply {
                         position = GeoPoint(point.latitude, point.longitude)
                         title = point.title + if (point.staleAt(now)) " (veraltet)" else ""
-                        snippet = point.detail
+                        snippet = "${point.detail}\nKoordinaten: ${markerCoordinateLabel(point.latitude, point.longitude)}"
                         if (point.kind == MapPointKind.FACILITY) {
                             setAnchor(0.5f, 46f / 48f)
                             icon = huntingMarkerIcon(context, point.markerTypeId, markerIconSize)
@@ -900,6 +956,7 @@ internal fun NativeHuntingMap(
                         }
                     })
                 }
+                if (ownLocationVisible) view.overlays.add(ownLocationOverlay)
                 val guestTarget = points.firstOrNull { it.markerId == focusMarkerId }
                 if (snapshot != null && guestTarget != null && focusedGuestRequest != focusRequest) {
                     fittedProfileId = snapshot.profile.id
@@ -919,6 +976,13 @@ internal fun NativeHuntingMap(
                 view.invalidate()
             }
         })
+        LaunchedEffect(ownLocationVisible) {
+            if (ownLocationVisible) ownLocationOverlay.enableMyLocation()
+            else ownLocationOverlay.disableMyLocation()
+        }
+        DisposableEffect(ownLocationOverlay) {
+            onDispose { ownLocationOverlay.disableMyLocation() }
+        }
         if (snapshot != null) {
             Column(Modifier.align(Alignment.TopStart).padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (locationLegendExpanded) {
@@ -942,8 +1006,45 @@ internal fun NativeHuntingMap(
                         }
                     }
                 }
-                TextButton(onClick = { locationLegendExpanded = !locationLegendExpanded }) {
-                    Text(if (locationLegendExpanded) "Legende ausblenden" else "Legende anzeigen")
+                Surface(color = Color.White.copy(alpha = 0.94f), shadowElevation = 4.dp,
+                    shape = RoundedCornerShape(4.dp)) {
+                    IconButton(onClick = { locationLegendExpanded = !locationLegendExpanded }) {
+                        Icon(Icons.Default.Info,
+                            if (locationLegendExpanded) "Legende ausblenden" else "Legende anzeigen")
+                    }
+                }
+            }
+        }
+        Row(Modifier.align(Alignment.TopEnd).padding(8.dp), verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Surface(color = Color.White.copy(alpha = 0.94f), shadowElevation = 4.dp,
+                shape = RoundedCornerShape(4.dp)) {
+                Row {
+                    IconButton(onClick = onToggleOwnLocation) {
+                        Icon(Icons.Default.MyLocation,
+                            if (ownLocationVisible) "Eigenen Standort ausblenden" else "Eigenen Standort anzeigen")
+                    }
+                    if (snapshot != null) {
+                        IconButton(onClick = {
+                            val bounds = geometryPolygons(snapshot.profile.boundary).flatMap { it.first() }.toMutableList()
+                            bounds.addAll(snapshot.points.filter { it.visibleAt(now) }
+                                .map { GeoPoint(it.latitude, it.longitude) })
+                            if (bounds.isNotEmpty()) {
+                                map.post { map.zoomToBoundingBox(BoundingBox.fromGeoPoints(bounds), false, 48, 17.0, null) }
+                            }
+                        }) { Icon(Icons.Default.ZoomOutMap, "Revier einpassen") }
+                        if (snapshot.profile.boundary != null) {
+                            IconButton(onClick = { boundaryVisible = !boundaryVisible }) {
+                                Icon(if (boundaryVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    if (boundaryVisible) "Reviergrenze ausblenden" else "Reviergrenze anzeigen")
+                            }
+                        }
+                        IconButton(onClick = onManage) { Icon(Icons.Default.MoreVert, "Revier und Verwaltung") }
+                    }
+                    IconButton(onClick = onToggleFullScreen) {
+                        Icon(if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                            if (isFullScreen) "Vollbild beenden" else "Karte im Vollbild")
+                    }
                 }
             }
         }
@@ -955,16 +1056,30 @@ internal fun NativeHuntingMap(
                     Icon(Icons.Default.Close, "Positionswahl abbrechen")
                 }
             }
-            ExtendedFloatingActionButton(onClick = {
+            FloatingActionButton(onClick = {
                 if (choosingPosition) {
                     val center = map.mapCenter
                     if (chooseLocation(MarkerCoordinates(center.latitude, center.longitude))) choosingPosition = false
                 } else {
                     choosingPosition = true
                 }
-            }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
-                icon = { Icon(Icons.Default.Add, null) },
-                text = { Text(if (choosingPosition) "Hier setzen" else "Markierung setzen") })
+            }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) {
+                Icon(if (choosingPosition) Icons.Default.Check else Icons.Default.Add,
+                    if (choosingPosition) "Hier setzen" else "Markierung setzen")
+            }
+        }
+        Column(Modifier.align(Alignment.BottomStart).padding(8.dp).widthIn(max = 200.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (statusMessage.isNotBlank() && !statusMessage.startsWith("Stand:")) {
+                Surface(color = Color.White.copy(alpha = 0.94f), shadowElevation = 4.dp,
+                    shape = RoundedCornerShape(4.dp)) {
+                    Text(statusMessage, Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            TextButton(onClick = {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.openstreetmap.org/copyright")))
+            }) { Text("© OpenStreetMap", style = MaterialTheme.typography.labelSmall) }
         }
     }
 }
@@ -980,6 +1095,19 @@ private fun LocationLegendEntry(context: Context, asset: String, label: String) 
 
 private val huntingMarkerPictureCache = mutableMapOf<Triple<String, Int, Int>, Picture>()
 
+internal fun markerSvgPicture(context: Context, asset: String, width: Int, height: Int): Picture =
+    synchronized(huntingMarkerPictureCache) {
+        huntingMarkerPictureCache.getOrPut(Triple(asset, width, height)) {
+            Picture().also { picture ->
+                val canvas = picture.beginRecording(width, height)
+                val svg = SVG.getFromAsset(context.assets, asset)
+                canvas.scale(width / svg.documentWidth, height / svg.documentHeight)
+                svg.renderToCanvas(canvas)
+                picture.endRecording()
+            }
+        }
+    }
+
 private fun huntingMarkerIcon(
     context: android.content.Context,
     markerTypeId: String?,
@@ -989,24 +1117,14 @@ private fun huntingMarkerIcon(
     val density = context.resources.displayMetrics.density
     val width = (40 * size.scale * density).toInt().coerceAtLeast(1)
     val height = (48 * size.scale * density).toInt().coerceAtLeast(1)
-    val key = Triple(type.iconAsset, width, height)
-    val picture = synchronized(huntingMarkerPictureCache) {
-        huntingMarkerPictureCache.getOrPut(key) {
-            SVG.getFromAsset(context.assets, "markers/${type.iconAsset}").renderToPicture(width, height)
-        }
-    }
+    val picture = markerSvgPicture(context, "markers/${type.iconAsset}", width, height)
     return PictureDrawable(picture)
 }
 
 private fun locationIcon(context: Context, asset: String, sizeDp: Int = 36): PictureDrawable {
     val density = context.resources.displayMetrics.density
     val size = (sizeDp * density).toInt().coerceAtLeast(1)
-    val key = Triple(asset, size, size)
-    val picture = synchronized(huntingMarkerPictureCache) {
-        huntingMarkerPictureCache.getOrPut(key) {
-            SVG.getFromAsset(context.assets, asset).renderToPicture(size, size)
-        }
-    }
+    val picture = markerSvgPicture(context, asset, size, size)
     return PictureDrawable(picture)
 }
 
