@@ -1,6 +1,6 @@
 # Android-Portierungsstatus
 
-Stand: 2026-11-09
+Stand: 2026-11-10
 
 ## Ziel und Geltungsbereich
 
@@ -27,16 +27,27 @@ Arbeitsgegenstand wird nur nach gemeinsamer Festlegung eingetragen.
 
 ## Aktueller Fokus
 
-Der Import von JWD-, JSON- und GeoJSON-Revierdaten kann neue Profile anlegen
-oder Daten in ein bestehendes, editierbares Profil zusammenfuehren. Grenzen
-werden geometrisch vereinigt; vorhandene Marker bleiben erhalten und identische
-Einrichtungen werden nicht doppelt angelegt. JVM- und Emulator-UI-Tests
-bestehen. Der Nutzer hat die manuelle Dateiauswahl und den Dialogpfad fuer
-Neuimport beziehungsweise Merge bereits bestaetigt; diese UI-Schritte sind
-abgenommen und sollen nicht wiederholt werden. Weitere manuelle Tests werden
-am Ende der Portierung gesammelt ausgefuehrt; die bestaetigten UI-Schritte
-bleiben erledigt. Die Checkliste am Dokumentende enthaelt die noch offenen
-Supabase-Schreib-/RLS- und Datenintegritaetspruefungen.
+Aktueller Arbeitsgegenstand ist die Auswahl der Kartenbasis und die Neubewertung
+der Offlinekarten. Auf Wunsch nach moeglichst kostenloser Nutzung wurde
+MapTiler in Android durch frei zugaengliche amtliche Luftbilder ersetzt.
+Android bietet OpenStreetMap, Luftbild (zunaechst Geobasis NRW, ohne Konto oder
+Schluessel) und bei vollstaendiger lokaler Revierabdeckung Offline an.
+Fuer Android wurde Mapsforge `.map` gewaehlt; Formatvergleich, freie Downloads,
+Extraktgrenzen und Import sind in der README dokumentiert. Die PWA behaelt
+PMTiles und bleibt unveraendert. Zehn Emulatortests einschliesslich
+echter Offlinekarte, Rendering-/Pixelpruefung und Netz-Fallback-Schutz bestehen;
+der echte NRW-Luftbildabruf und der native Kartenablauf wurden bei 320 dp
+geprueft. Die 24 bestehenden
+Karten-/Marker- und Grenzeditor-Emulatortests bestehen ebenfalls.
+Weitere regionale Luftbildanbieter und reale Geraetepruefungen stehen aus.
+Die NRW-Rechteckausdehnung ist nur eine Vorpruefung; Bildluecken an Landes-
+und Dienstraendern sind moeglich. Grenzbearbeitung bleibt umgesetzt,
+Live-Schreib-/RLS-Abnahme offen.
+
+Manuelle Tests werden weiter am Ende der Portierung gesammelt ausgefuehrt.
+Die bereits bestaetigte Dateiauswahl und der Neuimport-/Merge-Dialog bleiben
+abgenommen und sollen nicht wiederholt werden. Die Checkliste am Dokumentende
+enthaelt die offenen Supabase-Schreib-/RLS- und Datenintegritaetspruefungen.
 
 ## Offene beziehungsweise zu pruefende Funktionen
 
@@ -85,8 +96,18 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
 
 ### Grenzen und Dateien
 
-- **Offen**: Reviergrenzen bearbeiten, einschliesslich Geometriepunkten und
-  Teilflaechen.
+- **Umgesetzt**: Reviergrenzen im nativen Karteneditor bearbeiten. Owner und
+  Bearbeiter koennen Punkte per Griff oder Kartenmitte verschieben, Punkte
+  einfuegen/loeschen und Teilflaechen sowie befriedete Bereiche anlegen oder
+  entfernen. Die letzte Teilflaeche und das Drei-Punkte-Minimum sind geschuetzt.
+  Entwurf, Rueckgaengig/Wiederholen, Abbruchbestaetigung, JTS-Geometriepruefung
+  und bestaetigtes Speichern ueber `set_hunting_profile_boundary` sind enthalten;
+  vorhandene Marker bleiben unveraendert. Vor dem Schreiben werden Rolle und
+  Ausgangsgrenze neu geladen; dies erkennt bereits gespeicherte fremde
+  Aenderungen, ersetzt aber keine atomare serverseitige Konfliktpruefung.
+  JVM- und sieben Editor-Emulatortests sowie 17 Karten-/Marker-Regressionstests
+  bestehen; Editor-Screenshots bei normaler und 320-dp-Breite wurden geprueft.
+  Live-Schreib-/RLS- und reale Geraeteabnahme stehen aus.
 - **Umgesetzt**: JWD-, JSON- und GeoJSON-Dateien als neues eigenes Profil oder
   in ein bestehendes, editierbares Profil importieren. Die Merge-Variante
   vereinigt Polygon-/MultiPolygon-Grenzen einschliesslich befriedeter Bereiche,
@@ -131,12 +152,30 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
 
 ### Karte und Offline-Nutzung
 
-- **Offen**: Eigenen Standort auf der Karte anzeigen, manuelles erneutes
+- **Umgesetzt**: Eigenen Standort auf der Karte anzeigen, manuelles erneutes
   Einpassen des Reviers, Grenzanzeige ein-/ausschalten und Karten-Vollbild.
-- **Offen**: Optionale Satellitenansicht.
-- **Offen**: PMTiles-Offlinekarten importieren, verwenden und verwalten sowie
-  den PWA-Ablauf zum Anfordern eines Kartenausschnitts abbilden oder fuer
-  Android passend ersetzen.
+  Karten-/Marker-Emulatortests bestehen; reale Geraeteabnahme bleibt offen.
+- **Umgesetzt**: Auswahl OpenStreetMap / Luftbild / Offline. Luftbilder nutzen
+  den frei zugaenglichen Geobasis-NRW-WMTS unter dl-de/zero-2-0, ohne Konto,
+  API-Schluessel oder Abrechnungsvertrag. MapTiler wurde aus Android entfernt;
+  die PWA bleibt unveraendert. Web-Mercator-Matrix und Zoomversatz sowie
+  Menuezustaende sind getestet; ein echter Bildabruf und die native Anzeige
+  bei 320 dp mit Quellen-/Lizenzangabe bestehen. Zunaechst nur NRW, keine
+  deutschlandweite Abdeckung. Die Dienstausdehnung dient als Vorpruefung;
+  Landesraender koennen Luecken haben. Weitere Regionen und reale
+  Geraeteabnahme sind offen; kein stiller kostenpflichtiger Fallback.
+- **Umgesetzt**: Native Offlinekarten mit dem offenen OSM-Vektorformat
+  Mapsforge `.map` statt PWA-PMTiles. Frei verfuegbare Laender-/Regionalpakete,
+  Links zu Downloads und Extraktgrenzen, gestreamter Import, Deduplizierung,
+  lokale Verwaltung und bestaetigtes Loeschen sind enthalten. `.poly` oder
+  gleichnamiges Polygon-GeoJSON liefert die zugehoerige Extraktgrenze; allein
+  die Dateirechtecke gelten nicht als Abdeckungsbeleg. Offline wird nur bei
+  geometrisch vollstaendiger Revierabdeckung angeboten, auch durch mehrere
+  Pakete gemeinsam. Ein gewaehlter Offline-Modus wechselt bei fehlender Karte
+  oder Renderfehler nicht still auf Onlinekarten. Auswahl wird lokal gemerkt;
+  Kartenpakete enthalten keine privaten Revierdaten. JVM-Abdeckungstests und
+  Emulatorpruefungen mit echter Mapsforge-Datei bestehen. Reale
+  Geraete-/Grosspaketabnahme bleibt offen; PWA-Offlineablauf bleibt unabhaengig.
 - **Offen**: Oeffentliche Reviergrenzen und benoetigte App-Inhalte fuer
   Offline-Nutzung verfuegbar machen. Private Revierdaten duerfen dadurch nicht
   ungewollt als dauerhafte Offline-Kopie gespeichert werden.
@@ -205,6 +244,29 @@ wiederholen.
 - **Offen**: Teilfehler beim Merge im Testprojekt ausloesen und Rollback neu
   eingefuegter Marker sowie Meldung moeglicher Restdaten pruefen.
 
+### Grenzbearbeitung
+
+- **Offen**: Im isolierten Supabase-Testprojekt als Owner und Editor Punkte
+  verschieben/einfuegen/loeschen, Teilflaechen und befriedete Bereiche anlegen
+  oder entfernen und die Grenze nach erneutem Laden vergleichen. Ein Gast
+  darf den Editor nicht erhalten und auch per RPC keine Grenze schreiben.
+- **Offen**: Polygon/MultiPolygon mit mehreren Loechern testen; unberuehrte
+  Teilflaechen und Loecher muessen erhalten bleiben. Die letzte Teilflaeche und
+  ein Ring mit drei Punkten duerfen nicht weiter reduziert werden.
+- **Offen**: Selbstkreuzung, ueberlappende Teilflaechen und Loecher ausserhalb
+  der zugehoerigen Flaeche pruefen; ungueltige Entwuerfe duerfen nicht
+  geschrieben werden. Rueckgaengig/Wiederholen und Verwerfen kontrollieren.
+- **Offen**: Grenze verkleinern; Warnung fuer danach ausserhalb liegende
+  Markierungen pruefen und unveraenderte Marker bestaetigen. Standortfreigabe
+  und neue Markierungen muessen danach die neue Grenze verwenden.
+- **Offen**: Schreibfehler und Berechtigungsentzug waehrend der Bearbeitung
+  pruefen; der Entwurf muss nach einem Speicherfehler weiter bearbeitbar sein.
+  Eine zwischenzeitlich gespeicherte fremde Grenzaenderung muss zum erneuten
+  Laden auffordern. Gleichzeitige Schreibzugriffe bleiben ohne atomare
+  Versionspruefung im bestehenden RPC eine bekannte Einschraenkung.
+- **Offen**: Griffauswahl, Verschieben per Drag und Kartenmitte, neue Flaechen,
+  Tooltips, Zoom und Zurueck-/Abbruchverhalten auf einem realen Geraet pruefen.
+
 ### Profile, Rollen und Rechte
 
 - **Offen**: Owner-Profil loeschen und RLS-/Cascade-Verhalten fuer Marker,
@@ -225,8 +287,25 @@ wiederholen.
   Kartenbasis vergleichen; insbesondere Marker nahe der Grenze kontrollieren.
 - **Offen**: Eigenen Standort, GPS-Berechtigung, manuelles Einpassen,
   Grenzanzeige und Vollbild auf einem realen Geraet pruefen.
-- **Offen**: Satelliten- und Offlinekarten nach Festlegung der Datenquelle und
-  des Importablaufs testen.
+- **Offen**: Freie NRW-Luftbilder auf realem Geraet pruefen: Abdeckung und
+  Luecken an Landes-/Dienstraendern, Quellen-/Lizenzangabe, Zoom 5 bis 20,
+  Positionsgenauigkeit, Netz-/Anbieterfehler und Hinweis ausserhalb der
+  Dienstausdehnung. Kein API-Schluessel, Konto oder kostenpflichtiger Fallback.
+- **Offen**: Weitere Bundeslaender/Laender anhand tatsaechlich erreichbarer
+  amtlicher Dienste, passender Projektion und freier Lizenz anbinden und
+  pruefen. Keine pauschale deutschlandweite Luftbildabdeckung annehmen.
+- **Offen**: Mapsforge-Regionalpaket mit passender `.poly`-Extraktgrenze auf
+  realem Geraet importieren; vollstaendige, partielle und fehlende Abdeckung
+  einschliesslich Loechern und mehreren gemeinsam abdeckenden Paketen pruefen.
+  Offline darf nur bei vollstaendiger Abdeckung neu angeboten werden.
+- **Offen**: Flugmodus, App-Neustart, Revierwechsel, geaenderte Grenze und
+  geloeschtes Paket im gewaehlten Offline-Modus pruefen. Kein stiller
+  Online-Fallback; private Revierdaten duerfen nicht neu dauerhaft gespeichert
+  werden. Der Kartenmodus allein deaktiviert keine bestehende Kommunikation.
+- **Offen**: Grosse Kartenpakete (mehrere GB), knappen Speicher, abgebrochenen
+  oder fehlerhaften Import, doppelte Datei sowie Laden/Loeschen pruefen.
+  Gleichnamige, zur Karte passende Extraktgrenze sicherstellen; bei
+  Mehrdateifehlern bereits importierte Pakete in der Verwaltung kontrollieren.
 - **Offen**: DogTracker-Pairing sowie Relay-Pairing, Sicherheitscode,
   Berechtigungen, Funktransfer, Offline-Warteschlange und Serverbestaetigung mit
   mindestens zwei physischen Geraeten pruefen.

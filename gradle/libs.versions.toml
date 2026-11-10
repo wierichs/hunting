@@ -18,6 +18,7 @@ androidSvg = "1.4"
 
 [libraries]
 osmdroid = { group = "org.osmdroid", name = "osmdroid-android", version.ref = "osmdroid" }
+osmdroid-mapsforge = { group = "org.osmdroid", name = "osmdroid-mapsforge", version.ref = "osmdroid" }
 jts-core = { group = "org.locationtech.jts", name = "jts-core", version.ref = "jts" }
 jts-geojson = { group = "org.locationtech.jts.io", name = "jts-io-common", version.ref = "jts" }
 androidsvg = { group = "com.caverock", name = "androidsvg-aar", version.ref = "androidSvg" }

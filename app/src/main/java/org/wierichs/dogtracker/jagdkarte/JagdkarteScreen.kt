@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Picture
+import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.PictureDrawable
 import android.net.Uri
 import android.os.Build
@@ -116,6 +117,7 @@ import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
+import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import org.wierichs.dogtracker.communication.RelayGateway
@@ -170,6 +172,9 @@ internal fun JagdkarteScreen(
     var revision by remember { mutableStateOf(0) }
     var menuOpen by remember { mutableStateOf(false) }
     var managementOpen by remember { mutableStateOf(false) }
+    var boundaryEditorProfile by remember { mutableStateOf<HuntingSnapshot?>(null) }
+    var offlineMapsOpen by remember { mutableStateOf(false) }
+    var offlineMapRevision by remember { mutableStateOf(0) }
     var profilePendingDeletion by remember { mutableStateOf<HuntingProfile?>(null) }
     var profileDeleteBusy by remember { mutableStateOf(false) }
     var profileDeleteError by remember { mutableStateOf("") }
@@ -216,6 +221,7 @@ internal fun JagdkarteScreen(
         markerProfile = null
         editingMarker = null
         inviteProfile = null
+        boundaryEditorProfile = null
     }
     val sharingMutex = remember { Mutex() }
     val relayPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -539,7 +545,9 @@ internal fun JagdkarteScreen(
             },
             onManage = { managementOpen = true },
             isFullScreen = isFullScreen,
-            onToggleFullScreen = { onFullScreenChanged(!isFullScreen) })
+            onToggleFullScreen = { onFullScreenChanged(!isFullScreen) },
+            offlineMapRevision = offlineMapRevision,
+            onManageOfflineMaps = { offlineMapsOpen = true })
     }
 
     if (managementOpen) {
@@ -549,6 +557,9 @@ internal fun JagdkarteScreen(
                 .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Revier und Verwaltung", style = MaterialTheme.typography.titleLarge)
+                TextButton(onClick = { managementOpen = false; offlineMapsOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Offlinekarten verwalten")
+                }
                 current?.let { profile ->
                     Text("Freigaben", style = MaterialTheme.typography.titleSmall)
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -606,6 +617,12 @@ internal fun JagdkarteScreen(
                         }
                     }
                     Text("Revieraktionen", style = MaterialTheme.typography.titleSmall)
+                    if (profile.canEdit && profile.profile.boundary != null) {
+                        TextButton(onClick = {
+                            managementOpen = false
+                            boundaryEditorProfile = profile
+                        }, modifier = Modifier.fillMaxWidth()) { Text("Reviergrenze bearbeiten") }
+                    }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { dogsOpen = true }, modifier = Modifier.weight(1f)) { Text("Hunde") }
                         if (profile.canEdit) TextButton(onClick = { inviteProfile = profile.profile },
@@ -657,6 +674,23 @@ internal fun JagdkarteScreen(
                 if (sharingStatus.isNotBlank()) Text(sharingStatus, style = MaterialTheme.typography.bodySmall)
             }
         }
+    }
+
+    if (offlineMapsOpen) OfflineMapsDialog(snapshot?.profile?.boundary, onDismiss = {
+        offlineMapsOpen = false
+        offlineMapRevision++
+    })
+
+    boundaryEditorProfile?.let { editingProfile ->
+        BoundaryEditor(editingProfile, onSave = { original, draft ->
+            repository.updateBoundary(editingProfile.profile.id, original, draft)
+        }, onSaved = {
+            boundaryEditorProfile = null
+            if (selectedId == editingProfile.profile.id) {
+                revision++
+                status = "Reviergrenze gespeichert."
+            }
+        }, onDismiss = { boundaryEditorProfile = null })
     }
 
     val profileToDelete = profilePendingDeletion
@@ -1076,15 +1110,33 @@ internal fun NativeHuntingMap(
     onToggleOwnLocation: () -> Unit = {},
     onManage: () -> Unit = {},
     isFullScreen: Boolean = false,
-    onToggleFullScreen: () -> Unit = {}
+    onToggleFullScreen: () -> Unit = {},
+    boundaryEdit: BoundaryMapEdit? = null,
+    offlineMapRevision: Int = 0,
+    onManageOfflineMaps: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val offlineStore = remember { OfflineMapStore(context) }
+    var offlinePackages by remember { mutableStateOf(emptyList<OfflineMapPackage>()) }
+    var localOfflineManagerOpen by remember { mutableStateOf(false) }
+    var mapStyle by remember { mutableStateOf(HuntingMapStyle.entries.firstOrNull {
+        it.name == TrackerPreferences.huntingMapStyle(context)
+    } ?: HuntingMapStyle.OPEN_STREET_MAP) }
+    var tileSourceError by remember { mutableStateOf("") }
+    val availableOffline = remember(offlinePackages, snapshot?.profile?.boundary?.toString()) {
+        coveringOfflineMaps(offlinePackages, snapshot?.profile?.boundary)
+    }
+    val aerialAvailable = remember(snapshot?.profile?.boundary?.toString()) {
+        NrwAerialImagery.withinServiceExtent(snapshot?.profile?.boundary)
+    }
+    LaunchedEffect(offlineMapRevision, localOfflineManagerOpen) { offlinePackages = offlineStore.packages() }
     val map = remember {
         Configuration.getInstance().userAgentValue = "org.wierichs.jagdkarte/1.0"
         Configuration.getInstance().osmdroidBasePath = File(context.cacheDir, "osmdroid")
         Configuration.getInstance().osmdroidTileCache = File(context.cacheDir, "osmdroid/tiles")
         MapView(context).apply {
+            setUseDataConnection(mapStyle == HuntingMapStyle.OPEN_STREET_MAP)
             setTileSource(TileSourceFactory.MAPNIK)
             setMultiTouchControls(true)
             minZoomLevel = 3.0
@@ -1102,6 +1154,26 @@ internal fun NativeHuntingMap(
     var boundaryVisible by remember(snapshot?.profile?.id) { mutableStateOf(true) }
     val chooseLocation by rememberUpdatedState(onChooseLocation)
     val selectMarker by rememberUpdatedState(onMarkerSelected)
+    val boundaryEditing by rememberUpdatedState(boundaryEdit)
+    LaunchedEffect(map, mapStyle, availableOffline.map { it.id }, aerialAvailable) {
+        tileSourceError = ""
+        try {
+            map.setTileProvider(huntingTileProvider(context, mapStyle, availableOffline, snapshot?.profile?.boundary))
+            map.setUseDataConnection(mapStyle != HuntingMapStyle.OFFLINE)
+            map.minZoomLevel = if (mapStyle == HuntingMapStyle.AERIAL) NrwAerialImagery.MIN_ZOOM.toDouble() else 3.0
+            if (map.zoomLevelDouble < map.minZoomLevel) map.controller.setZoom(map.minZoomLevel)
+            map.maxZoomLevel = MAX_HUNTING_MAP_ZOOM
+            map.invalidate()
+            if (mapStyle == HuntingMapStyle.OFFLINE && availableOffline.isEmpty())
+                tileSourceError = "Keine Offlinekarte deckt dieses Revier vollstaendig ab."
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            map.setTileProvider(emptyOfflineProvider(context))
+            tileSourceError = if (mapStyle == HuntingMapStyle.AERIAL && !aerialAvailable)
+                "Fuer dieses Revier sind noch keine freien Luftbilder eingerichtet." else "Kartenbasis konnte nicht geladen werden."
+        }
+    }
     DisposableEffect(map, lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -1123,13 +1195,21 @@ internal fun NativeHuntingMap(
             val points = snapshot?.points.orEmpty().filter { it.visibleAt(now) }
             val boundary = snapshot?.profile?.boundary
             val renderKey = listOf(snapshot?.profile?.id, boundary?.toString(), boundaryVisible, ownLocationVisible, points,
-                points.map { it.staleAt(now) }, markerIconSize, focusMarkerId, focusRequest)
+                points.map { it.staleAt(now) }, markerIconSize, focusMarkerId, focusRequest,
+                boundaryEdit?.polygon, boundaryEdit?.ring, boundaryEdit?.vertex, boundaryEdit?.drawingPoints, boundaryEdit?.enabled)
             if (renderedContent != renderKey) {
                 renderedContent = renderKey
                 view.overlays.clear()
                 if (snapshot != null) view.overlays.add(MapEventsOverlay(object : MapEventsReceiver {
                     override fun singleTapConfirmedHelper(point: GeoPoint): Boolean = false
-                    override fun longPressHelper(point: GeoPoint): Boolean = chooseLocation(MarkerCoordinates(point.latitude, point.longitude))
+                    override fun longPressHelper(point: GeoPoint): Boolean {
+                        val editing = boundaryEditing
+                        if (editing != null) {
+                            if (editing.enabled) editing.onPlace(MarkerCoordinates(point.latitude, point.longitude))
+                            return true
+                        }
+                        return chooseLocation(MarkerCoordinates(point.latitude, point.longitude))
+                    }
                 }))
                 val bounds = mutableListOf<GeoPoint>()
                 geometryPolygons(boundary).forEach { rings ->
@@ -1163,12 +1243,62 @@ internal fun NativeHuntingMap(
                             }
                             icon = locationIcon(context, iconAsset)
                         }
-                        if (point.markerId != null && snapshot?.let {
+                        if (boundaryEdit == null && point.markerId != null && snapshot?.let {
                                 canDeleteHuntingMarker(it.canEdit, currentUserId, point)
                             } == true) {
                             point.markerId?.let { id -> setOnMarkerClickListener { _, _ -> selectMarker(id); true } }
                         }
                     })
+                }
+                if (boundaryEdit != null && boundary != null) {
+                    val editPoints = BoundaryDraft.fromGeometry(boundary).polygons[boundaryEdit.polygon][boundaryEdit.ring]
+                    val drawing = boundaryEdit.drawingPoints
+                    val highlighted = drawing ?: (editPoints + editPoints.first())
+                    view.overlays.add(Polyline(view).apply {
+                        setPoints(highlighted.map { GeoPoint(it.latitude, it.longitude) })
+                        outlinePaint.color = android.graphics.Color.rgb(204, 100, 25)
+                        outlinePaint.strokeWidth = 6f
+                    })
+                    fun handle(point: MarkerCoordinates, selected: Boolean, midpoint: Boolean = false): Marker = Marker(view).apply {
+                        position = GeoPoint(point.latitude, point.longitude)
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                        icon = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(if (selected) android.graphics.Color.rgb(204, 100, 25) else android.graphics.Color.WHITE)
+                            setStroke((2 * context.resources.displayMetrics.density).toInt(), android.graphics.Color.rgb(24, 105, 70))
+                            val size = ((if (midpoint) 14 else 22) * context.resources.displayMetrics.density).toInt()
+                            setSize(size, size)
+                        }
+                    }
+                    if (drawing == null) editPoints.forEachIndexed { index, point ->
+                        val next = editPoints[(index + 1) % editPoints.size]
+                        val midpoint = MarkerCoordinates((point.latitude + next.latitude) / 2, (point.longitude + next.longitude) / 2)
+                        view.overlays.add(handle(midpoint, false, true).apply {
+                            title = "Grenzpunkt einfuegen"
+                            setOnMarkerClickListener { _, _ ->
+                                boundaryEditing?.takeIf { it.enabled }?.onInsert?.invoke(index, midpoint)
+                                true
+                            }
+                        })
+                        view.overlays.add(handle(point, index == boundaryEdit.vertex).apply {
+                            title = "Grenzpunkt ${index + 1}"
+                            isDraggable = boundaryEdit.enabled
+                            setOnMarkerClickListener { _, _ ->
+                                boundaryEditing?.takeIf { it.enabled }?.onSelect?.invoke(index)
+                                true
+                            }
+                            setOnMarkerDragListener(object : Marker.OnMarkerDragListener {
+                                override fun onMarkerDragStart(marker: Marker) = Unit
+                                override fun onMarkerDrag(marker: Marker) = Unit
+                                override fun onMarkerDragEnd(marker: Marker) {
+                                    boundaryEditing?.takeIf { it.enabled }?.onMove?.invoke(index,
+                                        MarkerCoordinates(marker.position.latitude, marker.position.longitude))
+                                }
+                            })
+                        })
+                    } else drawing.forEach { point ->
+                        view.overlays.add(handle(point, true).apply { setOnMarkerClickListener { _, _ -> true } })
+                    }
                 }
                 if (ownLocationVisible) view.overlays.add(ownLocationOverlay)
                 val guestTarget = points.firstOrNull { it.markerId == focusMarkerId }
@@ -1197,7 +1327,7 @@ internal fun NativeHuntingMap(
         DisposableEffect(ownLocationOverlay) {
             onDispose { ownLocationOverlay.disableMyLocation() }
         }
-        if (snapshot != null) {
+        if (snapshot != null && boundaryEdit == null) {
             Column(Modifier.align(Alignment.TopStart).padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (locationLegendExpanded) {
                     Surface(color = Color.White.copy(alpha = 0.94f), shadowElevation = 4.dp,
@@ -1229,7 +1359,7 @@ internal fun NativeHuntingMap(
                 }
             }
         }
-        Row(Modifier.align(Alignment.TopEnd).padding(8.dp), verticalAlignment = Alignment.Top,
+        if (boundaryEdit == null) Row(Modifier.align(Alignment.TopEnd).padding(8.dp), verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Surface(color = Color.White.copy(alpha = 0.94f), shadowElevation = 4.dp,
                 shape = RoundedCornerShape(4.dp)) {
@@ -1262,7 +1392,20 @@ internal fun NativeHuntingMap(
                 }
             }
         }
-        if (snapshot != null) {
+        if (boundaryEdit != null) {
+            Icon(Icons.Default.Add, "Grenzposition", Modifier.align(Alignment.Center).size(28.dp),
+                tint = MaterialTheme.colorScheme.primary)
+            FloatingActionButton(onClick = {
+                if (boundaryEdit.enabled) {
+                    val center = map.mapCenter
+                    boundaryEdit.onPlace(MarkerCoordinates(center.latitude, center.longitude))
+                }
+            }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) {
+                Icon(if (boundaryEdit.drawingPoints != null) Icons.Default.Add else Icons.Default.Check,
+                    if (boundaryEdit.drawingPoints != null) "Grenzpunkt an Kartenmitte hinzufuegen" else "Grenzpunkt zur Kartenmitte verschieben")
+            }
+        }
+        if (snapshot != null && boundaryEdit == null) {
             if (choosingPosition) {
                 Icon(Icons.Default.LocationOn, "Zielposition", Modifier.align(Alignment.Center).offset(y = (-20).dp).size(40.dp),
                     tint = MaterialTheme.colorScheme.primary)
@@ -1284,6 +1427,15 @@ internal fun NativeHuntingMap(
         }
         Column(Modifier.align(Alignment.BottomStart).padding(8.dp).widthIn(max = 200.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Surface(color = Color.White.copy(alpha = 0.94f), shape = RoundedCornerShape(4.dp)) {
+                MapStyleMenu(mapStyle, availableOffline.isNotEmpty(), aerialAvailable,
+                    onStyle = { mapStyle = it; TrackerPreferences.setHuntingMapStyle(context, it.name) }, onManageOffline = {
+                        if (onManageOfflineMaps != null) onManageOfflineMaps() else localOfflineManagerOpen = true
+                    })
+            }
+            if (tileSourceError.isNotBlank()) Surface(color = Color.White.copy(alpha = 0.94f), shape = RoundedCornerShape(4.dp)) {
+                Text(tileSourceError, Modifier.padding(8.dp), style = MaterialTheme.typography.labelSmall)
+            }
             if (statusMessage.isNotBlank() && !statusMessage.startsWith("Stand:")) {
                 Surface(color = Color.White.copy(alpha = 0.94f), shadowElevation = 4.dp,
                     shape = RoundedCornerShape(4.dp)) {
@@ -1291,11 +1443,16 @@ internal fun NativeHuntingMap(
                         style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
-            TextButton(onClick = {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.openstreetmap.org/copyright")))
-            }) { Text("© OpenStreetMap", style = MaterialTheme.typography.labelSmall) }
+            Surface(color = Color.White.copy(alpha = 0.94f), shape = RoundedCornerShape(4.dp)) {
+                TextButton(onClick = {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(if (mapStyle == HuntingMapStyle.AERIAL)
+                        NrwAerialImagery.LICENSE_URL else "https://www.openstreetmap.org/copyright")))
+                }) { Text(if (mapStyle == HuntingMapStyle.AERIAL) NrwAerialImagery.ATTRIBUTION
+                    else "© OpenStreetMap", style = MaterialTheme.typography.labelSmall) }
+            }
         }
     }
+    if (localOfflineManagerOpen) OfflineMapsDialog(snapshot?.profile?.boundary, onDismiss = { localOfflineManagerOpen = false })
 }
 
 @Composable

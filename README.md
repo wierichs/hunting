@@ -58,14 +58,146 @@ bleibt davon unberuehrt.
 	Nearby kann Android-Berechtigungen fuer groben und praezisen Standortzugriff
 	zur Geraetesuche verlangen. Das aktiviert nicht die eigene Revierfreigabe.
 
-Kartenkacheln werden im privaten App-Cache gespeichert. Das ist kein garantierter
-Offline-Kartenbestand. Private Revierdaten werden nicht als dauerhafte
+Online-Kartenkacheln werden im privaten App-Cache gespeichert. Das ist kein
+garantierter Offline-Kartenbestand; dafuer gibt es importierte Mapsforge-Pakete.
+Private Revierdaten werden nicht als dauerhafte
 Offline-Kopie gespeichert. Ohne Verbindung werden keine alten Kartenpositionen
 als aktuelle Live-Daten weiter angezeigt. Kann eine Teilnehmerposition beim
 Stoppen nicht entfernt werden, kann sie bis zur 90-Sekunden-Grenze sichtbar
 bleiben. Ohne Relaisfreigabe werden Teilnehmerpositionen nicht offline
 nachgesendet. Mit bereitgestelltem Relay-Server bleiben eigene Meldungen nur
 bis zu 90 Sekunden ab Messzeit ausstehend; eine Historie wird nicht aufgebaut.
+
+### Kartendarstellung und Offlinekarten
+
+Die Kartenaktion **Kartendarstellung** bietet **OpenStreetMap**, **Luftbild**
+und bei vollstaendiger lokaler Revierabdeckung **Offline**. Die Auswahl wird
+auf dem Geraet gespeichert. Ohne passende Offlinekarte wird diese Option nicht
+neu angeboten. War Offline bereits gewaehlt und fehlt nach einem Revierwechsel,
+einer Grenzaenderung oder dem Loeschen eines Pakets die Abdeckung, bleibt die
+Kartenbasis ohne Online-Fallback leer und zeigt eine Meldung. Die Kartenwahl
+schaltet weder Standortfreigabe noch Serverabfragen oder Relay-Kommunikation ab;
+sie betrifft ausschliesslich die Kartenbasis.
+
+#### Formatentscheidung fuer Android (2026-11-10)
+
+| Format | Bewertung |
+| --- | --- |
+| Mapsforge `.map` | Offenes OSM-Vektorformat, etablierter Android-Renderer und fertige frei herunterladbare Regionalpakete. Gewaehlt fuer Android. |
+| Vektor-PMTiles / Vektor-MBTiles | Ebenfalls offene, kompakte Container. Benoetigen einen passenden MVT-Renderer, Stil, Schriften und gegebenenfalls Sprites. Technisch geeignet, aber fuer die bestehende osmdroid-Anbindung aufwendiger. |
+| Raster-MBTiles | Einfach darstellbar, aber bei grossen Regionen und vielen Detailzoomstufen typischerweise deutlich mehr Speicherbedarf als Vektorkarten. Nicht als Standard gewaehlt. |
+| OSM-PBF | Gut fuer Rohdatentransfer, aber kein direkt darstellbares Kartenpaket; vorab waere eine Kartenaufbereitung erforderlich. |
+
+Die [offene Mapsforge-Spezifikation](https://github.com/mapsforge/mapsforge/blob/master/docs/Specification-Binary-Map-File.md)
+ist auf effiziente Speicherung und mobiles Rendering ausgelegt. Eine pauschal
+kleinste Datei gegenueber jedem komprimierten MVT-Paket wird nicht behauptet;
+Region, enthaltene Details und Zoomumfang beeinflussen die Groesse erheblich.
+Der Downloadserver bietet Bundeslaender und Laender, nicht nur Revierzuschnitte.
+Beispiele des geprueften Angebots: Rheinland-Pfalz etwa 183 MB, NRW etwa 586 MB,
+Deutschland etwa 3 GB. Das fuer den Renderer-Test verwendete Liechtenstein-Paket
+hat 2.261.314 Bytes. Angebote und Groessen koennen sich aendern.
+
+Die PWA behaelt ihren unabhaengigen PMTiles-Ablauf. Android importiert keine
+PMTiles oder MBTiles; es gibt keine Aenderung oder Konvertierung im Originalrepo.
+
+#### Download, Import und Abdeckung
+
+1. Eine passende `.map`-Datei aus den [freien Mapsforge-Downloads](https://download.mapsforge.org/maps/v5/)
+	laden, beispielsweise unter `europe/germany/`.
+2. Die gleichnamige `.poly`-Extraktgrenze aus dem [Extraktgrenzen-Verzeichnis](https://download.mapsforge.org/maps/poly/)
+	laden. Fuer `nordrhein-westfalen.map` ist dies `europe/germany/nordrhein-westfalen.poly`.
+3. Unter **Revier und Verwaltung -> Offlinekarten verwalten** mit
+	**MAP / Extraktgrenze importieren** beide Dateien auswaehlen. Getrennter Import
+	ist ebenfalls moeglich; eine spaeter importierte Extraktgrenze wird ueber den
+	gleichen Dateistamm zugeordnet. Alternativ wird gleichnamiges Polygon-/
+	MultiPolygon-GeoJSON als Abdeckungsdatei unterstuetzt.
+
+Die Dateiausdehnung allein beweist bei regional zugeschnittenen Paketen keine
+vollstaendige Abdeckung. Android schneidet die zugeordnete Extraktgrenze mit
+den Dateigrenzen und prueft geometrisch das ganze Revier, nicht nur dessen
+Mittelpunkt. Bei Bedarf koennen mehrere Pakete gemeinsam abdecken. Fehlt die
+Extraktgrenze, bleibt das Paket installiert, aber nicht als gesichert abdeckend
+auswaehlbar. Nur zur Kartendatei passende Extraktgrenzen aus vertrauenswuerdiger
+Quelle verwenden; die App kann die Herkunft einer selbst zugeordneten Grenze
+nicht verifizieren. OSM-Datenvollstaendigkeit und Aktualitaet sind davon getrennt.
+
+Pakete werden gestreamt, auf gueltige Mapsforge-Metadaten geprueft und im
+privaten, vom Backup ausgeschlossenen App-Verzeichnis gespeichert. SHA-256
+verhindert identische Kartenkopien. Beim Kopieren bleiben mindestens 32 MiB
+Speicherreserve; fehlerhafte temporaere Dateien werden entfernt. Es gibt keinen
+Hintergrunddownload und keine Kachel-Massendownloads vom OSM-Standardserver.
+Mehrdateiimporte sind keine Gesamttransaktion: Bereits erfolgreich importierte
+Pakete bleiben bei einem spaeteren Fehler erhalten und sind in der Verwaltung
+sichtbar. Karten koennen dort mit Bestaetigung geloescht werden.
+
+Die Offlineansicht rendert lokal mit Mapsforge und ruft keine Onlinekacheln ab.
+Zoom bleibt auf 20 begrenzt; ein groesserer Zoom erzeugt keine zusaetzlichen
+OSM-Details. Private Reviergrenzen, Marker und Teilnehmerdaten werden nicht
+in die Kartenpakete oder deren Metadaten geschrieben. Ohne Verbindung steht
+dadurch nicht automatisch die private Revierauswahl nach einem Kaltstart bereit.
+
+Kartendaten: [OpenStreetMap-Mitwirkende, ODbL](https://www.openstreetmap.org/copyright).
+Renderer und Standardstil: [Mapsforge](https://github.com/mapsforge/mapsforge)
+(Lizenzhinweise und Quellcode dort); Anbindung ueber osmdroid-mapsforge.
+
+#### Freie Luftbilder statt API-Schluessel
+
+Android verwendet fuer die Luftbildansicht keine kostenpflichtige MapTiler-
+Anbindung mehr. Weder Nutzer noch App-Betreiber benoetigen dafuer ein Konto,
+einen API-Schluessel oder eine Zahlungsvereinbarung. Die PWA-Konfiguration
+bleibt unveraendert; dortige Schluessel werden nicht gelesen oder angepasst.
+Eine frueher gespeicherte Auswahl `SATELLITE` wird lokal auf `AERIAL`
+uebernommen. Der Menuepunkt heisst **Luftbild**, weil amtliche Orthofotos aus
+Luftaufnahmen und keine weltweite Satellitenkarte angezeigt werden.
+
+Zunaechst angebunden ist **Geobasis NRW / WMTS NW DOP**. Die
+[amtlichen Dienstmetadaten](https://www.wmts.nrw.de/geobasis/wmts_nw_dop/1.0.0/WMTSCapabilities.xml)
+bestaetigen gebuehrenfreie Bereitstellung, Zugriff ohne Anmeldung und die
+[Datenlizenz Deutschland - Zero 2.0](https://www.govdata.de/dl-de/zero-2-0).
+Die Quelle wird auf der Karte genannt und die Lizenz ist verlinkt.
+
+Die Implementierung nutzt die Web-Mercator-Matrix `EPSG_3857_16` mit 256-Pixel-
+Kacheln. Deren Matrix `00` entspricht XYZ-Zoom 5; die Matrixnummer ist deshalb
+immer `XYZ-Zoom - 5`, zweistellig formatiert. Android begrenzt diese Ansicht
+auf Zoom 5 bis 20. Dadurch bleiben die Karte und Markeranker georeferenziert;
+der Cache ist von OpenStreetMap und Offlinekarten getrennt.
+
+**Die Luftbildansicht ist derzeit regional auf NRW begrenzt.** Liegt das ganze
+Revier nicht innerhalb der vom Dienst veroeffentlichten rechteckigen Ausdehnung,
+ist die Option deaktiviert. Dieses Rechteck ist nur eine raeumliche Vorpruefung,
+kein Nachweis vollstaendiger Bildabdeckung: Auch innerhalb dieses Rechtecks
+koennen insbesondere ausserhalb der Landesgrenze oder am Rand Kacheln fehlen.
+Andere Bundeslaender und Laender sind noch nicht angebunden. Es wird keine
+deutschlandweite oder globale Luftbildabdeckung versprochen.
+
+Die Ansicht laedt nur interaktiv angefragte Kacheln; kein Massendownload und
+kein automatischer Wechsel zu einem kostenpflichtigen Anbieter. Sie benoetigt
+Internet und hat keine Verfuegbarkeitsgarantie. Uebliche Mobilfunk-Datenkosten
+koennen anfallen. Bei einer nicht mehr passenden Revierregion bleibt eine
+bereits gewaehlte Luftbildansicht mit Hinweis ohne Online-Fallback leer;
+OpenStreetMap kann der Nutzer selbst auswaehlen. Offlinekarten bleiben davon
+unabhaengig. Eine einzelne NRW-Bildkachel sowie die native Luftbildansicht bei
+320 dp wurden automatisiert ohne Anmeldung oder Schluessel erfolgreich geprueft.
+
+#### Isolierter Offline-Renderertest
+
+`MapAppearanceInstrumentedTest` prueft Menue, fehlenden Online-Fallback,
+WMTS-Zoomumrechnung, Importfehler, Deduplizierung, erneutes Laden, Loeschen sowie
+echtes Rendering und Bildpixel. Fuer die drei Tests mit echter Karte muessen
+`liechtenstein.map` und `liechtenstein.poly` aus den oben genannten Verzeichnissen
+im externen Test-App-Verzeichnis
+`/sdcard/Android/data/org.wierichs.jagdkarte/files/` liegen. Die APK zuerst im
+schreibgeschuetzten AVD installieren, dann beide Dateien per `adb push` dorthin
+uebertragen. Ohne Fixture werden nur diese drei Tests uebersprungen. Der
+ausgefuehrte Lauf hatte zehn Tests, null Fehler und null uebersprungene Tests.
+Der zusaetzliche Luftbild-Livetest wird mit
+`-Pandroid.testInstrumentationRunnerArguments.liveAerial=true` aktiviert; ohne
+diese ausdrueckliche Aktivierung wird nur dieser Live-Test uebersprungen.
+Der ausgefuehrte Lauf hatte sowohl Fixture als auch Live-Test aktiviert und
+pruefte echte Luftbilder, Quellenangabe, fehlende Revierabdeckung und die
+uebernommene alte Karteneinstellung. Die native Karte wurde bei 320 dp mit
+Bildpruefung getestet.
+Fuer diese Tests sind weder Anmeldung noch Supabase-Schreibzugriffe erforderlich.
 
 ### Android-Portierungsstatus
 

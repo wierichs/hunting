@@ -60,6 +60,9 @@ androidComponents {
 
 dependencies {
     implementation(libs.osmdroid)
+    implementation(libs.osmdroid.mapsforge) {
+        exclude(group = "com.caverock", module = "androidsvg")
+    }
     implementation(libs.androidsvg)
     implementation(libs.jts.core)
     implementation(libs.jts.geojson)

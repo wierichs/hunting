@@ -445,6 +445,18 @@ internal class JagdkarteRepository(context: Context) {
         profileId
     }
 
+    suspend fun updateBoundary(profileId: String, original: BoundaryDraft, draft: BoundaryDraft) = authenticated { token ->
+        val geometry = draft.validatedGeometry()
+        val profile = loadProfile(token, profileId)
+        check(canEditProfile(token, profile)) { "Nur Owner und Bearbeiter duerfen die Reviergrenze bearbeiten." }
+        check(profile.boundary?.let(BoundaryDraft::fromGeometry) == original) {
+            "Die Reviergrenze wurde inzwischen geaendert. Bitte den Editor schliessen und das Revier neu laden."
+        }
+        request("rest/v1/rpc/set_hunting_profile_boundary", "POST", JSONObject()
+            .put("p_profile_id", profile.id).put("p_geometry", geometry), token)
+        Unit
+    }
+
     suspend fun deleteProfile(profileId: String) = authenticated { token ->
         val profile = loadProfile(token, profileId)
         check(canDeleteHuntingProfile(profile, userId)) { "Nur der Owner darf dieses Revier loeschen." }

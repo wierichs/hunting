@@ -10,6 +10,7 @@ internal object TrackerPreferences {
     private const val FILE_NAME = "tracker_settings"
     private const val KEY_INTERVAL_SECONDS = "interval_seconds"
     private const val KEY_MARKER_ICON_SIZE = "marker_icon_size"
+    private const val KEY_HUNTING_MAP_STYLE = "hunting_map_style"
     private const val KEY_JWD_MARKER_TYPE_MAPPING = "jwd_marker_type_mapping"
     private const val KEY_HIDDEN_HUNTING_PROFILES = "hidden_hunting_profiles"
     private const val KEY_IS_TRACKING = "is_tracking"
@@ -42,6 +43,14 @@ internal object TrackerPreferences {
     fun setMarkerIconSize(context: Context, size: String) {
         require(size in MARKER_ICON_SIZES)
         preferences(context).edit { putString(KEY_MARKER_ICON_SIZE, size) }
+    }
+
+    fun huntingMapStyle(context: Context): String = preferences(context).getString(KEY_HUNTING_MAP_STYLE, "OPEN_STREET_MAP")
+        ?.let { if (it == "SATELLITE") "AERIAL" else it } ?: "OPEN_STREET_MAP"
+
+    fun setHuntingMapStyle(context: Context, style: String) {
+        require(style in setOf("OPEN_STREET_MAP", "AERIAL", "OFFLINE"))
+        preferences(context).edit { putString(KEY_HUNTING_MAP_STYLE, style) }
     }
 
     fun jwdMarkerTypeMappings(context: Context): Map<String, String> {
