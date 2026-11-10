@@ -127,6 +127,13 @@ class HuntingLocationTest {
         }
     }
 
+    @Test fun onlyProfileOwnerCanDeleteAProfile() {
+        val profile = HuntingProfile("revier", "Testrevier", "owner-id", false, null)
+        assertTrue(canDeleteHuntingProfile(profile, "owner-id"))
+        assertFalse(canDeleteHuntingProfile(profile, "editor-id"))
+        assertFalse(canDeleteHuntingProfile(profile, ""))
+    }
+
     @Test fun guestLinkTokenUrlAndFragmentMatchPwaContract() {
         val token = createGuestLinkToken()
         assertTrue(Regex("^[A-Za-z0-9_-]{43}$").matches(token))

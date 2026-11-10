@@ -5,6 +5,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.locationtech.jts.geom.Geometry
 import org.locationtech.jts.io.geojson.GeoJsonReader
+import org.locationtech.jts.io.geojson.GeoJsonWriter
+import kotlin.math.roundToLong
+import java.util.Locale
 
 internal data class JwdImportedFacility(
     val typeId: String,
@@ -13,6 +16,32 @@ internal data class JwdImportedFacility(
     val latitude: Double,
     val longitude: Double
 )
+
+internal data class JwdFacilityMergeKey(
+    val typeId: String,
+    val title: String,
+    val notes: String,
+    val latitudeE6: Long,
+    val longitudeE6: Long
+)
+
+internal fun jwdFacilityMergeKey(typeId: String, title: String, notes: String,
+    latitude: Double, longitude: Double) = JwdFacilityMergeKey(
+    typeId, title.trim(), notes, (latitude * 1_000_000).roundToLong(), (longitude * 1_000_000).roundToLong())
+
+internal fun JwdImportedFacility.mergeKey() =
+    jwdFacilityMergeKey(typeId, title, notes, latitude, longitude)
+
+internal fun jwdProfileNameKey(name: String): String = Normalizer.normalize(name.trim(), Normalizer.Form.NFD)
+    .replace(Regex("\\p{Mn}+"), "")
+    .lowercase(Locale.ROOT)
+
+internal fun suggestedJwdMergeTargetId(
+    importedName: String,
+    profiles: List<HuntingProfile>,
+    currentUserId: String
+): String? = profiles.filter { it.ownerId == currentUserId &&
+    jwdProfileNameKey(it.name) == jwdProfileNameKey(importedName) }.singleOrNull()?.id
 
 internal data class JwdImportedProfile(
     val name: String,
@@ -24,6 +53,21 @@ internal data class JwdImportedProfile(
     val unknownTypeCount: Int = 0
 )
 
+internal fun mergeRevierBoundaries(existingBoundary: JSONObject?, importedBoundary: JSONObject): JSONObject {
+    if (existingBoundary == null) return JSONObject(importedBoundary.toString())
+    val reader = GeoJsonReader()
+    val existing = reader.read(existingBoundary.toString())
+    val imported = reader.read(importedBoundary.toString())
+    require(existing.isValid && !existing.isEmpty && imported.isValid && !imported.isEmpty) {
+        "Bestehende oder importierte Reviergrenze ist ungueltig."
+    }
+    val merged = existing.union(imported)
+    require(merged.isValid && !merged.isEmpty && merged.geometryType in setOf("Polygon", "MultiPolygon")) {
+        "Reviergrenzen konnten nicht vereinigt werden."
+    }
+    return JSONObject(GeoJsonWriter().write(merged))
+}
+
 private data class JwdRing(val coordinates: JSONArray, val geometry: Geometry)
 
 private val GEOJSON_ROOT_TYPES = setOf("Feature", "FeatureCollection", "Polygon", "MultiPolygon")
@@ -34,6 +78,16 @@ private fun normalizedJwdType(value: String): String = Normalizer.normalize(valu
     .replace('_', ' ')
     .trim()
     .lowercase()
+
+private val JWD_TITLE_MARKER_TYPE_SUFFIX = Regex("\\r?\\n\\[jagdkarte:v(\\d+):([a-z0-9][a-z0-9_-]{0,39})]$")
+
+private data class JwdTitleMetadata(val title: String, val markerTypeId: String?)
+
+private fun jwdTitleMetadata(value: String): JwdTitleMetadata {
+    val match = JWD_TITLE_MARKER_TYPE_SUFFIX.find(value) ?: return JwdTitleMetadata(value, null)
+    if (match.groupValues[1].toIntOrNull() != JWD_MARKER_METADATA_VERSION) return JwdTitleMetadata(value, null)
+    return JwdTitleMetadata(value.removeRange(match.range).trimEnd(), match.groupValues[2])
+}
 
 private fun jwdCoordinate(point: JSONObject, label: String): Pair<Double, Double> {
     val latitude = point.optDouble("latitude", Double.NaN)
@@ -114,24 +168,34 @@ internal fun parseJwdImport(jsonText: String): JwdImportedProfile {
         val (latitude, longitude) = jwdCoordinate(facility.optJSONObject("coordinate") ?: JSONObject(),
             "Einrichtung ${index + 1}")
         val sourceType = facility.optString("type").trim()
+        val metadata = facility.optJSONObject(JWD_MARKER_METADATA_KEY)
+        val propertyTypeId = metadata?.takeIf {
+            it.optInt("version", -1) == JWD_MARKER_METADATA_VERSION
+        }?.optString("markerTypeId")?.takeIf { Regex("^[a-z0-9][a-z0-9_-]{0,39}$").matches(it) }
+        val titleMetadata = jwdTitleMetadata(facility.optString("title"))
+        val preservedTypeId = titleMetadata.markerTypeId ?: propertyTypeId
+        val preservedType = HuntingMarkerType.entries.firstOrNull { it.id == preservedTypeId }
         val normalizedType = normalizedJwdType(sourceType)
-        val type = HuntingMarkerType.entries.firstOrNull {
+        val sourceTypeDefinition = HuntingMarkerType.entries.firstOrNull {
             normalizedJwdType(it.id) == normalizedType || normalizedJwdType(it.label) == normalizedType
         }
+        val type = preservedType ?: sourceTypeDefinition
         require(type?.temporary != true) {
             "Einrichtung ${index + 1}: temporaere Markierungen koennen nicht als dauerhafte Einrichtung importiert werden."
         }
-        val originalTypeNote = "Importierter Originaltyp: ${sourceType.ifBlank { "nicht angegeben" }}"
+        val originalTypeId = preservedTypeId ?: sourceType
+        val originalTypeNote = "Importierter Originaltyp: ${originalTypeId.ifBlank { "nicht angegeben" }}"
         val sourceNotes = facility.optString("notes")
         val notes = if (type != null || sourceNotes.startsWith(originalTypeNote)) sourceNotes
             else listOf(originalTypeNote, sourceNotes).filter { it.isNotBlank() }.joinToString("\n")
-        val title = facility.optString("title").trim().ifBlank {
+        val title = titleMetadata.title.trim().ifBlank {
             "${type?.label ?: sourceType.ifBlank { "Einrichtung" }} ${index + 1}"
         }
         require(title.length <= 80 && notes.length <= 300) {
             "Einrichtungsname oder Importvermerk ueberschreitet die erlaubte Laenge."
         }
-        JwdImportedFacility(type?.id ?: HuntingMarkerType.SONSTIGES.id, title, notes, latitude, longitude)
+        JwdImportedFacility(preservedTypeId ?: type?.id ?: HuntingMarkerType.SONSTIGES.id,
+            title, notes, latitude, longitude)
     }
     return JwdImportedProfile(name, boundary, facilities, pacifiedAreas.length(),
         outsideBoundaryFacilityCount = facilities.count {

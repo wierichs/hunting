@@ -38,8 +38,10 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun RevierImportDialog(
     candidates: List<JwdImportedProfile>,
-    onImport: suspend (JwdImportedProfile) -> String,
-    onImported: (String) -> Unit,
+    mergeTargets: List<HuntingProfile> = emptyList(),
+    suggestedMergeTargets: Map<String, String> = emptyMap(),
+    onImport: suspend (JwdImportedProfile, HuntingProfile?) -> String,
+    onImported: (String, Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -47,7 +49,17 @@ internal fun RevierImportDialog(
     var featureMenuOpen by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
+    val firstCandidate = candidates.first()
+    val firstSuggestion = suggestedMergeTargets[jwdProfileNameKey(firstCandidate.name)]
+        ?.takeIf { id -> mergeTargets.any { it.id == id } }
+    var mergeIntoExisting by remember(candidates, suggestedMergeTargets) {
+        mutableStateOf(firstSuggestion != null)
+    }
+    var selectedProfileId by remember(mergeTargets, candidates, suggestedMergeTargets) {
+        mutableStateOf(firstSuggestion ?: mergeTargets.firstOrNull()?.id)
+    }
     val imported = candidates[selectedIndex.coerceIn(candidates.indices)]
+    val selectedProfile = mergeTargets.firstOrNull { it.id == selectedProfileId }
     val hasMultipleCandidates = candidates.size > 1
 
     AlertDialog(
@@ -67,6 +79,10 @@ internal fun RevierImportDialog(
                             candidates.forEachIndexed { index, candidate ->
                                 DropdownMenuItem(text = { Text("${index + 1}. ${candidate.name}") }, onClick = {
                                     selectedIndex = index
+                                    val suggestion = suggestedMergeTargets[jwdProfileNameKey(candidate.name)]
+                                        ?.takeIf { id -> mergeTargets.any { it.id == id } }
+                                    mergeIntoExisting = suggestion != null
+                                    selectedProfileId = suggestion ?: mergeTargets.firstOrNull()?.id
                                     featureMenuOpen = false
                                 })
                             }
@@ -74,7 +90,43 @@ internal fun RevierImportDialog(
                     }
                 }
                 Text(imported.name, style = MaterialTheme.typography.titleMedium)
-                Text("Es wird ein neues eigenes Revierprofil angelegt.")
+                Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth().selectable(
+                        selected = !mergeIntoExisting, onClick = { if (!busy) mergeIntoExisting = false },
+                        role = Role.RadioButton)) {
+                        RadioButton(selected = !mergeIntoExisting, onClick = null)
+                        Text("Neues Profil")
+                    }
+                    if (mergeTargets.isNotEmpty()) {
+                        Row(Modifier.fillMaxWidth().selectable(
+                            selected = mergeIntoExisting, onClick = { if (!busy) mergeIntoExisting = true },
+                            role = Role.RadioButton)) {
+                            RadioButton(selected = mergeIntoExisting, onClick = null)
+                            Text("In bestehendes Revier zusammenführen")
+                        }
+                    }
+                }
+                if (mergeIntoExisting && mergeTargets.isNotEmpty()) {
+                    ExposedDropdownMenuBox(expanded = featureMenuOpen,
+                        onExpandedChange = { if (!busy) featureMenuOpen = it }) {
+                        OutlinedTextField(selectedProfile?.name.orEmpty(), onValueChange = {}, readOnly = true,
+                            enabled = !busy, label = { Text("Zielrevier") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(featureMenuOpen) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable))
+                        ExposedDropdownMenu(expanded = featureMenuOpen, onDismissRequest = { featureMenuOpen = false }) {
+                            mergeTargets.forEach { profile ->
+                                DropdownMenuItem(text = { Text(profile.name) }, onClick = {
+                                    selectedProfileId = profile.id
+                                    featureMenuOpen = false
+                                })
+                            }
+                        }
+                    }
+                    Text("Grenzen werden vereinigt. Vorhandene Marker bleiben erhalten; bereits vorhandene dauerhafte Einrichtungen werden nicht doppelt importiert.",
+                        style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Text("Es wird ein neues eigenes Revierprofil angelegt.")
+                }
                 Text("${imported.facilities.size} dauerhafte Einrichtung(en)")
                 Text("${imported.pacifiedAreaCount} befriedete(r) Bereich(e)")
                 if (imported.untitledFacilityCount > 0) {
@@ -93,12 +145,12 @@ internal fun RevierImportDialog(
             }
         },
         confirmButton = {
-            TextButton(enabled = !busy, onClick = {
+            TextButton(enabled = !busy && (!mergeIntoExisting || selectedProfile != null), onClick = {
                 busy = true
                 error = ""
                 scope.launch {
                     try {
-                        onImported(onImport(imported))
+                        onImported(onImport(imported, if (mergeIntoExisting) selectedProfile else null), mergeIntoExisting)
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (failure: Exception) {
@@ -107,7 +159,7 @@ internal fun RevierImportDialog(
                         busy = false
                     }
                 }
-            }) { Text("Profil importieren") }
+            }) { Text(if (mergeIntoExisting) "Zusammenführen" else "Profil importieren") }
         },
         dismissButton = {
             TextButton(enabled = !busy, onClick = onDismiss) { Text("Abbrechen") }

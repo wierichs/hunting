@@ -47,12 +47,46 @@ class JwdExportTest {
         assertEquals("Hochsitz Nord", facilities.getJSONObject(0).getString("title"))
         assertEquals("Notiz", facilities.getJSONObject(0).getString("notes"))
         assertEquals("Hochsitz", facilities.getJSONObject(1).getString("type"))
-        assertEquals("Falle: Falle", facilities.getJSONObject(1).getString("title"))
+        assertEquals("Falle\n[jagdkarte:v1:falle]", facilities.getJSONObject(1).getString("title"))
+        assertEquals(false, facilities.getJSONObject(1).has(JWD_MARKER_METADATA_KEY))
         assertEquals("Hochsitz", facilities.getJSONObject(2).getString("type"))
-        assertEquals("neuer-typ: Unbekannte Anlage", facilities.getJSONObject(2).getString("title"))
+        assertEquals("Unbekannte Anlage\n[jagdkarte:v1:neuer-typ]", facilities.getJSONObject(2).getString("title"))
+        assertEquals(false, facilities.getJSONObject(2).has(JWD_MARKER_METADATA_KEY))
 
         assertEquals(0, createJwdExport(polygonProfile, points, includeMarkers = false)
             .getJSONObject("huntingGround").getJSONArray("facilities").length())
+    }
+
+    @Test fun unsupportedTypesUseConfigurableExportMappingAndRoundTripOriginalType() {
+        val marker = HuntingMapPoint(51.2, 7.2, "Falle Nord", "Notiz", MapPointKind.FACILITY,
+            markerTypeId = "falle", markerNotes = "Notiz")
+        val mappings = defaultJwdMarkerTypeMapping() + ("falle" to "bock")
+        val exported = createJwdExport(polygonProfile, listOf(marker), includeMarkers = true, mappings)
+        val facility = exported.getJSONObject("huntingGround").getJSONArray("facilities").getJSONObject(0)
+        assertEquals("Bock", facility.getString("type"))
+        assertEquals("Falle Nord\n[jagdkarte:v1:falle]", facility.getString("title"))
+        val imported = parseJwdImport(exported.toString()).facilities.single()
+        assertEquals("falle", imported.typeId)
+        assertEquals("Falle Nord", imported.title)
+        assertEquals("Notiz", imported.notes)
+    }
+
+    @Test fun importStillRecognizesLegacyOriginalTypeProperty() {
+        val facility = JSONObject().put("coordinate", JSONObject().put("latitude", 51.2).put("longitude", 7.2))
+            .put("type", "Hochsitz").put("title", "Falle Nord").put("notes", "Notiz")
+            .put(JWD_MARKER_METADATA_KEY, JSONObject().put("version", 1).put("markerTypeId", "falle"))
+        val exported = createJwdExport(polygonProfile, emptyList(), includeMarkers = false)
+        exported.getJSONObject("huntingGround").put("facilities", org.json.JSONArray().put(facility))
+        val imported = parseJwdImport(exported.toString()).facilities.single()
+        assertEquals("falle", imported.typeId)
+        assertEquals("Falle Nord", imported.title)
+    }
+
+    @Test fun defaultUnsupportedTypeMappingMatchesCurrentFallback() {
+        val defaults = defaultJwdMarkerTypeMapping()
+        assertEquals("hochsitz", defaults["falle"])
+        assertEquals("hochsitz", defaults["wildkamera"])
+        assertEquals("bock", defaults["bock"])
     }
 
     @Test fun exportSupportsMultiPolygonAndRejectsMissingBoundary() {

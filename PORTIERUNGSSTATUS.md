@@ -27,23 +27,16 @@ Arbeitsgegenstand wird nur nach gemeinsamer Festlegung eingetragen.
 
 ## Aktueller Fokus
 
-Die erste Ueberarbeitung des Bedienkonzepts der nativen Kartenansicht ist
-umgesetzt: Revierwahl und Verwaltung sind kompakter angeordnet, Verwaltungs-
-aktionen liegen in einem Sheet, und Kartenaktionen sind als beschriftete Icons
-direkt erreichbar. Eigener Standort, Revier einpassen, Grenzanzeige,
-Legende und Vollbild belegen keine zusaetzlichen Layoutzeilen. Die visuelle
-Abnahme auf kleinen und grossen Displays steht noch aus; bis dahin bleibt die
-weitere Portierung offener Funktionen zurueckgestellt.
-
-Dabei sind auch die offenen Kartenfunktionen gemeinsam einzuordnen:
-Satellitenansicht sowie weitere noch nicht implementierte Kartenwerkzeuge.
-Bereits umgesetzte Funktionen und deren ausstehende Abnahmen bleiben davon
-unberuehrt.
-
-JWD- und GeoJSON-Import sind umgesetzt. Das Zusammenfuehren in bestehende
-Profile sowie interaktive Grenzbearbeitung bleiben offen; Live-Import und
-Dateiauswahl muessen noch manuell abgenommen werden. Diese Punkte sind derzeit
-nicht der aktuelle Arbeitsfokus.
+Der Import von JWD-, JSON- und GeoJSON-Revierdaten kann neue Profile anlegen
+oder Daten in ein bestehendes, editierbares Profil zusammenfuehren. Grenzen
+werden geometrisch vereinigt; vorhandene Marker bleiben erhalten und identische
+Einrichtungen werden nicht doppelt angelegt. JVM- und Emulator-UI-Tests
+bestehen. Der Nutzer hat die manuelle Dateiauswahl und den Dialogpfad fuer
+Neuimport beziehungsweise Merge bereits bestaetigt; diese UI-Schritte sind
+abgenommen und sollen nicht wiederholt werden. Weitere manuelle Tests werden
+am Ende der Portierung gesammelt ausgefuehrt; die bestaetigten UI-Schritte
+bleiben erledigt. Die Checkliste am Dokumentende enthaelt die noch offenen
+Supabase-Schreib-/RLS- und Datenintegritaetspruefungen.
 
 ## Offene beziehungsweise zu pruefende Funktionen
 
@@ -59,8 +52,17 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
 
 ### Profile und Zusammenarbeit
 
-- **Offen**: Eigenes Revierprofil aus einem gefundenen Revier anlegen und das
-  eigene Profil loeschen.
+- **Offen**: Eigenes Revierprofil aus einem gefundenen Revier anlegen.
+- **Umgesetzt**: Eigenes Revierprofil loeschen. Die Aktion ist nur fuer Owner
+  sichtbar und wird vor dem Cascade-Delete bestaetigt; Editor und Gast koennen
+  kein Profil loeschen. Die Owner-Regel ist per JVM-Test geprueft; Live-RLS-
+  Abnahme steht noch aus.
+- **Abgenommen**: Gaeste und Bearbeiter koennen ein geteiltes Revier lokal aus
+  der Auswahl ausblenden und spaeter wieder einblenden. Die Mitgliedschaft auf
+  dem Server bleibt bestehen; beim Ausblenden des aktiven Reviers werden die
+  eigene Standortfreigabe und ein zugehoeriger Relaisdienst beendet. Die
+  Ausblendung ist pro Benutzerkonto auf dem Geraet gespeichert. Manuelle
+  Abnahme durch den Nutzer bestaetigt (2026-11-10).
 - **Umgesetzt**: Gaeste und Bearbeiter per E-Mail einladen; Android speichert
   die Rolle per RLS-pruefendem PWA-RPC, fordert danach den Auth-OTP an und
   nimmt Einladungen nach verifizierter Anmeldung an. JVM- und Emulator-Tests
@@ -85,19 +87,23 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
 
 - **Offen**: Reviergrenzen bearbeiten, einschliesslich Geometriepunkten und
   Teilflaechen.
-- **Umgesetzt**: JWD-, JSON- und GeoJSON-Dateien als neues eigenes Profil
-  importieren. Enthalten sind Polygon/MultiPolygon, befriedete Bereiche,
-  dauerhafte Einrichtungen und die Auswahl bei mehreren GeoJSON-Features.
-  Vorschau, 10-MB-Grenze und Rollback bei Teilfehlern sind enthalten; JVM- und
-  26 Emulator-Tests bestehen. Bestehende Profile werden noch nicht
-  zusammengefuehrt; Live-Supabase-Schreibtest und Dateiauswahl-Abnahme stehen
-  aus.
-- **Offen**: JSON- und GeoJSON-Revierdateien importieren; bei mehreren
-  GeoJSON-Flaechen die gewuenschte Grenze auswaehlen und importierte
-  Einrichtungen uebernehmen.
+- **Umgesetzt**: JWD-, JSON- und GeoJSON-Dateien als neues eigenes Profil oder
+  in ein bestehendes, editierbares Profil importieren. Die Merge-Variante
+  vereinigt Polygon-/MultiPolygon-Grenzen einschliesslich befriedeter Bereiche,
+  behaelt bestehende Marker bei und ueberspringt identische dauerhafte
+  Einrichtungen. Auswahl mehrerer GeoJSON-Features, Vorschau, 10-MB-Grenze
+  und Rollback bei Fehlern sind enthalten. JVM- und Emulator-UI-Tests bestehen.
+  Dateiauswahl und Neu-/Merge-Dialog sind manuell vom Nutzer bestaetigt;
+  offen bleibt die separate Live-Supabase-Schreib-/RLS-Pruefung.
+
 - **Umgesetzt**: Reviergrenzen als PWA-kompatible JWD-Datei exportieren; Owner
   und Bearbeiter erhalten zusaetzlich dauerhafte Einrichtungen. Gaeste
-  exportieren nur die Grenze, temporaere Marker werden ausgeschlossen.
+  exportieren nur die Grenze, temporaere Marker werden ausgeschlossen. Nicht
+  unterstuetzte Markertypen haben ein lokal konfigurierbares Mapping auf die
+  sechs JWD-Typen; Standard ist die bisherige Hochsitz-Zuordnung. Abweichende
+  Originaltypen werden als versionierter `[jagdkarte:v1:<type-id>]`-Suffix in
+  der Titelzeile exportiert und beim Android-Import wiederhergestellt; das
+  fruehere `jagdkarte`-Property wird beim Import weiterhin erkannt.
   Polygon, MultiPolygon, befriedete Bereiche, unbekannte Marker und Dateinamen
   sind durch JVM-Tests abgedeckt; 24 Emulator-Regressionstests bestehen.
 
@@ -164,3 +170,63 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
 Diese Zusammenfassung ersetzt keine Abnahme realer Rollen, RLS-Rechte,
 Standorterfassung oder Geraete-zu-Geraete-Kommunikation. Fuer den aktuellen
 validierten Projektstand gelten die manuellen Abnahmehinweise des Projektlogs.
+
+## Manuelle Abnahmetests (am Ende der Portierung)
+
+Diese Liste wird waehrend der Entwicklung ergaenzt, aber erst in der spaeten
+Abnahmephase systematisch ausgefuehrt. Nur Debug-APK, isoliertes Supabase-
+Testprojekt und Wegwerf-Testdaten verwenden; keine produktiven oder fremden
+Profile veraendern. Ergebnisse, Testkonto/Rolle, Profil-ID und gegebenenfalls
+Screenshot pro Punkt dokumentieren. Bereits bestaetigte Schritte nicht
+wiederholen.
+
+### Revierimport und JWD-Mapping
+
+- **Abgenommen**: Dateiauswahl sowie Dialogpfad fuer neues Profil oder Merge
+  manuell vom Nutzer geprueft.
+- **Offen**: JWD-, JSON- und GeoJSON-Neuimport Ende-zu-Ende pruefen: Name,
+  Polygon/MultiPolygon, Loecher, befriedete Bereiche, dauerhafte Einrichtungen
+  und resultierendes Profil nach erneutem Laden vergleichen.
+- **Offen**: Merge angrenzender und getrennter Flaechen mit Loechern testen;
+  bestehende Grenzen und Marker muessen erhalten bleiben.
+- **Offen**: Dieselbe Datei zweimal mergen und pruefen, dass dauerhafte
+  Einrichtungen nicht dupliziert werden.
+- **Offen**: Merge als Owner und Editor pruefen; Gast darf kein Merge-Ziel
+  erhalten und keinen Merge schreiben koennen.
+- **Offen**: GeoJSON-FeatureCollection mit mehreren Polygonen und
+  Nicht-Polygon-Features pruefen; nur das ausgewaehlte Polygon darf geschrieben
+  werden.
+- **Offen**: Mapping zum Beispiel **Falle -> Bock** exportieren und reimportieren.
+  Android muss den Originaltyp aus `[jagdkarte:v1:falle]` wiederherstellen;
+  zusaetzlich die Datei in der PWA und, falls verfuegbar, der Jagdwetter-App
+  oeffnen und die lesbare Titelzeile sowie den Standard-Markertyp kontrollieren.
+- **Offen**: Abbruch, ungueltiges JSON, nicht unterstuetzte Dateiendung und Datei
+  ueber 10 MB pruefen; es duerfen keine unbeabsichtigten Schreibungen entstehen.
+- **Offen**: Teilfehler beim Merge im Testprojekt ausloesen und Rollback neu
+  eingefuegter Marker sowie Meldung moeglicher Restdaten pruefen.
+
+### Profile, Rollen und Rechte
+
+- **Offen**: Owner-Profil loeschen und RLS-/Cascade-Verhalten fuer Marker,
+  Einladungen und Mitgliedschaften im Testprojekt bestaetigen.
+- **Offen**: Einladungen mit realem Test-Mailversand, Owner-/Editor-/Gastrollen
+  und RLS pruefen.
+- **Offen**: Gastlink ueber RPC annehmen, Ablauf und Zielmarker-Fokus pruefen;
+  Android-App-Link-Zuordnung und Browser/PWA-Fallback auf einem installierten
+  Geraet bestaetigen.
+- **Offen**: Anzeigename schreiben/loeschen und Owner-E-Mail-RPC mit echten
+  Testkonten und RLS pruefen.
+- **Offen**: Marker verschieben, temporaere Marker loeschen und Owner-/Editor-/
+  Gastberechtigungen mit tatsaechlichem GPS und RLS pruefen.
+
+### Karte, Standort und Geraete
+
+- **Offen**: Reale Marker und Reviergrenze bei mehreren Zoomstufen mit der
+  Kartenbasis vergleichen; insbesondere Marker nahe der Grenze kontrollieren.
+- **Offen**: Eigenen Standort, GPS-Berechtigung, manuelles Einpassen,
+  Grenzanzeige und Vollbild auf einem realen Geraet pruefen.
+- **Offen**: Satelliten- und Offlinekarten nach Festlegung der Datenquelle und
+  des Importablaufs testen.
+- **Offen**: DogTracker-Pairing sowie Relay-Pairing, Sicherheitscode,
+  Berechtigungen, Funktransfer, Offline-Warteschlange und Serverbestaetigung mit
+  mindestens zwei physischen Geraeten pruefen.

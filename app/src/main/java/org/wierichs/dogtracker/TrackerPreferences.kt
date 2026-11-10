@@ -2,11 +2,16 @@ package org.wierichs.dogtracker
 
 import android.content.Context
 import androidx.core.content.edit
+import org.json.JSONObject
+import org.wierichs.dogtracker.jagdkarte.JWD_EXPORT_MARKER_TYPE_LABELS
+import org.wierichs.dogtracker.jagdkarte.defaultJwdMarkerTypeMapping
 
 internal object TrackerPreferences {
     private const val FILE_NAME = "tracker_settings"
     private const val KEY_INTERVAL_SECONDS = "interval_seconds"
     private const val KEY_MARKER_ICON_SIZE = "marker_icon_size"
+    private const val KEY_JWD_MARKER_TYPE_MAPPING = "jwd_marker_type_mapping"
+    private const val KEY_HIDDEN_HUNTING_PROFILES = "hidden_hunting_profiles"
     private const val KEY_IS_TRACKING = "is_tracking"
     private const val KEY_STATUS = "status"
     private const val KEY_RELAY_DEVICE_ID = "relay_device_id"
@@ -37,6 +42,47 @@ internal object TrackerPreferences {
     fun setMarkerIconSize(context: Context, size: String) {
         require(size in MARKER_ICON_SIZES)
         preferences(context).edit { putString(KEY_MARKER_ICON_SIZE, size) }
+    }
+
+    fun jwdMarkerTypeMappings(context: Context): Map<String, String> {
+        val defaults = defaultJwdMarkerTypeMapping()
+        val unsupportedIds = defaults.keys - JWD_EXPORT_MARKER_TYPE_LABELS.keys
+        val saved = runCatching {
+            JSONObject(preferences(context).getString(KEY_JWD_MARKER_TYPE_MAPPING, "{}") ?: "{}")
+        }.getOrDefault(JSONObject())
+        return defaults.mapValues { (typeId, defaultTarget) ->
+            if (typeId !in unsupportedIds) defaultTarget
+            else saved.optString(typeId).takeIf { it in JWD_EXPORT_MARKER_TYPE_LABELS } ?: defaultTarget
+        }
+    }
+
+    fun setJwdMarkerTypeMapping(context: Context, typeId: String, exportTypeId: String) {
+        val defaults = defaultJwdMarkerTypeMapping()
+        require(typeId in defaults && typeId !in JWD_EXPORT_MARKER_TYPE_LABELS) {
+            "Dieser Markertyp hat keine JWD-Zuordnungseinstellung."
+        }
+        require(exportTypeId in JWD_EXPORT_MARKER_TYPE_LABELS) { "Ungueltiger JWD-Markertyp." }
+        val mapping = runCatching {
+            JSONObject(preferences(context).getString(KEY_JWD_MARKER_TYPE_MAPPING, "{}") ?: "{}")
+        }.getOrDefault(JSONObject())
+        if (exportTypeId == defaults[typeId]) mapping.remove(typeId) else mapping.put(typeId, exportTypeId)
+        preferences(context).edit { putString(KEY_JWD_MARKER_TYPE_MAPPING, mapping.toString()) }
+    }
+
+    fun hiddenHuntingProfileIds(context: Context, userId: String): Set<String> {
+        require(userId.isNotBlank())
+        return preferences(context).getStringSet("$KEY_HIDDEN_HUNTING_PROFILES:$userId", emptySet())?.toSet()
+            ?: emptySet()
+    }
+
+    fun setHuntingProfileHidden(context: Context, userId: String, profileId: String, hidden: Boolean) {
+        require(userId.isNotBlank() && profileId.isNotBlank())
+        val key = "$KEY_HIDDEN_HUNTING_PROFILES:$userId"
+        val hiddenIds = preferences(context).getStringSet(key, emptySet())?.toMutableSet() ?: mutableSetOf()
+        if (hidden) hiddenIds.add(profileId) else hiddenIds.remove(profileId)
+        preferences(context).edit {
+            if (hiddenIds.isEmpty()) remove(key) else putStringSet(key, hiddenIds)
+        }
     }
 
     fun deviceToken(context: Context): String? = DeviceTokenStorage.read(context)

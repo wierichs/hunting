@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import org.json.JSONObject
 
 class JwdImportTest {
     private val validFile = """{
@@ -60,6 +61,46 @@ class JwdImportTest {
         val ring = imported.boundary.getJSONArray("coordinates").getJSONArray(0).getJSONArray(0)
         assertEquals(ring.getJSONArray(0).toString(), ring.getJSONArray(ring.length() - 1).toString())
     }
+
+      @Test fun mergeRevierBoundariesPreservesExistingHolesAndAddsAdjacentArea() {
+        val existing = parseJwdImport(validFile).boundary
+        val adjacent = JSONObject("""{"type":"Polygon","coordinates":[[
+          [8,50],[9,50],[9,52],[8,52],[8,50]
+        ]]}""")
+        val merged = mergeRevierBoundaries(existing, adjacent)
+        assertEquals("Polygon", merged.getString("type"))
+        assertTrue(locationInsideBoundary(merged, 51.5, 8.5))
+        assertFalse(locationInsideBoundary(merged, 50.75, 6.75))
+        assertTrue(locationInsideBoundary(existing, 51.5, 8.5).not())
+      }
+
+      @Test fun mergeRevierBoundariesKeepsDisjointRegionsAsMultiPolygon() {
+        val existing = parseJwdImport(validFile).boundary
+        val disjoint = JSONObject("""{"type":"Polygon","coordinates":[[
+          [10,50],[11,50],[11,51],[10,51],[10,50]
+        ]]}""")
+        val merged = mergeRevierBoundaries(existing, disjoint)
+        assertEquals("MultiPolygon", merged.getString("type"))
+        assertTrue(locationInsideBoundary(merged, 51.5, 7.5))
+        assertTrue(locationInsideBoundary(merged, 50.5, 10.5))
+      }
+
+      @Test fun facilityMergeKeyIgnoresSubMicrodegreeCoordinateRounding() {
+        val facility = JwdImportedFacility("hochsitz", "Nord", "Notiz", 51.1234564, 7.6543214)
+        assertEquals(facility.mergeKey(), jwdFacilityMergeKey("hochsitz", " Nord ", "Notiz",
+          51.12345649, 7.65432149))
+        assertTrue(facility.mergeKey() != jwdFacilityMergeKey("hochsitz", "Nord", "Andere Notiz",
+          51.1234564, 7.6543214))
+      }
+
+      @Test fun mergeTargetSuggestionMatchesUniqueOwnedProfileNameOnly() {
+        val owned = HuntingProfile("owned", "Waldrevier", "me", false, null)
+        val shared = HuntingProfile("shared", "Fremdes Revier", "other", false, null)
+        assertEquals("owned", suggestedJwdMergeTargetId(" waldREVier ", listOf(owned, shared), "me"))
+        assertEquals(null, suggestedJwdMergeTargetId("Fremdes Revier", listOf(shared), "me"))
+        assertEquals(null, suggestedJwdMergeTargetId("Waldrevier", listOf(owned,
+          owned.copy(id = "owned-2")), "me"))
+      }
 
     @Test fun parserRejectsInvalidAndTemporaryFacilitiesAndOutOfBoundaryHoles() {
         assertThrows(IllegalArgumentException::class.java) { parseJwdImport("not-json") }

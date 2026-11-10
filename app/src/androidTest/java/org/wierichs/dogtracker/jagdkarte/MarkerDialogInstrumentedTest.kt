@@ -78,6 +78,35 @@ class MarkerDialogInstrumentedTest {
     }
 
     @Test
+    fun jwdMarkerTypeMappingPreferencePersistsOnDevice() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val previous = TrackerPreferences.jwdMarkerTypeMappings(context).getValue("falle")
+        try {
+            TrackerPreferences.setJwdMarkerTypeMapping(context, "falle", "bock")
+            assertEquals("bock", TrackerPreferences.jwdMarkerTypeMappings(context).getValue("falle"))
+        } finally {
+            TrackerPreferences.setJwdMarkerTypeMapping(context, "falle", previous)
+        }
+    }
+
+    @Test
+    fun hiddenProfilesPersistPerUserAndCanBeRestored() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val ownerId = "owner-100"
+        val otherUserId = "other-200"
+        val profileId = "profile-300"
+        try {
+            TrackerPreferences.setHuntingProfileHidden(context, ownerId, profileId, true)
+            assertEquals(setOf(profileId), TrackerPreferences.hiddenHuntingProfileIds(context, ownerId))
+            assertEquals(emptySet<String>(), TrackerPreferences.hiddenHuntingProfileIds(context, otherUserId))
+            TrackerPreferences.setHuntingProfileHidden(context, ownerId, profileId, false)
+            assertEquals(emptySet<String>(), TrackerPreferences.hiddenHuntingProfileIds(context, ownerId))
+        } finally {
+            TrackerPreferences.setHuntingProfileHidden(context, ownerId, profileId, false)
+        }
+    }
+
+    @Test
     fun editorCanSaveFacilityWithoutRequestingGps() {
         var savedDraft: HuntingMarkerDraft? = null
         var created = false

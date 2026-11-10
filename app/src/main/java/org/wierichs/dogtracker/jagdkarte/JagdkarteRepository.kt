@@ -26,6 +26,9 @@ internal data class HuntingProfile(
     val ownerEmail: String? = null
 )
 
+internal fun canDeleteHuntingProfile(profile: HuntingProfile, userId: String): Boolean =
+    userId.isNotBlank() && profile.ownerId == userId
+
 internal enum class MapPointKind { FACILITY, PARTICIPANT, DOG }
 
 internal enum class HuntingParticipantRole(val id: String) {
@@ -246,13 +249,26 @@ internal class JagdkarteRepository(context: Context) {
         }
     }
 
-    suspend fun profiles(): List<HuntingProfile> = authenticated { token ->
+    suspend fun profiles(): List<HuntingProfile> = authenticated(::loadProfiles)
+
+    suspend fun editableProfiles(): List<HuntingProfile> = authenticated { token ->
+        val profiles = loadProfiles(token)
+        val memberships = JSONArray(request(
+            "rest/v1/hunting_profile_members?select=profile_id,role&user_id=eq.${uuid(userId)}", bearer = token))
+        val editableIds = (0 until memberships.length()).mapNotNull { index ->
+            memberships.getJSONObject(index).takeIf { it.optString("role") == "editor" }
+                ?.optString("profile_id")
+        }.toSet()
+        profiles.filter { it.ownerId == userId || it.id in editableIds }
+    }
+
+    private fun loadProfiles(token: String): List<HuntingProfile> {
         val profiles = parseProfiles(JSONArray(request(
             "rest/v1/hunting_profiles?select=id,district_name,owner_id,hunting_mode,boundary_geojson&order=district_name",
             bearer = token
         )))
         val sharedProfileIds = profiles.filter { it.ownerId != userId }.map { it.id }
-        if (sharedProfileIds.isEmpty()) return@authenticated profiles
+        if (sharedProfileIds.isEmpty()) return profiles
         val ownerEmails = try {
             ownerEmailsByProfileId(JSONArray(request("rest/v1/rpc/get_hunting_profile_owner_emails", "POST",
                 JSONObject().put("p_profile_ids", JSONArray(sharedProfileIds)), token)))
@@ -261,7 +277,7 @@ internal class JagdkarteRepository(context: Context) {
         } catch (_: Exception) {
             emptyMap()
         }
-        profiles.map { it.copy(ownerEmail = ownerEmails[it.id]) }
+        return profiles.map { it.copy(ownerEmail = ownerEmails[it.id]) }
     }
 
     suspend fun snapshot(profileId: String): HuntingSnapshot = authenticated { token ->
@@ -390,6 +406,52 @@ internal class JagdkarteRepository(context: Context) {
             throw failure
         }
         profileId
+    }
+
+    suspend fun mergeJwdProfile(profileId: String, imported: JwdImportedProfile): String = authenticated { token ->
+        val existingProfile = loadProfile(token, profileId)
+        check(canEditProfile(token, existingProfile)) { "Nur Owner und Bearbeiter duerfen Revierdaten zusammenfuehren." }
+        val mergedBoundary = mergeRevierBoundaries(existingProfile.boundary, imported.boundary)
+        val existingFacilities = JSONArray(request(
+            "rest/v1/hunting_markers?select=type_id,title,notes,latitude,longitude&profile_id=eq.${uuid(profileId)}&expires_at=is.null",
+            bearer = token))
+        val knownFacilities = (0 until existingFacilities.length()).map { index ->
+            val row = existingFacilities.getJSONObject(index)
+            jwdFacilityMergeKey(row.getString("type_id"), row.getString("title"), row.optString("notes"),
+                row.getDouble("latitude"), row.getDouble("longitude"))
+        }.toMutableSet()
+        val facilitiesToAdd = imported.facilities.filter { knownFacilities.add(it.mergeKey()) }
+        val insertedIds = facilitiesToAdd.map { UUID.randomUUID().toString() }
+        val markerRows = JSONArray()
+        facilitiesToAdd.forEachIndexed { index, facility ->
+            markerRows.put(JSONObject().put("id", insertedIds[index]).put("profile_id", profileId)
+                .put("type_id", facility.typeId).put("title", facility.title).put("notes", facility.notes)
+                .put("created_by", userId).put("latitude", facility.latitude).put("longitude", facility.longitude))
+        }
+        try {
+            if (markerRows.length() > 0) request("rest/v1/hunting_markers", "POST", markerRows, token)
+            request("rest/v1/rpc/set_hunting_profile_boundary", "POST", JSONObject()
+                .put("p_profile_id", profileId).put("p_geometry", mergedBoundary), token)
+        } catch (failure: Exception) {
+            if (insertedIds.isNotEmpty()) {
+                val insertedIdsFilter = insertedIds.joinToString(",")
+                runCatching {
+                    request("rest/v1/hunting_markers?id=in.($insertedIdsFilter)&profile_id=eq.${uuid(profileId)}",
+                        "DELETE", bearer = token)
+                }.exceptionOrNull()?.let(failure::addSuppressed)
+            }
+            throw failure
+        }
+        profileId
+    }
+
+    suspend fun deleteProfile(profileId: String) = authenticated { token ->
+        val profile = loadProfile(token, profileId)
+        check(canDeleteHuntingProfile(profile, userId)) { "Nur der Owner darf dieses Revier loeschen." }
+        val deleted = JSONArray(request("rest/v1/hunting_profiles?id=eq.${uuid(profile.id)}", "DELETE",
+            bearer = token, returnRepresentation = true))
+        check(deleted.length() == 1) { "Revier nicht gefunden oder keine Berechtigung zum Loeschen." }
+        Unit
     }
 
     private fun loadProfile(token: String, profileId: String): HuntingProfile = parseProfiles(JSONArray(request(

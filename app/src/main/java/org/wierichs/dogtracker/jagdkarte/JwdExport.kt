@@ -3,7 +3,7 @@ package org.wierichs.dogtracker.jagdkarte
 import org.json.JSONArray
 import org.json.JSONObject
 
-private val JWD_MARKER_TYPE_LABELS = mapOf(
+internal val JWD_EXPORT_MARKER_TYPE_LABELS = linkedMapOf(
     "hochsitz" to "Hochsitz",
     "bock" to "Bock",
     "erdsitz" to "Erdsitz",
@@ -11,6 +11,19 @@ private val JWD_MARKER_TYPE_LABELS = mapOf(
     "leiter" to "Leiter",
     "salzlecke" to "Salzlecke"
 )
+internal const val JWD_MARKER_METADATA_KEY = "jagdkarte"
+internal const val JWD_MARKER_METADATA_VERSION = 1
+private const val JWD_DEFAULT_UNSUPPORTED_TYPE = "hochsitz"
+
+internal fun defaultJwdMarkerTypeMapping(): Map<String, String> =
+    HuntingMarkerType.entries.filterNot { it.temporary }.associate { type ->
+        type.id to if (type.id in JWD_EXPORT_MARKER_TYPE_LABELS) type.id else JWD_DEFAULT_UNSUPPORTED_TYPE
+    }
+
+internal fun jwdMarkerTypeForExport(typeId: String, mappings: Map<String, String>): String {
+    val fallback = if (typeId in JWD_EXPORT_MARKER_TYPE_LABELS) typeId else JWD_DEFAULT_UNSUPPORTED_TYPE
+    return mappings[typeId]?.takeIf { it in JWD_EXPORT_MARKER_TYPE_LABELS } ?: fallback
+}
 
 internal fun jwdFileName(name: String): String {
     val safeName = name.replace(Regex("[<>:\"/\\\\|?*\\u0000-\\u001f]"), "_")
@@ -18,7 +31,12 @@ internal fun jwdFileName(name: String): String {
     return "${safeName.ifBlank { "jagdrevier" }}.jwd"
 }
 
-internal fun createJwdExport(profile: HuntingProfile, points: List<HuntingMapPoint>, includeMarkers: Boolean): JSONObject {
+internal fun createJwdExport(
+    profile: HuntingProfile,
+    points: List<HuntingMapPoint>,
+    includeMarkers: Boolean,
+    markerTypeMappings: Map<String, String> = defaultJwdMarkerTypeMapping()
+): JSONObject {
     val boundary = profile.boundary ?: throw IllegalArgumentException("Fuer dieses Revier ist keine Grenze hinterlegt.")
     val coordinates = boundary.optJSONArray("coordinates")
         ?: throw IllegalArgumentException("Die Reviergrenze enthaelt keine Koordinaten.")
@@ -74,15 +92,19 @@ internal fun createJwdExport(profile: HuntingProfile, points: List<HuntingMapPoi
                 HuntingMarkerType.entries.firstOrNull { type -> type.id == it.markerTypeId }?.temporary != true }
             .forEach { marker ->
                 val typeId = marker.markerTypeId.orEmpty()
-                val exportType = JWD_MARKER_TYPE_LABELS[typeId]
-                val originalType = HuntingMarkerType.entries.firstOrNull { it.id == typeId }?.label
-                    ?: typeId.ifBlank { "Unbekannt" }
-                val title = marker.title.trim().ifBlank { originalType }
-                facilities.put(JSONObject()
+                val exportTypeId = jwdMarkerTypeForExport(typeId, markerTypeMappings)
+                val exportType = JWD_EXPORT_MARKER_TYPE_LABELS.getValue(exportTypeId)
+                val title = marker.title.trim().ifBlank {
+                    HuntingMarkerType.entries.firstOrNull { it.id == typeId }?.label ?: typeId.ifBlank { "Unbekannt" }
+                }
+                val facility = JSONObject()
                     .put("coordinate", JSONObject().put("latitude", marker.latitude).put("longitude", marker.longitude))
-                    .put("type", exportType ?: "Hochsitz")
-                    .put("title", if (exportType != null) title else "$originalType: $title")
-                    .put("notes", marker.markerNotes))
+                    .put("type", exportType)
+                    .put("title", if (typeId.isNotBlank() && typeId != exportTypeId) {
+                        "$title\n[jagdkarte:v$JWD_MARKER_METADATA_VERSION:$typeId]"
+                    } else title)
+                    .put("notes", marker.markerNotes)
+                facilities.put(facility)
             }
     }
 

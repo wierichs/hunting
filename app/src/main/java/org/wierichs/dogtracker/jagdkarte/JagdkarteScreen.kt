@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -160,6 +161,7 @@ internal fun JagdkarteScreen(
     val scope = rememberCoroutineScope()
     var signedIn by remember { mutableStateOf(repository.signedIn) }
     var profiles by remember { mutableStateOf(emptyList<HuntingProfile>()) }
+    var hiddenProfileIds by remember { mutableStateOf(TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)) }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var snapshot by remember { mutableStateOf<HuntingSnapshot?>(null) }
     var status by remember { mutableStateOf("") }
@@ -168,11 +170,18 @@ internal fun JagdkarteScreen(
     var revision by remember { mutableStateOf(0) }
     var menuOpen by remember { mutableStateOf(false) }
     var managementOpen by remember { mutableStateOf(false) }
+    var profilePendingDeletion by remember { mutableStateOf<HuntingProfile?>(null) }
+    var profileDeleteBusy by remember { mutableStateOf(false) }
+    var profileDeleteError by remember { mutableStateOf("") }
+    var profilePendingHide by remember { mutableStateOf<HuntingProfile?>(null) }
+    var profileHideBusy by remember { mutableStateOf(false) }
+    var profileHideError by remember { mutableStateOf("") }
     var accountOpen by remember { mutableStateOf(false) }
     var displayName by remember { mutableStateOf("") }
     var displayNameBusy by remember { mutableStateOf(false) }
     var displayNameStatus by remember { mutableStateOf("") }
     var markerIconSize by remember { mutableStateOf(HuntingMarkerSize.fromId(TrackerPreferences.markerIconSize(context))) }
+    var jwdMarkerTypeMappings by remember { mutableStateOf(TrackerPreferences.jwdMarkerTypeMappings(context)) }
     var now by remember { mutableStateOf(Instant.now()) }
     var sharing by remember { mutableStateOf(false) }
     var ownLocationVisible by remember { mutableStateOf(false) }
@@ -191,6 +200,7 @@ internal fun JagdkarteScreen(
     var pendingJwdExportJson by remember { mutableStateOf<String?>(null) }
     var jwdExportBusy by remember { mutableStateOf(false) }
     var pendingRevierImport by remember { mutableStateOf<List<JwdImportedProfile>?>(null) }
+    var importTargets by remember { mutableStateOf(emptyList<HuntingProfile>()) }
     var jwdImportBusy by remember { mutableStateOf(false) }
     var modePending by remember { mutableStateOf(false) }
     val gatewayState by RelayGateway.state.collectAsState()
@@ -199,6 +209,8 @@ internal fun JagdkarteScreen(
     var markerCoordinates by remember { mutableStateOf<MarkerCoordinates?>(null) }
     var markerProfile by remember { mutableStateOf<HuntingSnapshot?>(null) }
     var editingMarker by remember { mutableStateOf<HuntingMapPoint?>(null) }
+    val selectableProfiles = profiles.filterNot { it.id in hiddenProfileIds }
+    val hiddenProfiles = profiles.filter { it.id in hiddenProfileIds }
     LaunchedEffect(selectedId, signedIn) {
         markerCoordinates = null
         markerProfile = null
@@ -263,6 +275,14 @@ internal fun JagdkarteScreen(
         scope.launch {
             try {
                 pendingRevierImport = withContext(Dispatchers.IO) { readRevierDocument(context, uri) }
+                importTargets = try {
+                    repository.editableProfiles().filterNot { it.id in hiddenProfileIds }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    status = failure.message ?: "Bestehende Reviere konnten nicht geladen werden."
+                    emptyList()
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -275,7 +295,8 @@ internal fun JagdkarteScreen(
 
     fun startJwdExport(current: HuntingSnapshot) {
         try {
-            pendingJwdExportJson = createJwdExport(current.profile, current.points, current.canEdit).toString(2)
+            pendingJwdExportJson = createJwdExport(current.profile, current.points, current.canEdit,
+                jwdMarkerTypeMappings).toString(2)
             jwdExportBusy = true
             status = "JWD-Datei wird vorbereitet ..."
             jwdExportLauncher.launch(jwdFileName(current.profile.name))
@@ -379,13 +400,26 @@ internal fun JagdkarteScreen(
 
     LaunchedEffect(signedIn, revision) {
         profiles = emptyList()
-        if (!signedIn) return@LaunchedEffect
+        if (!signedIn) {
+            hiddenProfileIds = emptySet()
+            return@LaunchedEffect
+        }
         loading = true
         try {
-            profiles = repository.profiles()
+            val loadedProfiles = repository.profiles()
+            val availableIds = loadedProfiles.map { it.id }.toSet()
+            val loadedHiddenIds = TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)
+                .intersect(availableIds)
+            profiles = loadedProfiles
+            hiddenProfileIds = loadedHiddenIds
             val guestTarget = guestLinkDestination
             if (guestTarget != null) {
-                if (profiles.any { it.id == guestTarget.profileId }) {
+                if (loadedProfiles.any { it.id == guestTarget.profileId }) {
+                    if (guestTarget.profileId in loadedHiddenIds) {
+                        TrackerPreferences.setHuntingProfileHidden(context, repository.userId,
+                            guestTarget.profileId, false)
+                        hiddenProfileIds = loadedHiddenIds - guestTarget.profileId
+                    }
                     selectedId = guestTarget.profileId
                     guestFocusMarkerId = guestTarget.markerId
                     guestFocusRequest++
@@ -396,8 +430,13 @@ internal fun JagdkarteScreen(
                 }
                 guestLinkDestination = null
             } else {
-                if (profiles.none { it.id == selectedId }) selectedId = null
-                status = if (profiles.isEmpty()) "Keine gespeicherten Reviere vorhanden." else ""
+                val visibleProfiles = loadedProfiles.filterNot { it.id in loadedHiddenIds }
+                if (visibleProfiles.none { it.id == selectedId }) selectedId = null
+                status = when {
+                    loadedProfiles.isEmpty() -> "Keine gespeicherten Reviere vorhanden."
+                    visibleProfiles.isEmpty() -> "Alle Reviere sind auf diesem Geraet ausgeblendet."
+                    else -> ""
+                }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -445,14 +484,14 @@ internal fun JagdkarteScreen(
         if (!isFullScreen) {
             Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) {
-                    TextButton(onClick = { menuOpen = true }, enabled = profiles.isNotEmpty()) {
-                        Text(profiles.find { it.id == selectedId }?.name ?: "Revier auswaehlen",
+                    TextButton(onClick = { menuOpen = true }, enabled = selectableProfiles.isNotEmpty()) {
+                        Text(selectableProfiles.find { it.id == selectedId }?.name ?: "Revier auswaehlen",
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Icon(Icons.Default.ArrowDropDown, null)
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false },
                         modifier = Modifier.heightIn(max = 360.dp)) {
-                        profiles.forEach { profile ->
+                        selectableProfiles.forEach { profile ->
                             DropdownMenuItem(text = { Text(profileSelectionLabel(profile, repository.userId)) }, onClick = {
                                 if (gatewayState.active || gatewayState.starting) RelayGateway.stop(context)
                                 sharing = false
@@ -577,6 +616,35 @@ internal fun JagdkarteScreen(
                         modifier = Modifier.fillMaxWidth()) {
                         Text(if (jwdExportBusy) "JWD exportieren ..." else "JWD exportieren")
                     }
+                    if (canDeleteHuntingProfile(profile.profile, repository.userId)) {
+                        TextButton(onClick = {
+                            profilePendingDeletion = profile.profile
+                            profileDeleteError = ""
+                        }, modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                            Text("Revier dauerhaft loeschen")
+                        }
+                    } else if (profile.profile.ownerId != repository.userId) {
+                        TextButton(onClick = {
+                            profilePendingHide = profile.profile
+                            profileHideError = ""
+                        }, modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                            Text("Aus Revierauswahl ausblenden")
+                        }
+                    }
+                }
+                if (hiddenProfiles.isNotEmpty()) {
+                    Text("Ausgeblendete Reviere", style = MaterialTheme.typography.titleSmall)
+                    hiddenProfiles.forEach { profile ->
+                        TextButton(onClick = {
+                            TrackerPreferences.setHuntingProfileHidden(context, repository.userId, profile.id, false)
+                            hiddenProfileIds = hiddenProfileIds - profile.id
+                            status = "${profile.name} ist wieder in der Revierauswahl sichtbar."
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Einblenden: ${profile.name}")
+                        }
+                    }
                 }
                 if (signedIn) TextButton(enabled = !jwdImportBusy, onClick = {
                     managementOpen = false
@@ -589,6 +657,114 @@ internal fun JagdkarteScreen(
                 if (sharingStatus.isNotBlank()) Text(sharingStatus, style = MaterialTheme.typography.bodySmall)
             }
         }
+    }
+
+    val profileToDelete = profilePendingDeletion
+    if (profileToDelete != null) {
+        AlertDialog(onDismissRequest = { if (!profileDeleteBusy) profilePendingDeletion = null },
+            title = { Text("Revier dauerhaft loeschen?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${profileToDelete.name} und alle zugehoerigen Revierdaten werden dauerhaft geloescht. Diese Aktion kann nicht rueckgaengig gemacht werden.")
+                    if (profileDeleteBusy) CircularProgressIndicator()
+                    if (profileDeleteError.isNotBlank()) Text(profileDeleteError, color = MaterialTheme.colorScheme.error)
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !profileDeleteBusy, onClick = {
+                    profileDeleteBusy = true
+                    profileDeleteError = ""
+                    scope.launch {
+                        try {
+                            val deletingCurrentProfile = selectedId == profileToDelete.id
+                            if (deletingCurrentProfile) sharing = false
+                            sharingMutex.withLock {
+                                if (gatewayState.profileId == profileToDelete.id &&
+                                    (gatewayState.active || gatewayState.starting)) {
+                                    RelayGateway.stopAndAwait(context)
+                                }
+                                repository.deleteProfile(profileToDelete.id)
+                            }
+                            profiles = profiles.filterNot { it.id == profileToDelete.id }
+                            if (deletingCurrentProfile) {
+                                selectedId = null
+                                snapshot = null
+                                sharingStatus = ""
+                            }
+                            revision++
+                            status = "Revier geloescht."
+                            managementOpen = false
+                            profilePendingDeletion = null
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            profileDeleteError = failure.message ?: "Revier konnte nicht geloescht werden."
+                        } finally {
+                            profileDeleteBusy = false
+                        }
+                    }
+                }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                    Text("Endgueltig loeschen")
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !profileDeleteBusy, onClick = { profilePendingDeletion = null }) {
+                    Text("Abbrechen")
+                }
+            })
+    }
+
+    val profileToHide = profilePendingHide
+    if (profileToHide != null) {
+        AlertDialog(onDismissRequest = { if (!profileHideBusy) profilePendingHide = null },
+            title = { Text("Revier aus Auswahl ausblenden?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${profileToHide.name} wird nur auf diesem Geraet aus der Revierauswahl ausgeblendet. Deine Mitgliedschaft und dein Zugriff bleiben bestehen. Eine aktive eigene Standortfreigabe oder Revier-Relaisfreigabe wird beendet.")
+                    if (profileHideBusy) CircularProgressIndicator()
+                    if (profileHideError.isNotBlank()) Text(profileHideError, color = MaterialTheme.colorScheme.error)
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !profileHideBusy, onClick = {
+                    profileHideBusy = true
+                    profileHideError = ""
+                    scope.launch {
+                        try {
+                            val hidingCurrentProfile = selectedId == profileToHide.id
+                            if (hidingCurrentProfile) sharing = false
+                            sharingMutex.withLock {
+                                if (gatewayState.profileId == profileToHide.id &&
+                                    (gatewayState.active || gatewayState.starting)) {
+                                    RelayGateway.stopAndAwait(context)
+                                }
+                                TrackerPreferences.setHuntingProfileHidden(context, repository.userId,
+                                    profileToHide.id, true)
+                            }
+                            hiddenProfileIds = hiddenProfileIds + profileToHide.id
+                            if (hidingCurrentProfile) {
+                                selectedId = null
+                                snapshot = null
+                                sharingStatus = ""
+                            }
+                            status = "Revier auf diesem Geraet ausgeblendet. Mitgliedschaft bleibt bestehen."
+                            managementOpen = false
+                            profilePendingHide = null
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            profileHideError = failure.message ?: "Revier konnte nicht ausgeblendet werden."
+                        } finally {
+                            profileHideBusy = false
+                        }
+                    }
+                }) { Text("Ausblenden") }
+            },
+            dismissButton = {
+                TextButton(enabled = !profileHideBusy, onClick = { profilePendingHide = null }) {
+                    Text("Abbrechen")
+                }
+            })
     }
 
     val markerContext = markerProfile
@@ -670,16 +846,27 @@ internal fun JagdkarteScreen(
 
     val importedRevierCandidates = pendingRevierImport
     if (!importedRevierCandidates.isNullOrEmpty() && signedIn) {
+        val suggestedMergeTargets = importedRevierCandidates.mapNotNull { candidate ->
+            suggestedJwdMergeTargetId(candidate.name, importTargets, repository.userId)?.let { profileId ->
+                jwdProfileNameKey(candidate.name) to profileId
+            }
+        }.toMap()
         RevierImportDialog(importedRevierCandidates,
-            onImport = { candidate -> repository.importJwdProfile(candidate) },
-            onImported = { profileId ->
+            mergeTargets = importTargets,
+            suggestedMergeTargets = suggestedMergeTargets,
+            onImport = { candidate, target ->
+                if (target == null) repository.importJwdProfile(candidate)
+                else repository.mergeJwdProfile(target.id, candidate)
+            },
+            onImported = { profileId, merged ->
                 pendingRevierImport = null
+                importTargets = emptyList()
                 selectedId = profileId
                 snapshot = null
                 revision++
-                status = "Revierdatei importiert."
+                status = if (merged) "Revierdaten zusammengeführt." else "Revierdatei importiert."
             },
-            onDismiss = { pendingRevierImport = null })
+            onDismiss = { pendingRevierImport = null; importTargets = emptyList() })
     }
 
     if (accountOpen) {
@@ -729,6 +916,33 @@ internal fun JagdkarteScreen(
                                 }
                             }
                         }
+                        Text("JWD-Export: Zuordnung nicht unterstützter Markertypen",
+                            style = MaterialTheme.typography.titleSmall)
+                        Text("Der Originaltyp wird in der JWD-Datei mitgespeichert und beim erneuten Import wiederhergestellt.",
+                            style = MaterialTheme.typography.bodySmall)
+                        HuntingMarkerType.entries.filter { !it.temporary && it.id !in JWD_EXPORT_MARKER_TYPE_LABELS }
+                            .forEach { markerType ->
+                                var mappingMenuOpen by remember(markerType.id) { mutableStateOf(false) }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(markerType.label, Modifier.weight(1f))
+                                    Box {
+                                        TextButton(onClick = { mappingMenuOpen = true }) {
+                                            Text(JWD_EXPORT_MARKER_TYPE_LABELS[
+                                                jwdMarkerTypeMappings[markerType.id]] ?: "Hochsitz")
+                                        }
+                                        DropdownMenu(expanded = mappingMenuOpen,
+                                            onDismissRequest = { mappingMenuOpen = false }) {
+                                            JWD_EXPORT_MARKER_TYPE_LABELS.forEach { (targetId, label) ->
+                                                DropdownMenuItem(text = { Text(label) }, onClick = {
+                                                    TrackerPreferences.setJwdMarkerTypeMapping(context, markerType.id, targetId)
+                                                    jwdMarkerTypeMappings = jwdMarkerTypeMappings + (markerType.id to targetId)
+                                                    mappingMenuOpen = false
+                                                })
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                     }
                 },
                 confirmButton = {

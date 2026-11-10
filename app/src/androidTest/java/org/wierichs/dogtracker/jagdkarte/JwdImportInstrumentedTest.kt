@@ -9,6 +9,8 @@ import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,10 +27,15 @@ class JwdImportInstrumentedTest {
         }"""), emptyList(), 2)
         var imports = 0
         var importedProfileId = ""
+        var merged = true
+        val unrelatedOwnerProfile = HuntingProfile("other-id", "Anderes Revier", "owner-id", false, JSONObject())
         composeRule.setContent {
             MaterialTheme {
-                RevierImportDialog(listOf(imported), onImport = { imports++; "profile-id" },
-                    onImported = { importedProfileId = it }, onDismiss = {})
+            RevierImportDialog(listOf(imported), mergeTargets = listOf(unrelatedOwnerProfile), onImport = { _, target ->
+                    imports++
+                    assertNull(target)
+                    "profile-id"
+                }, onImported = { id, wasMerged -> importedProfileId = id; merged = wasMerged }, onDismiss = {})
             }
         }
 
@@ -40,6 +47,7 @@ class JwdImportInstrumentedTest {
         composeRule.runOnIdle {
             assertEquals(1, imports)
             assertEquals("profile-id", importedProfileId)
+            assertFalse(merged)
         }
     }
 
@@ -52,8 +60,11 @@ class JwdImportInstrumentedTest {
         var importedName = ""
         composeRule.setContent {
             MaterialTheme {
-                RevierImportDialog(candidates, onImport = { importedName = it.name; "profile-id" },
-                    onImported = {}, onDismiss = {})
+                RevierImportDialog(candidates, onImport = { candidate, target ->
+                    importedName = candidate.name
+                    assertNull(target)
+                    "profile-id"
+                }, onImported = { _, _ -> }, onDismiss = {})
             }
         }
 
@@ -61,5 +72,34 @@ class JwdImportInstrumentedTest {
         composeRule.onNodeWithText("2. Gemeinde Sued").performClick()
         composeRule.onNodeWithText("Profil importieren").performClick()
         composeRule.runOnIdle { assertEquals("Gemeinde Sued", importedName) }
+    }
+
+    @Test
+    fun importConfirmationCanMergeIntoAnExistingEditableProfile() {
+        val imported = JwdImportedProfile("Importrevier", JSONObject("""{
+            "type":"Polygon","coordinates":[[[6,50],[8,50],[8,52],[6,52],[6,50]]]
+        }"""), emptyList(), 0)
+        val target = HuntingProfile("target-id", "Bestehendes Revier", "owner-id", false, JSONObject())
+        var mergedProfileId = ""
+        var mergeSelected = false
+        composeRule.setContent {
+            MaterialTheme {
+                RevierImportDialog(listOf(imported), mergeTargets = listOf(target),
+                    suggestedMergeTargets = mapOf(jwdProfileNameKey(imported.name) to target.id),
+                    onImport = { _, selectedTarget ->
+                        assertEquals(target.id, selectedTarget?.id)
+                        "target-id"
+                    }, onImported = { id, merged -> mergedProfileId = id; mergeSelected = merged }, onDismiss = {})
+            }
+        }
+
+        composeRule.onNodeWithText("In bestehendes Revier zusammenführen").assertIsDisplayed()
+        composeRule.onNodeWithText("Grenzen werden vereinigt. Vorhandene Marker bleiben erhalten; bereits vorhandene dauerhafte Einrichtungen werden nicht doppelt importiert.")
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("Zusammenführen").performClick()
+        composeRule.runOnIdle {
+            assertEquals("target-id", mergedProfileId)
+            assertEquals(true, mergeSelected)
+        }
     }
 }
