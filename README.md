@@ -39,7 +39,10 @@ bleibt davon unberuehrt.
 - Teilnehmer- und Hundepositionen im aktiven Jagdmodus, Aktualisierung alle
 	30 Sekunden bei sichtbarer Kartenansicht. Teilnehmerpositionen verschwinden
 	nach 90 Sekunden; Hundepositionen bleiben auch ausserhalb der Reviergrenze
-	sichtbar und werden nach zwei Minuten als veraltet markiert.
+	sichtbar und werden nach zwei Minuten als veraltet markiert. Bei frischen,
+	ausreichend genauen Bewegungsfixes zeigt ein kleiner Kartenpfeil den aus zwei
+	Positionen abgeleiteten Kurs ueber Grund samt Himmelsrichtung; er zeigt nicht
+	die Blick- oder Geraeteausrichtung.
 - Explizite Teilnehmer-Standortfreigabe pro ausgewaehltem Revier. Ein frischer
 	GPS-Fix und die Grenzpruefung mit JTS sind erforderlich. Freigabe und
 	Berechtigung werden nicht aus einer frueheren Android-Zustimmung abgeleitet.
@@ -398,7 +401,7 @@ Owner und Bearbeiter können einen registrierten Hund in **Hunde im Revier** nac
 ## Funktionen
 
 - QR-Code scannen oder den 64-stelligen Geräteschlüssel manuell eingeben.
-- Standortintervall zwischen 15 Sekunden und 60 Minuten wählen; voreingestellt sind 60 Sekunden.
+- Standortintervall zwischen 15 Sekunden und 60 Minuten wählen; bei der ersten Einrichtung sind 15 Sekunden voreingestellt. Ein geänderter Wert bleibt gespeichert.
 - Standort im Hintergrund über einen Android-Standortdienst erfassen. Eine dauerhafte Benachrichtigung zeigt die aktive Sitzung an und bietet auch eine Stopp-Schaltfläche.
 - Position, GPS-Genauigkeit und Messzeitpunkt über eine verschlüsselte HTTPS-Verbindung übertragen.
 - Bei fehlender Internetverbindung Messungen lokal puffern und den Upload bei verfügbarer Verbindung erneut versuchen.

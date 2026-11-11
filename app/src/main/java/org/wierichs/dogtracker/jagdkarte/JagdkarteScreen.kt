@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Point
 import android.graphics.Picture
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.PictureDrawable
@@ -1300,6 +1301,7 @@ internal fun NativeHuntingMap(
             controller.setCenter(GeoPoint(51.2, 7.0))
         }
     }
+    var mapZoom by remember(map) { mutableStateOf(map.zoomLevelDouble) }
     DisposableEffect(map, currentUserId, snapshot?.profile?.id) {
         val profileId = snapshot?.profile?.id
         if (profileId == null) return@DisposableEffect onDispose { }
@@ -1320,6 +1322,7 @@ internal fun NativeHuntingMap(
             }
 
             override fun onZoom(event: ZoomEvent?): Boolean {
+                mapZoom = map.zoomLevelDouble
                 queueSave()
                 return false
             }
@@ -1332,6 +1335,17 @@ internal fun NativeHuntingMap(
         }
     }
     val ownLocationOverlay = remember(map) { MyLocationNewOverlay(GpsMyLocationProvider(context), map) }
+    val movementTracker = remember(snapshot?.profile?.id) { MovementDirectionTracker() }
+    var movementDirections by remember(snapshot?.profile?.id) { mutableStateOf(emptyMap<String, MovementDirection>()) }
+    LaunchedEffect(snapshot?.profile?.id, snapshot?.points, snapshot?.isStale) {
+        val current = snapshot
+        if (current == null || current.isStale) {
+            movementTracker.clear()
+            movementDirections = emptyMap()
+        } else {
+            movementDirections = movementTracker.update(current.points, Instant.now())
+        }
+    }
     var fittedProfileId by remember { mutableStateOf<String?>(null) }
     var focusedGuestRequest by remember { mutableStateOf(-1) }
     var renderedContent by remember { mutableStateOf<Any?>(null) }
@@ -1381,7 +1395,9 @@ internal fun NativeHuntingMap(
             val points = snapshot?.points.orEmpty().filter { it.visibleAt(now) }
             val boundary = snapshot?.profile?.boundary
             val renderKey = listOf(snapshot?.profile?.id, boundary?.toString(), previewBoundary?.toString(), boundaryVisible, ownLocationVisible, points,
-                points.map { it.staleAt(now) }, markerIconSize, focusMarkerId, focusRequest,
+                points.map { it.staleAt(now) }, movementDirections,
+                movementDirections.mapValues { (_, direction) -> isDirectionFresh(direction, now) }, mapZoom,
+                markerIconSize, focusMarkerId, focusRequest,
                 boundaryEdit?.polygon, boundaryEdit?.ring, boundaryEdit?.vertex, boundaryEdit?.drawingPoints, boundaryEdit?.enabled)
             if (renderedContent != renderKey) {
                 renderedContent = renderKey
@@ -1424,10 +1440,16 @@ internal fun NativeHuntingMap(
                     bounds.addAll(rings.first())
                 }
                 points.forEach { point ->
+                    val movement = point.subjectId?.let(movementDirections::get)
+                        ?.takeIf { isDirectionFresh(it, now) }
+                    val directionLabel = movement?.let { compassDirectionLabel(it.bearingDegrees) }
                     view.overlays.add(Marker(view).apply {
                         position = GeoPoint(point.latitude, point.longitude)
-                        title = point.title + if (point.staleAt(now)) " (veraltet)" else ""
-                        snippet = "${point.detail}\nKoordinaten: ${markerCoordinateLabel(point.latitude, point.longitude)}"
+                        title = point.title + (if (point.staleAt(now)) " (veraltet)" else "") +
+                            (directionLabel?.let { " · Bewegung $it" } ?: "")
+                        snippet = "${point.detail}" + (movement?.let {
+                            "\nBewegungsrichtung: ${compassDirectionLabel(it.bearingDegrees)} (${it.bearingDegrees.toInt()}°)"
+                        } ?: "") + "\nKoordinaten: ${markerCoordinateLabel(point.latitude, point.longitude)}"
                         if (point.kind == MapPointKind.FACILITY) {
                             setAnchor(0.5f, 46f / 48f)
                             icon = huntingMarkerIcon(context, point.markerTypeId, markerIconSize)
@@ -1439,6 +1461,29 @@ internal fun NativeHuntingMap(
                                 participantMarkerIconAsset(point.participantRole)
                             }
                             icon = locationIcon(context, iconAsset)
+                        }
+                        if (movement != null && point.kind != MapPointKind.FACILITY) {
+                            val origin = GeoPoint(point.latitude, point.longitude)
+                            val originPixels = view.projection.toPixels(origin, Point())
+                            val length = (28 * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+                            val radians = Math.toRadians(movement.bearingDegrees)
+                            val destinationPoint = view.projection.fromPixels(
+                                originPixels.x + (kotlin.math.sin(radians) * length).toInt(),
+                                originPixels.y - (kotlin.math.cos(radians) * length).toInt())
+                            val destination = GeoPoint(destinationPoint.latitude, destinationPoint.longitude)
+                            view.overlays.add(Polyline(view).apply {
+                                setPoints(listOf(origin, destination))
+                                outlinePaint.color = android.graphics.Color.DKGRAY
+                                outlinePaint.strokeWidth = (2 * context.resources.displayMetrics.density).coerceAtLeast(1f)
+                            })
+                            view.overlays.add(Marker(view).apply {
+                                position = destination
+                                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                                icon = locationIcon(context, "movement-direction.svg", 20)
+                                setRotation(movement.bearingDegrees.toFloat())
+                                title = "Bewegungsrichtung: ${compassDirectionLabel(movement.bearingDegrees)}"
+                                snippet = "Kurs ueber Grund; aus zwei frischen GPS-Positionen abgeleitet."
+                            })
                         }
                         if (boundaryEdit == null && point.markerId != null && snapshot?.let {
                                 canDeleteHuntingMarker(it.canEdit, currentUserId, point)

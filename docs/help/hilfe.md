@@ -66,6 +66,8 @@ Der Jagdmodus steuert, ob Gruppen- und Hundestandorte fuer das Revier uebermitte
 
 Standorte sind keine sichere Echtzeitortung. Ohne Verbindung kann eine letzte Position noch kurz sichtbar sein. Hundepositionen koennen auch ausserhalb der Reviergrenze angezeigt werden; die eigene Standortfreigabe und bestimmte Markierungen sind dagegen an die Reviergrenze gebunden.
 
+Bei frischen, ausreichend genauen Positionen zeigt ein kleiner Pfeil neben Person oder Hund die Bewegungsrichtung ueber Grund. Die Himmelsrichtung wird aus zwei GPS-Positionen abgeleitet; sie zeigt nicht, wohin eine Person schaut oder wie das Smartphone ausgerichtet ist. Bei Stillstand, ungenauem GPS oder alten Positionen wird kein Richtungspfeil angezeigt.
+
 ## Revierdateien
 
 Im Revierbereich kannst du eine Reviergrenze als JWD-Datei exportieren oder eine JWD-, JSON- oder GeoJSON-Datei importieren. Waehle Dateien ueber den Android-Dateiauswahldialog aus und pruefe die angezeigte Zusammenfassung vor dem Import.

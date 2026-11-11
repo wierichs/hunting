@@ -37,6 +37,16 @@ class AccountDogsHelpInstrumentedTest {
         TrackerPreferences.setLastTabIsTracker(context, true)
     }
 
+    @Test fun trackerDefaultsToMinimumIntervalButKeepsAChosenInterval() {
+        val preferences = context.getSharedPreferences("tracker_settings", 0)
+        preferences.edit().remove("interval_seconds").commit()
+        assertEquals(15L, TrackerPreferences.intervalSeconds(context))
+
+        TrackerPreferences.saveConfiguration(context, 60L)
+        assertEquals(60L, TrackerPreferences.intervalSeconds(context))
+        TrackerPreferences.saveConfiguration(context, 15L)
+    }
+
     @Test fun rememberedProfileAndLocationConsentAreScopedPerAccountAndProfile() {
         val userId = UUID.randomUUID().toString()
         val otherUserId = UUID.randomUUID().toString()

@@ -35,7 +35,7 @@ internal object TrackerPreferences {
     fun endpoint(@Suppress("UNUSED_PARAMETER") context: Context): String = ENDPOINT
 
     fun intervalSeconds(context: Context): Long =
-        preferences(context).getLong(KEY_INTERVAL_SECONDS, 60L)
+        preferences(context).getLong(KEY_INTERVAL_SECONDS, 15L)
 
     fun isTracking(context: Context): Boolean =
         preferences(context).getBoolean(KEY_IS_TRACKING, false)

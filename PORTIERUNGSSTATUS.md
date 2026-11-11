@@ -193,6 +193,12 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
 - **Umgesetzt**: Eigenen Standort auf der Karte anzeigen, manuelles erneutes
   Einpassen des Reviers, Grenzanzeige ein-/ausschalten und Karten-Vollbild.
   Karten-/Marker-Emulatortests bestehen; reale Geraeteabnahme bleibt offen.
+- **Umgesetzt**: Bewegungsrichtung von Teilnehmern und Hunden lokal aus zwei
+  frischen GPS-Fixes derselben Person/des selben Hundes ableiten. Richtung wird
+  nur bei Bewegung oberhalb der Genauigkeitsschwelle und hoechstens 90 Sekunden
+  lang als rotierender Pfeil und Himmelsrichtung angezeigt; keine zusaetzlichen
+  Netzabrufe und keine Kompass-/Blickrichtung. Geometrie- und Rauschfiltertests
+  bestehen; GPS-/Pfeilverhalten bei realem Empfang bleibt manuell zu pruefen.
 - **Umgesetzt**: Auswahl OpenStreetMap / Luftbild / Offline. Luftbilder nutzen
   den frei zugaenglichen Geobasis-NRW-WMTS unter dl-de/zero-2-0, ohne Konto,
   API-Schluessel oder Abrechnungsvertrag. MapTiler wurde aus Android entfernt;

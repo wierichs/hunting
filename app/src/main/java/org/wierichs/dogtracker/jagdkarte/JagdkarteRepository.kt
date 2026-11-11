@@ -62,7 +62,9 @@ internal data class HuntingMapPoint(
     val markerTypeId: String? = null,
     val markerNotes: String = "",
     val participantRole: HuntingParticipantRole = HuntingParticipantRole.GUEST,
-    val createdBy: String? = null
+    val createdBy: String? = null,
+    val subjectId: String? = null,
+    val accuracyMeters: Double? = null
 ) {
     fun visibleAt(now: Instant): Boolean = when {
         !latitude.isFinite() || !longitude.isFinite() -> false
@@ -301,7 +303,9 @@ internal class JagdkarteRepository(context: Context) {
                 val participantId = row.getString("user_id")
                 points += point(row, participants[participantId] ?: "Teilnehmer",
                     "Genauigkeit: ${row.optDouble("accuracy").toInt()} m", MapPointKind.PARTICIPANT)
-                    .copy(timestamp = row.instant("updated_at"),
+                    .copy(subjectId = participantId,
+                        accuracyMeters = row.optDouble("accuracy", Double.NaN).takeIf(Double::isFinite),
+                        timestamp = row.instant("updated_at"),
                         participantRole = participantRoles[participantId] ?: HuntingParticipantRole.GUEST)
             }
             val dogs = mutableMapOf<String, String>()
@@ -310,9 +314,12 @@ internal class JagdkarteRepository(context: Context) {
             }
             rows(request("rest/v1/hunting_dog_locations?select=dog_id,latitude,longitude,accuracy,recorded_at&profile_id=eq.$profileId", bearer = token)) { row ->
                 val recorded = row.instant("recorded_at")
-                points += point(row, dogs[row.getString("dog_id")] ?: "Hund",
+                val dogId = row.getString("dog_id")
+                points += point(row, dogs[dogId] ?: "Hund",
                     "Messzeit: ${recorded ?: "unbekannt"}\nGenauigkeit: ${row.optDouble("accuracy").toInt()} m", MapPointKind.DOG)
-                    .copy(timestamp = recorded)
+                    .copy(subjectId = dogId,
+                        accuracyMeters = row.optDouble("accuracy", Double.NaN).takeIf(Double::isFinite),
+                        timestamp = recorded)
             }
         }
         HuntingSnapshot(profile, points, canEdit)
