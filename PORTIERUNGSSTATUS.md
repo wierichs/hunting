@@ -261,9 +261,11 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
   DogTracker zeigt einen zufaelligen einmaligen QR, Jagdkarte scannt ihn und
   bindet nur dessen SHA-256-Hash ueber eine Owner-/Editor-pruefende RPC.
   Die additive Migration `Jagdkarte/supabase/migrations/202611110001_register_hunting_dog_device_token.sql`
-  liegt im PWA-Repository; sie wurde nicht deployed. Der Gegenweg wird erst nach
-  deren Rollout erfolgreich funktionieren; der bisherige Jagdkarte-QR-/Manuellweg
-  bleibt unveraendert. Tokenformat-, Parser- und injizierte UI-Tests bestehen.
+  liegt im PWA-Repository. Der Nutzer meldet, sie im SQL Editor ausgefuehrt und
+  das PWA-Repository aktualisiert zu haben; Zielprojekt und Laufzeitverhalten
+  wurden hier nicht unabhaengig verifiziert. Der bisherige Jagdkarte-QR- und
+  Manuellweg bleibt erhalten. Tokenformat-, Parser- und injizierte UI-Tests
+  bestehen.
 - **Umgesetzt**: Native Hilfe und Fehlerbehebung ueber das Info-Symbol in der
   Kartenleiste. `docs/help/hilfe.md` ist die einzige redaktionelle Quelle; die
   README verlinkt darauf und die Android-App rendert dieselbe Datei offline als
@@ -464,3 +466,67 @@ wiederholen.
 - **Offen**: DogTracker-Pairing sowie Relay-Pairing, Sicherheitscode,
   Berechtigungen, Funktransfer, Offline-Warteschlange und Serverbestaetigung mit
   mindestens zwei physischen Geraeten pruefen.
+
+### Sicherheits- und Robustheits-TODOs
+
+Die Punkte stammen aus einem read-only Code-Review vom 2026-11-11. In der
+naechsten Arbeitsphase einzeln abarbeiten, jeweils mit gezielten Tests und ohne
+Produktionsdeployment.
+
+- [ ] **P1 – SSRF bei eigenen Datendienstquellen**: In `PublicBoundarySource`
+  alle nicht global routbaren IPv4-/IPv6-Sonderbereiche blockieren, darunter
+  RFC6598 `100.64.0.0/10`. In `PublicBoundaryClient` die DNS-Pruefung an die
+  tatsaechliche Verbindung binden, statt den Host nach der Pruefung erneut
+  aufloesen zu lassen; TLS-Hostnamepruefung beibehalten. Tests fuer Sonderbereiche,
+  mehrere DNS-Antworten, DNS-Wechsel und Redirects ergaenzen.
+- [ ] **P2 – DogTracker-QR-Pairing atomar und wiederholbar machen**: Die neue
+  `register_hunting_dog_device_token`-RPC widerruft den alten Schluessel, bevor
+  DogTracker den neuen lokal bestaetigt. Pending-QR-Abbruch kann dadurch den
+  alten lokalen Schluessel ungueltig hinterlassen; Wiederholung desselben QR
+  kollidiert ausserdem mit dem global eindeutigen `token_hash`. Zwei-Phasen-
+  Aktivierung oder idempotente Registrierung mit expliziter Abbruchsemantik
+  entwerfen. Timeout nach Servercommit, Abbruch, Doppelscan und falsches
+  Zielprofil testen; RLS/RPC-Pruefung nur im isolierten Supabase-Testprojekt.
+- [ ] **P2 – GPS-Outbox begrenzen und kompaktieren**: `location.fix`-Meldungen
+  haben derzeit kein Ablaufdatum und werden einzeln FIFO abgearbeitet; bei
+  15-Sekunden-Intervall kann die 10.000-Eintraege-Queue etwa 41 Stunden fassen.
+  Eine fachlich festgelegte TTL und/oder Zusammenfassung auf den neuesten
+  Dog-Fix einfuehren; Relay-Nachrichten separat nach ihrer bestehenden
+  Ablauf-/Bestaetigungssemantik behandeln. Offline-Rueckkehr und Bandbreite
+  messen.
+- [ ] **P2 – GPS-Outbox at-rest schuetzen**: `location_outbox.db` enthaelt
+  Koordinaten und Zeitstempel als unverschluessertes SQLite-Payload. Keystore-
+  Verschluesselung vor Persistenz ergaenzen und Migration, Schluesselverlust,
+  Queuebereinigung sowie Backupausschluss testen.
+- [ ] **P2 – Transiente HTTP-Fehler nicht verwerfen**: `LocationUploadWorker`
+  bestaetigt derzeit alle 4xx ausser 401/409 als endgueltig; insbesondere 429
+  kann dadurch eine GPS-Meldung verlieren. 408/425/429 als Retry behandeln,
+  `Retry-After` beachten und permanente Validierungsfehler getrennt behandeln.
+- [ ] **P2 – Gastlink-App-Link absichern**: Der exportierte HTTPS-Intent-Filter
+  ist nicht als verifizierter App Link deklariert; Gastlinks tragen einen
+  Bearer-Token im Fragment. Domain-Association/`assetlinks.json` und
+  `android:autoVerify` auf einem installierten Geraet pruefen. Falls die
+  GitHub-Pages-Domain nicht sicher verifiziert werden kann, Browser/PWA-Fallback
+  beibehalten und keinen stillen App-Link-Vertrauensstatus annehmen.
+- [ ] **P3 – Lokale Kartenkamera-Praefenz bewerten**: Zentrum/Zoom werden als
+  Klartext-JSON in `SharedPreferences` gespeichert. Entscheiden, ob diese
+  Revier-/Suchposition als sensibel gilt; bei Bedarf verschluesseln oder
+  Speicherumfang reduzieren.
+- [ ] **P3 – Lint-/Wartungsschulden abbauen**: Der letzte Android-Lintlauf
+  meldete 30 Warnungen und 9 Hinweise, darunter Compose-State-Autoboxing,
+  veraltete Abhaengigkeiten und nicht verifizierte App-Links. Zuerst konkrete
+  Laufzeit-/Sicherheitsfolgen bewerten, dann risikoarm bereinigen.
+
+### Übergabe für den nächsten Kontext
+
+- Einstieg: diese TODO-Liste bei **P1 – SSRF** beginnen; erst den URL-/DNS-
+  Schutz samt Tests schliessen, danach Pairing-Transaktion, GPS-Outbox und
+  App-Link-Verifikation einzeln angehen.
+- Pairing-Migration: Nutzer meldet SQL-Editor-Ausführung und Aktualisierung des
+  PWA-Repositories. Nicht erneut ausführen und kein Produktiondeployment
+  vornehmen; Zielprojekt und Funktion muessen bei der naechsten autorisierten
+  Testabnahme verifiziert werden.
+- Letzte Verifikation vor dieser Übergabe: `:app:testDebugUnitTest`, gezielte
+  Android-Tests fuer Start/Resume, Cache, Karten, Marker und Pairing sowie
+  `:app:assembleDebug :app:assembleRelease` bestanden. Reale Geraete-/GPS-
+  Abnahmen sind offen.
