@@ -17,6 +17,7 @@ internal object TrackerPreferences {
     private const val KEY_HIDDEN_HUNTING_PROFILES = "hidden_hunting_profiles"
     private const val KEY_IS_TRACKING = "is_tracking"
     private const val KEY_STATUS = "status"
+    private const val KEY_LOCATION_UPLOAD_RETRY_AFTER = "location_upload_retry_after"
     private const val KEY_RELAY_DEVICE_ID = "relay_device_id"
     private const val KEY_RELAY_ENCRYPTION_KEY_ID = "relay_encryption_key_id"
     private const val KEY_RELAY_ENCRYPTION_PUBLIC_KEY = "relay_encryption_public_key"
@@ -213,6 +214,19 @@ internal object TrackerPreferences {
     fun setStatus(context: Context, status: String) {
         preferences(context).edit { putString(KEY_STATUS, status) }
     }
+
+    fun locationUploadRetryAfter(context: Context): Long? =
+        preferences(context).getLong(KEY_LOCATION_UPLOAD_RETRY_AFTER, -1L).takeIf { it >= 0L }
+
+    fun setLocationUploadRetryAfter(context: Context, retryAfterAtEpochMillis: Long): Boolean {
+        require(retryAfterAtEpochMillis >= 0L)
+        return preferences(context).edit()
+            .putLong(KEY_LOCATION_UPLOAD_RETRY_AFTER, retryAfterAtEpochMillis)
+            .commit()
+    }
+
+    fun clearLocationUploadRetryAfter(context: Context): Boolean =
+        preferences(context).edit().remove(KEY_LOCATION_UPLOAD_RETRY_AFTER).commit()
 
     private val MARKER_ICON_SIZES = setOf("small", "standard", "large")
 }

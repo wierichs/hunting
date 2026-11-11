@@ -206,7 +206,55 @@ private fun contentId(sourceId: String, name: String, geometry: String): String 
     return "content-" + bytes.take(16).joinToString("") { "%02x".format(it) }
 }
 
-internal fun isPublicBoundaryAddress(address: InetAddress): Boolean =
-    !address.isAnyLocalAddress && !address.isLoopbackAddress && !address.isLinkLocalAddress &&
-        !address.isSiteLocalAddress && !address.isMulticastAddress &&
-        !(address is Inet6Address && address.address.first().toInt() and 0xfe == 0xfc)
+internal fun isPublicBoundaryAddress(address: InetAddress): Boolean {
+    if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress ||
+        address.isSiteLocalAddress || address.isMulticastAddress) return false
+
+    val bytes = address.address
+    if (address !is Inet6Address) {
+        val value = bytes.fold(0L) { result, byte -> (result shl 8) or (byte.toLong() and 0xff) }
+        return IPV4_NON_GLOBAL_RANGES.none { (network, prefix) ->
+            value shr (32 - prefix) == network shr (32 - prefix)
+        }
+    }
+
+    val globallyRoutableUnicast = bytes[0].toInt() and 0xe0 == 0x20
+    val isDocumentation = bytes[0] == 0x20.toByte() && bytes[1] == 0x01.toByte() &&
+        bytes[2] == 0x0d.toByte() && bytes[3] == 0xb8.toByte()
+    val isSixToFour = bytes[0] == 0x20.toByte() && bytes[1] == 0x02.toByte()
+    val isIetfSpecialPurpose = bytes[0] == 0x20.toByte() && bytes[1] == 0x01.toByte() &&
+        bytes[2].toInt() and 0xfe == 0
+    val isDocumentationPrefix = bytes[0] == 0x3f.toByte() && bytes[1] == 0xff.toByte() &&
+        bytes[2].toInt() and 0xf0 == 0
+    return globallyRoutableUnicast && !isDocumentation && !isSixToFour &&
+        !isIetfSpecialPurpose && !isDocumentationPrefix
+}
+
+internal fun resolvePublicBoundaryAddresses(
+    host: String,
+    lookup: (String) -> Array<InetAddress>
+): List<InetAddress> {
+    val addresses = lookup(host)
+    require(addresses.isNotEmpty() && addresses.all(::isPublicBoundaryAddress)) {
+        "Lokale oder private Datendienst-Adressen werden nicht abgerufen."
+    }
+    return addresses.toList()
+}
+
+private val IPV4_NON_GLOBAL_RANGES = listOf(
+    0x00000000L to 8,       // "This" network
+    0x0a000000L to 8,       // Private-use
+    0x64400000L to 10,      // Shared address space (RFC 6598)
+    0x7f000000L to 8,       // Loopback
+    0xa9fe0000L to 16,      // Link-local
+    0xac100000L to 12,      // Private-use
+    0xc0000000L to 24,      // IETF protocol assignments
+    0xc0000200L to 24,      // Documentation
+    0xc0586300L to 24,      // Deprecated 6to4 relay anycast
+    0xc0a80000L to 16,      // Private-use
+    0xc6120000L to 15,      // Benchmarking
+    0xc6336400L to 24,      // Documentation
+    0xcb007100L to 24,      // Documentation
+    0xe0000000L to 4,       // Multicast
+    0xf0000000L to 4        // Reserved
+)

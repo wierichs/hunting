@@ -3,6 +3,7 @@ package org.wierichs.dogtracker.jagdkarte
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
+import java.net.InetAddress
 
 class PublicBoundarySourceTest {
     private val source = PublicBoundarySource("test-source", "Testquelle", PublicBoundaryService.GEOJSON,
@@ -69,6 +70,41 @@ class PublicBoundarySourceTest {
         }
     }
 
+    @Test fun rejectsNonGlobalIpv4AndIpv6SpecialRanges() {
+        val blocked = listOf(
+            "0.12.34.56", "10.1.2.3", "100.64.0.1", "100.127.255.254", "127.1.2.3",
+            "169.254.1.2", "172.16.0.1", "192.0.0.10", "192.0.2.1", "192.88.99.1",
+            "192.168.1.1", "198.18.0.1", "198.51.100.1", "203.0.113.1", "224.0.0.1",
+            "240.0.0.1", "::", "::1", "fc00::1", "fe80::1", "2001:db8::1", "2002::1",
+            "2001:1::1", "3fff::1"
+        )
+        blocked.forEach { host ->
+            assertFalse("$host must not be used as a public data-service address",
+                isPublicBoundaryAddress(InetAddress.getByName(host)))
+        }
+        assertTrue(isPublicBoundaryAddress(InetAddress.getByName("8.8.8.8")))
+        assertTrue(isPublicBoundaryAddress(InetAddress.getByName("2001:4860:4860::8888")))
+    }
+
+    @Test fun dnsValidationRejectsAnyNonGlobalAnswerAndRechecksDnsChanges() {
+        val publicAddress = InetAddress.getByName("8.8.8.8")
+        val privateAddress = InetAddress.getByName("100.64.1.2")
+        var currentAnswers = arrayOf(publicAddress)
+        var lookups = 0
+        val lookup: (String) -> Array<InetAddress> = {
+            lookups++
+            currentAnswers
+        }
+
+        val pinnedAnswers = resolvePublicBoundaryAddresses("source.example", lookup)
+        assertEquals(listOf(publicAddress), pinnedAnswers)
+        currentAnswers = arrayOf(publicAddress, privateAddress)
+        assertThrows(IllegalArgumentException::class.java) {
+            resolvePublicBoundaryAddresses("source.example", lookup)
+        }
+        assertEquals(2, lookups)
+    }
+
     @Test fun wpsIsNotAcceptedAsASearchServiceAndCustomIdsDoNotCollide() {
         assertThrows(IllegalArgumentException::class.java) { PublicBoundaryService.fromId("wps") }
         assertNotEquals(userBoundarySourceId(), userBoundarySourceId())
@@ -105,6 +141,23 @@ class PublicBoundarySourceTest {
         }
         assertThrows(IllegalArgumentException::class.java) {
             PublicBoundaryRequests.paginationUrl("https://example.org/items", "http://example.org/next", origin)
+        }
+    }
+
+    @Test fun redirectsMustStayOnTheOriginalHttpsOrigin() {
+        val origin = PublicBoundaryRequests.origin("https://example.org/data")
+        assertEquals("https://example.org/next",
+            PublicBoundaryRequests.redirectUrl("https://example.org/data", "/next", origin))
+        listOf(
+            "https://other.example/next",
+            "https://example.org:8443/next",
+            "http://example.org/next",
+            "https://user@example.org/next",
+            "https://example.org/next#fragment"
+        ).forEach { location ->
+            assertThrows(IllegalArgumentException::class.java) {
+                PublicBoundaryRequests.redirectUrl("https://example.org/data", location, origin)
+            }
         }
     }
 

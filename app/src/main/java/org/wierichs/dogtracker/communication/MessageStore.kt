@@ -6,6 +6,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import java.util.UUID
 
+internal const val LOCATION_FIX_MAX_AGE_MILLIS = 24 * 60 * 60 * 1000L
+
 data class StoredMessage(
     val localId: Long,
     val message: CommunicationMessage
@@ -26,6 +28,10 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
 
     override fun onCreate(database: SQLiteDatabase) {
         createMessagesTable(database)
+    }
+
+    override fun onConfigure(database: SQLiteDatabase) {
+        database.execSQL("PRAGMA secure_delete = ON")
     }
 
     override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -55,19 +61,31 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
             }
             database.execSQL("DROP TABLE $LEGACY_TABLE_NAME")
         }
+        if (oldVersion < 3) encryptExistingLocationPayloads(database)
     }
 
     override fun enqueue(message: CommunicationMessage) {
-        writableDatabase.beginTransaction()
+        val database = writableDatabase
+        val now = System.currentTimeMillis()
+        database.beginTransaction()
         try {
-            insert(writableDatabase, message)
-            writableDatabase.execSQL(
+            removeExpired(database, now)
+            if (message.type == LOCATION_MESSAGE_TYPE) {
+                val newestPending = newestPendingLocationFix(database)
+                if (newestPending == null || message.createdAtEpochMillis >= newestPending.second) {
+                    database.delete(TABLE_NAME, "message_type = ?", arrayOf(LOCATION_MESSAGE_TYPE))
+                    insert(database, message, now)
+                }
+            } else {
+                insert(database, message, now)
+            }
+            database.execSQL(
                 "DELETE FROM $TABLE_NAME WHERE local_id NOT IN " +
                     "(SELECT local_id FROM $TABLE_NAME ORDER BY local_id DESC LIMIT $MAX_PENDING_MESSAGES)"
             )
-            writableDatabase.setTransactionSuccessful()
+            database.setTransactionSuccessful()
         } finally {
-            writableDatabase.endTransaction()
+            database.endTransaction()
         }
     }
 
@@ -83,17 +101,7 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
     ).use { cursor ->
         if (!cursor.moveToFirst()) return@use null
         val expiresAtIndex = cursor.getColumnIndexOrThrow("expires_at")
-        StoredMessage(
-            localId = cursor.getLong(cursor.getColumnIndexOrThrow("local_id")),
-            message = CommunicationMessage(
-                messageId = cursor.getString(cursor.getColumnIndexOrThrow("message_id")),
-                type = cursor.getString(cursor.getColumnIndexOrThrow("message_type")),
-                destination = cursor.getString(cursor.getColumnIndexOrThrow("destination")),
-                createdAtEpochMillis = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
-                expiresAtEpochMillis = if (cursor.isNull(expiresAtIndex)) null else cursor.getLong(expiresAtIndex),
-                payload = cursor.getBlob(cursor.getColumnIndexOrThrow("payload"))
-            )
-        )
+        readStoredMessage(cursor, expiresAtIndex)
     }
 
     override fun pendingOfType(type: String, limit: Int): List<StoredMessage> {
@@ -111,19 +119,7 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
             buildList {
                 while (cursor.moveToNext()) {
                     val expiresAtIndex = cursor.getColumnIndexOrThrow("expires_at")
-                    add(
-                        StoredMessage(
-                            localId = cursor.getLong(cursor.getColumnIndexOrThrow("local_id")),
-                            message = CommunicationMessage(
-                                messageId = cursor.getString(cursor.getColumnIndexOrThrow("message_id")),
-                                type = cursor.getString(cursor.getColumnIndexOrThrow("message_type")),
-                                destination = cursor.getString(cursor.getColumnIndexOrThrow("destination")),
-                                createdAtEpochMillis = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
-                                expiresAtEpochMillis = if (cursor.isNull(expiresAtIndex)) null else cursor.getLong(expiresAtIndex),
-                                payload = cursor.getBlob(cursor.getColumnIndexOrThrow("payload"))
-                            )
-                        )
-                    )
+                    add(readStoredMessage(cursor, expiresAtIndex))
                 }
             }
         }
@@ -140,14 +136,7 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
     ).use { cursor ->
         if (!cursor.moveToFirst()) return@use null
         val expiresIndex = cursor.getColumnIndexOrThrow("expires_at")
-        StoredMessage(cursor.getLong(cursor.getColumnIndexOrThrow("local_id")), CommunicationMessage(
-            messageId = cursor.getString(cursor.getColumnIndexOrThrow("message_id")),
-            type = cursor.getString(cursor.getColumnIndexOrThrow("message_type")),
-            destination = cursor.getString(cursor.getColumnIndexOrThrow("destination")),
-            createdAtEpochMillis = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
-            expiresAtEpochMillis = if (cursor.isNull(expiresIndex)) null else cursor.getLong(expiresIndex),
-            payload = cursor.getBlob(cursor.getColumnIndexOrThrow("payload"))
-        ))
+        readStoredMessage(cursor, expiresIndex)
     }
 
     fun acknowledgeWithReceipt(messageId: String, receipt: CommunicationMessage) {
@@ -170,27 +159,130 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
     }
 
     override fun removeExpired(nowEpochMillis: Long) {
-        writableDatabase.delete(
+        removeExpired(writableDatabase, nowEpochMillis)
+    }
+
+    private fun removeExpired(database: SQLiteDatabase, nowEpochMillis: Long) {
+        val locationCutoff = nowEpochMillis - LOCATION_FIX_MAX_AGE_MILLIS
+        database.delete(
             TABLE_NAME,
-            "expires_at IS NOT NULL AND expires_at <= ?",
-            arrayOf(nowEpochMillis.toString())
+            "(expires_at IS NOT NULL AND expires_at <= ?) OR " +
+                "(message_type = ? AND created_at <= ?)",
+            arrayOf(nowEpochMillis.toString(), LOCATION_MESSAGE_TYPE, locationCutoff.toString())
         )
+        compactLocationFixes(database)
     }
 
     override fun clear() {
         writableDatabase.delete(TABLE_NAME, null, null)
     }
 
-    private fun insert(database: SQLiteDatabase, message: CommunicationMessage) {
+    private fun insert(
+        database: SQLiteDatabase,
+        message: CommunicationMessage,
+        nowEpochMillis: Long = System.currentTimeMillis()
+    ) {
+        val expiresAt = if (message.type == LOCATION_MESSAGE_TYPE) {
+            val maximumExpiry = Math.addExact(message.createdAtEpochMillis, LOCATION_FIX_MAX_AGE_MILLIS)
+            message.expiresAtEpochMillis?.let { minOf(it, maximumExpiry) } ?: maximumExpiry
+        } else {
+            message.expiresAtEpochMillis
+        }
+        if (message.type == LOCATION_MESSAGE_TYPE && expiresAt != null && expiresAt <= nowEpochMillis) return
+
         val values = ContentValues().apply {
             put("message_id", message.messageId)
             put("message_type", message.type)
             put("destination", message.destination)
             put("created_at", message.createdAtEpochMillis)
-            put("expires_at", message.expiresAtEpochMillis)
-            put("payload", message.payload)
+            put("expires_at", expiresAt)
+            put(
+                "payload",
+                if (message.type == LOCATION_MESSAGE_TYPE) {
+                    LocationPayloadCipher.encrypt(message.messageId, message.payload)
+                } else {
+                    message.payload
+                }
+            )
         }
         database.insertOrThrow(TABLE_NAME, null, values)
+    }
+
+    private fun readStoredMessage(cursor: android.database.Cursor, expiresAtIndex: Int): StoredMessage {
+        val messageId = cursor.getString(cursor.getColumnIndexOrThrow("message_id"))
+        val type = cursor.getString(cursor.getColumnIndexOrThrow("message_type"))
+        val storedPayload = cursor.getBlob(cursor.getColumnIndexOrThrow("payload"))
+        return StoredMessage(
+            localId = cursor.getLong(cursor.getColumnIndexOrThrow("local_id")),
+            message = CommunicationMessage(
+                messageId = messageId,
+                type = type,
+                destination = cursor.getString(cursor.getColumnIndexOrThrow("destination")),
+                createdAtEpochMillis = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+                expiresAtEpochMillis = if (cursor.isNull(expiresAtIndex)) null else cursor.getLong(expiresAtIndex),
+                payload = if (type == LOCATION_MESSAGE_TYPE) {
+                    LocationPayloadCipher.decrypt(messageId, storedPayload)
+                } else {
+                    storedPayload
+                }
+            )
+        )
+    }
+
+    private fun encryptExistingLocationPayloads(database: SQLiteDatabase) {
+        var lastLocalId = 0L
+        var encryptionKey: javax.crypto.SecretKey? = null
+        while (true) {
+            val row = database.query(
+                TABLE_NAME,
+                arrayOf("local_id", "message_id", "payload"),
+                "message_type = ? AND local_id > ?",
+                arrayOf(LOCATION_MESSAGE_TYPE, lastLocalId.toString()),
+                null,
+                null,
+                "local_id ASC",
+                "1"
+            ).use { cursor ->
+                if (!cursor.moveToFirst()) null else Triple(
+                    cursor.getLong(0),
+                    cursor.getString(1),
+                    cursor.getBlob(2)
+                )
+            } ?: return
+
+            lastLocalId = row.first
+            if (LocationPayloadCipher.isEncrypted(row.third)) continue
+            val key = encryptionKey ?: LocationPayloadCipher.encryptionKey().also { encryptionKey = it }
+            val values = ContentValues().apply {
+                put("payload", LocationPayloadCipher.encrypt(row.second, row.third, key))
+            }
+            check(database.update(TABLE_NAME, values, "local_id = ?", arrayOf(row.first.toString())) == 1) {
+                "GPS-Payload konnte waehrend des Datenbank-Upgrades nicht aktualisiert werden."
+            }
+        }
+    }
+
+    private fun newestPendingLocationFix(database: SQLiteDatabase): Pair<Long, Long>? =
+        database.query(
+            TABLE_NAME,
+            arrayOf("local_id", "created_at"),
+            "message_type = ?",
+            arrayOf(LOCATION_MESSAGE_TYPE),
+            null,
+            null,
+            "created_at DESC, local_id DESC",
+            "1"
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) null else cursor.getLong(0) to cursor.getLong(1)
+        }
+
+    private fun compactLocationFixes(database: SQLiteDatabase) {
+        val newestLocalId = newestPendingLocationFix(database)?.first ?: return
+        database.delete(
+            TABLE_NAME,
+            "message_type = ? AND local_id != ?",
+            arrayOf(LOCATION_MESSAGE_TYPE, newestLocalId.toString())
+        )
     }
 
     private fun createMessagesTable(database: SQLiteDatabase) {
@@ -208,7 +300,7 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
 
     companion object {
         private const val DATABASE_NAME = "location_outbox.db"
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 3
         private const val TABLE_NAME = "communication_messages"
         private const val LEGACY_TABLE_NAME = "pending_locations"
         private const val LOCATION_MESSAGE_TYPE = "location.fix"

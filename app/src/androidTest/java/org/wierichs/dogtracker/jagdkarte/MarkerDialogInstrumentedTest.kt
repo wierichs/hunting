@@ -7,7 +7,12 @@ import android.graphics.Paint
 import android.graphics.Picture
 import android.graphics.Point
 import android.graphics.drawable.PictureDrawable
+import android.view.View
+import android.view.ViewGroup
+import android.view.inspector.WindowInspector
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,6 +44,7 @@ import org.osmdroid.views.overlay.Polygon
 import org.json.JSONObject
 import org.wierichs.dogtracker.TrackerPreferences
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -337,6 +343,66 @@ class MarkerDialogInstrumentedTest {
         composeRule.onNodeWithText("Chef", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithText("Hund", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Legende ausblenden", useUnmergedTree = true).performClick()
+    }
+
+    @Test
+    fun guestLinkOpensTargetPopupAndKeepsDismissalAcrossMapUpdates() {
+        val now = Instant.now()
+        val target = HuntingMapPoint(51.5, 7.5, "Gastziel", "Zielnotiz", MapPointKind.FACILITY,
+            markerId = "target", markerTypeId = "hochsitz")
+        val neighbor = HuntingMapPoint(51.5, 7.5, "Nachbar", "", MapPointKind.FACILITY,
+            markerId = "neighbor", markerTypeId = "hochsitz")
+        val points = mutableStateOf(listOf(target, neighbor))
+        val loadingSnapshot = mutableStateOf(false)
+        val request = mutableIntStateOf(1)
+        composeRule.setContent {
+            MaterialTheme {
+                NativeHuntingMap(
+                    if (loadingSnapshot.value) null else HuntingSnapshot(profile, points.value, false),
+                    now, Modifier.fillMaxSize(),
+                    onChooseLocation = { false }, focusMarkerId = "target", focusRequest = request.intValue)
+            }
+        }
+
+        fun marker(id: String): Marker =
+            currentMap().overlays.filterIsInstance<Marker>().first { it.id == id }
+
+        composeRule.waitForIdle()
+        composeRule.runOnIdle {
+            assertTrue(marker("target").isInfoWindowShown)
+            assertFalse(marker("neighbor").isInfoWindowShown)
+            points.value = listOf(target.copy(detail = "Aktualisiert"), neighbor)
+        }
+        composeRule.runOnIdle {
+            assertTrue(marker("target").isInfoWindowShown)
+            loadingSnapshot.value = true
+        }
+        composeRule.runOnIdle {
+            loadingSnapshot.value = false
+        }
+        composeRule.runOnIdle {
+            assertTrue(marker("target").isInfoWindowShown)
+            marker("target").closeInfoWindow()
+            points.value = listOf(target, neighbor)
+        }
+        composeRule.runOnIdle {
+            assertFalse(marker("target").isInfoWindowShown)
+            request.intValue++
+        }
+        composeRule.runOnIdle {
+            assertTrue(marker("target").isInfoWindowShown)
+        }
+    }
+
+    private fun currentMap(): MapView {
+        fun find(view: View): MapView? {
+            if (view is MapView) return view
+            if (view is ViewGroup) for (index in 0 until view.childCount) {
+                find(view.getChildAt(index))?.let { return it }
+            }
+            return null
+        }
+        return WindowInspector.getGlobalWindowViews().firstNotNullOfOrNull(::find) ?: error("Karte nicht gefunden")
     }
 
     @Test

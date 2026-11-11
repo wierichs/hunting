@@ -10,7 +10,10 @@ import kotlinx.coroutines.withContext
 import org.wierichs.dogtracker.communication.RelayApiClient
 import org.wierichs.dogtracker.communication.RelaySigningIdentity
 import org.wierichs.dogtracker.communication.HttpsLocationTransport
+import org.wierichs.dogtracker.communication.LocationPayloadCryptoException
+import org.wierichs.dogtracker.communication.MessageTransportResponse
 import org.wierichs.dogtracker.communication.SqliteMessageStore
+import org.wierichs.dogtracker.communication.UnreadableLocationPayloadException
 
 class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
     CoroutineWorker(context, parameters) {
@@ -18,55 +21,126 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         var relaySetupPending = false
         while (true) {
-            val pending = SqliteMessageStore(applicationContext).use { store ->
-                store.removeExpired()
-                store.oldestPending()
+            val pending = try {
+                SqliteMessageStore(applicationContext).use { store ->
+                    store.removeExpired()
+                    store.oldestPending()
+                }
+            } catch (error: UnreadableLocationPayloadException) {
+                SqliteMessageStore(applicationContext).use { store -> store.acknowledge(error.messageId) }
+                TrackerPreferences.setStatus(
+                    applicationContext,
+                    "Eine gespeicherte GPS-Position konnte nicht entschluesselt werden und wurde verworfen; sie muss neu erfasst werden."
+                )
+                continue
+            } catch (_: LocationPayloadCryptoException) {
+                TrackerPreferences.setStatus(
+                    applicationContext,
+                    "Lokale GPS-Daten konnten nicht sicher entschluesselt werden; erneuter Versuch folgt."
+                )
+                return@withContext Result.retry()
             } ?: return@withContext Result.success()
 
             try {
+                if (pending.message.type == LOCATION_MESSAGE_TYPE) {
+                    val retryAfterAt = TrackerPreferences.locationUploadRetryAfter(applicationContext)
+                    if (retryAfterAt != null && retryAfterAt > System.currentTimeMillis()) {
+                        TrackerPreferences.setStatus(
+                            applicationContext,
+                            "Der Server hat den GPS-Upload zurückgestellt; die Position bleibt gespeichert."
+                        )
+                        return@withContext Result.retry()
+                    }
+                    if (retryAfterAt != null) {
+                        TrackerPreferences.clearLocationUploadRetryAfter(applicationContext)
+                    }
+                }
+
                 val deviceToken = TrackerPreferences.deviceToken(applicationContext)
                     ?: run {
                         TrackerPreferences.setStatus(applicationContext, "Geräteschlüssel fehlt. Bitte erneut aus der Jagdkarte einfügen.")
                         return@withContext Result.failure()
                     }
                 if (!relayIsProvisioned(deviceToken)) relaySetupPending = true
-                val responseCode = if (pending.message.type == RELAY_ENVELOPE_MESSAGE_TYPE) {
-                    RelayApiClient(TrackerPreferences.RELAY_ENDPOINT, deviceToken)
-                        .submitRelayEnvelope(pending.message.payload)
+                val response = if (pending.message.type == RELAY_ENVELOPE_MESSAGE_TYPE) {
+                    MessageTransportResponse(
+                        statusCode = RelayApiClient(TrackerPreferences.RELAY_ENDPOINT, deviceToken)
+                            .submitRelayEnvelope(pending.message.payload),
+                        retryAfter = null
+                    )
                 } else {
                     HttpsLocationTransport(deviceToken).send(pending.message)
                 }
-                if (responseCode in 200..299) {
-                    val remainingCount = SqliteMessageStore(applicationContext).use { store ->
-                        store.acknowledge(pending.message.messageId)
-                        store.pendingCount()
+                when (locationUploadDisposition(response.statusCode)) {
+                    LocationUploadDisposition.ACCEPTED -> {
+                        val remainingCount = SqliteMessageStore(applicationContext).use { store ->
+                            store.acknowledge(pending.message.messageId)
+                            store.pendingCount()
+                        }
+                        TrackerPreferences.setStatus(
+                            applicationContext,
+                            if (remainingCount == 0 && !relaySetupPending) "Position vom Server bestätigt (HTTP ${response.statusCode})."
+                            else if (remainingCount == 0) "Position vom Server bestätigt. Relay-Einrichtung wartet auf Verbindung."
+                            else "Position vom Server bestätigt; $remainingCount weitere Meldungen ausstehend."
+                        )
                     }
-                    TrackerPreferences.setStatus(
-                        applicationContext,
-                        if (remainingCount == 0 && !relaySetupPending) "Position vom Server bestätigt (HTTP $responseCode)."
-                        else if (remainingCount == 0) "Position vom Server bestätigt. Relay-Einrichtung wartet auf Verbindung."
-                        else "Position vom Server bestätigt; $remainingCount weitere Meldungen ausstehend."
-                    )
-                } else if (responseCode == 401) {
-                    TrackerPreferences.setStatus(applicationContext, "Geräteschlüssel ungültig oder widerrufen. Bitte in der Jagdkarte neu koppeln.")
-                    return@withContext Result.failure()
-                } else if (responseCode == 409) {
-                    SqliteMessageStore(applicationContext).use { store -> store.clear() }
-                    TrackerPreferences.setTracking(applicationContext, false)
-                    TrackerPreferences.setStatus(applicationContext, "Jagdmodus ist aus. Tracking wurde gestoppt und gepufferte Positionen wurden gelöscht.")
-                    applicationContext.stopService(
-                        Intent(applicationContext, LocationTrackingService::class.java)
-                    )
-                    return@withContext Result.failure()
-                } else if (responseCode in 400..499 && responseCode != 409) {
-                    SqliteMessageStore(applicationContext).use { store ->
-                        store.acknowledge(pending.message.messageId)
+                    LocationUploadDisposition.INVALID_CREDENTIALS -> {
+                        TrackerPreferences.setStatus(applicationContext, "Geräteschlüssel ungültig oder widerrufen. Bitte in der Jagdkarte neu koppeln.")
+                        return@withContext Result.failure()
                     }
-                    TrackerPreferences.setStatus(applicationContext, "Positionsdaten abgelehnt (HTTP $responseCode); bitte Einstellungen prüfen.")
-                    continue
-                } else {
-                    TrackerPreferences.setStatus(applicationContext, "Upload fehlgeschlagen (HTTP $responseCode); erneuter Versuch folgt.")
-                    return@withContext Result.retry()
+                    LocationUploadDisposition.HUNTING_MODE_DISABLED -> {
+                        SqliteMessageStore(applicationContext).use { store -> store.clear() }
+                        TrackerPreferences.clearLocationUploadRetryAfter(applicationContext)
+                        TrackerPreferences.setTracking(applicationContext, false)
+                        TrackerPreferences.setStatus(applicationContext, "Jagdmodus ist aus. Tracking wurde gestoppt und gepufferte Positionen wurden gelöscht.")
+                        applicationContext.stopService(
+                            Intent(applicationContext, LocationTrackingService::class.java)
+                        )
+                        return@withContext Result.failure()
+                    }
+                    LocationUploadDisposition.PERMANENT_REJECTION -> {
+                        SqliteMessageStore(applicationContext).use { store ->
+                            store.acknowledge(pending.message.messageId)
+                        }
+                        TrackerPreferences.setStatus(
+                            applicationContext,
+                            "Positionsdaten abgelehnt (HTTP ${response.statusCode}); bitte Einstellungen prüfen."
+                        )
+                        continue
+                    }
+                    LocationUploadDisposition.RETRY -> {
+                        val retryAfterDelay = if (pending.message.type == LOCATION_MESSAGE_TYPE) {
+                            retryAfterDelayMillis(response.retryAfter)
+                        } else {
+                            null
+                        }
+                        if (retryAfterDelay != null) {
+                            val retryAfterAt = Math.addExact(
+                                System.currentTimeMillis(),
+                                retryAfterDelay
+                            )
+                            if (!TrackerPreferences.setLocationUploadRetryAfter(
+                                applicationContext,
+                                retryAfterAt
+                            )) {
+                                TrackerPreferences.setStatus(
+                                    applicationContext,
+                                    "Die vom Server vorgegebene Wartefrist konnte nicht gespeichert werden; die GPS-Position bleibt gespeichert."
+                                )
+                                return@withContext Result.failure()
+                            }
+                            TrackerPreferences.setStatus(
+                                applicationContext,
+                                "Upload vom Server zurückgestellt (HTTP ${response.statusCode}); die Position bleibt gespeichert."
+                            )
+                        } else {
+                            TrackerPreferences.setStatus(
+                                applicationContext,
+                                "Upload fehlgeschlagen (HTTP ${response.statusCode}); erneuter Versuch folgt."
+                            )
+                        }
+                        return@withContext Result.retry()
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -112,6 +186,7 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
     }
 
     companion object {
+        private const val LOCATION_MESSAGE_TYPE = "location.fix"
         private const val RELAY_ENVELOPE_MESSAGE_TYPE = "relay.envelope"
     }
 }

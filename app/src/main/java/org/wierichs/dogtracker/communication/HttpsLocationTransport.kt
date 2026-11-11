@@ -4,7 +4,7 @@ import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 
 class HttpsLocationTransport(private val bearerToken: String) : MessageTransport {
-    override fun send(message: CommunicationMessage): Int {
+    override fun send(message: CommunicationMessage): MessageTransportResponse {
         val connection = URL(message.destination).openConnection() as? HttpsURLConnection
             ?: throw IllegalArgumentException("Only HTTPS endpoints are supported")
 
@@ -18,7 +18,10 @@ class HttpsLocationTransport(private val bearerToken: String) : MessageTransport
             connection.setRequestProperty("Authorization", "Bearer $bearerToken")
             connection.setFixedLengthStreamingMode(message.payload.size)
             connection.outputStream.use { it.write(message.payload) }
-            connection.responseCode
+            MessageTransportResponse(
+                statusCode = connection.responseCode,
+                retryAfter = connection.getHeaderField("Retry-After")
+            )
         } finally {
             connection.disconnect()
         }

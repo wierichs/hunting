@@ -47,6 +47,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -60,11 +61,13 @@ import androidx.core.content.ContextCompat
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.wierichs.dogtracker.ui.theme.DogTrackerTheme
 import org.wierichs.dogtracker.communication.RelayPairingPrompts
 import org.wierichs.dogtracker.jagdkarte.JagdkarteScreen
-import org.wierichs.dogtracker.jagdkarte.guestLinkTokenFromFragment
+import org.wierichs.dogtracker.jagdkarte.guestLinkTokenFromUrl
 import org.wierichs.dogtracker.communication.RelayGateway
 import org.wierichs.dogtracker.communication.RelayGatewayService
 import org.wierichs.dogtracker.DogTrackerPairingQrCode
@@ -76,7 +79,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        pendingGuestLinkToken.value = guestLinkTokenFromFragment(intent?.data?.fragment)
+        pendingGuestLinkToken.value = guestLinkTokenFromUrl(intent?.data?.toString())
         enableEdgeToEdge()
         setContent {
             DogTrackerTheme {
@@ -88,7 +91,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingGuestLinkToken.value = guestLinkTokenFromFragment(intent.data?.fragment)
+        pendingGuestLinkToken.value = guestLinkTokenFromUrl(intent.data?.toString())
     }
 }
 
@@ -177,6 +180,8 @@ private fun TrackerScreen() {
     var pendingPairingToken by remember {
         mutableStateOf(DeviceTokenStorage.read(context, PENDING_PAIRING_FILE))
     }
+    var pairingBusy by remember { mutableStateOf(false) }
+    val pairingScope = rememberCoroutineScope()
     var showToken by remember { mutableStateOf(false) }
     var intervalSeconds by rememberSaveable {
         mutableStateOf(TrackerPreferences.intervalSeconds(context).toString())
@@ -227,6 +232,65 @@ private fun TrackerScreen() {
         )
         isTracking = true
         status = "Standortdienst wird gestartet."
+    }
+
+    fun setPairingStatus(message: String) {
+        TrackerPreferences.setStatus(context, message)
+        status = message
+    }
+
+    fun resolvePendingPairing(confirm: Boolean) {
+        val token = pendingPairingToken ?: return
+        if (pairingBusy) return
+        pairingBusy = true
+        validationMessage = ""
+        pairingScope.launch {
+            try {
+                val resolution = settleDogTrackerPairing(
+                    token = token,
+                    confirm = confirm,
+                    completeOnServer = { deviceToken, accepted ->
+                        DogTrackerPairingApi.complete(deviceToken, accepted)
+                    },
+                    saveActiveToken = { TrackerPreferences.saveDeviceToken(context, it) },
+                    clearPendingToken = { DeviceTokenStorage.clear(context, PENDING_PAIRING_FILE) }
+                )
+                when (resolution) {
+                    DogTrackerPairingResolution.ACTIVATED -> {
+                        deviceToken = token
+                        pendingPairingToken = null
+                        setPairingStatus("Kopplung bestaetigt. Jetzt Tracking starten.")
+                    }
+                    DogTrackerPairingResolution.ALREADY_ACTIVE -> {
+                        deviceToken = token
+                        pendingPairingToken = null
+                        setPairingStatus(if (confirm) {
+                            "Kopplung war bereits bestaetigt. Jetzt Tracking starten."
+                        } else {
+                            "Die Kopplung war schon abgeschlossen; der Schluessel wurde uebernommen."
+                        })
+                    }
+                    DogTrackerPairingResolution.CANCELLED -> {
+                        pendingPairingToken = null
+                        setPairingStatus("Kopplung abgebrochen. Der bisherige Schluessel bleibt aktiv.")
+                    }
+                    DogTrackerPairingResolution.NOT_FOUND -> {
+                        if (confirm) {
+                            validationMessage = "Die Kopplung ist nicht mehr vorgemerkt. Bitte den QR-Code erneut scannen."
+                        } else {
+                            pendingPairingToken = null
+                            setPairingStatus("Kopplung abgebrochen. Der bisherige Schluessel bleibt aktiv.")
+                        }
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                validationMessage = failure.message ?: "DogTracker-Kopplung konnte nicht abgeschlossen werden."
+            } finally {
+                pairingBusy = false
+            }
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -378,22 +442,22 @@ private fun TrackerScreen() {
                         Text("Mit Jagdkarte koppeln", style = MaterialTheme.typography.titleSmall)
                         Text("In Jagdkarte unter Hunde den Hund auswaehlen und diesen QR-Code scannen. Danach hier die erfolgreiche Kopplung bestaetigen.",
                             style = MaterialTheme.typography.bodySmall)
+                        Text("Der bisherige Schluessel bleibt bis zur Bestaetigung aktiv. Zum Bestaetigen oder Abbrechen ist eine Internetverbindung erforderlich.",
+                            style = MaterialTheme.typography.bodySmall)
                         DogTrackerPairingQrCode(dogTrackerPairingQr(pendingPairingToken!!),
                             "Einmaliger DogTracker-Kopplungscode",
                             Modifier.fillMaxWidth().height(220.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = {
-                                DeviceTokenStorage.clear(context, PENDING_PAIRING_FILE)
-                                pendingPairingToken = null
-                            }, modifier = Modifier.weight(1f)) { Text("Abbrechen") }
-                            Button(onClick = {
-                                val token = pendingPairingToken ?: return@Button
-                                TrackerPreferences.saveDeviceToken(context, token)
-                                DeviceTokenStorage.clear(context, PENDING_PAIRING_FILE)
-                                deviceToken = token
-                                pendingPairingToken = null
-                                status = "Kopplungsschluessel uebernommen. Jetzt Tracking starten."
-                            }, modifier = Modifier.weight(1f)) { Text("Kopplung bestaetigen") }
+                            TextButton(enabled = !pairingBusy, onClick = {
+                                resolvePendingPairing(confirm = false)
+                            }, modifier = Modifier.weight(1f)) {
+                                Text(if (pairingBusy) "Bitte warten" else "Abbrechen")
+                            }
+                            Button(enabled = !pairingBusy, onClick = {
+                                resolvePendingPairing(confirm = true)
+                            }, modifier = Modifier.weight(1f)) {
+                                Text(if (pairingBusy) "Bitte warten" else "Kopplung bestaetigen")
+                            }
                         }
                     }
                 }

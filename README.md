@@ -243,8 +243,12 @@ verarbeitet; ueber alle Seiten zusammen gelten zusaetzlich 48 MB und 90 Sekunden
 Geometrien werden mit JTS normalisiert und auf Gueltigkeit
 geprueft, bevor sie angezeigt oder zur Profilanlage angeboten werden. Die
 Suche sendet erst nach **Suchen** eine HTTPS-Anfrage direkt vom Geraet an die
-ausgewaehlte Quelle; es gibt keinen Proxy. Lokale/private Zieladressen,
-Zugangsdaten in URLs, unsichere URLs und unsichere Weiterleitungen werden
+ausgewaehlte Quelle; es gibt keinen Proxy. Lokale, private und weitere nicht
+global routbare IPv4-/IPv6-Sonderbereiche (einschliesslich Shared Address Space
+`100.64.0.0/10`) werden blockiert. Jede DNS-Antwort muss global routbar sein;
+die geprueften Adressen werden fuer die Verbindung verwendet, waehrend die
+TLS-Hostnamepruefung aktiv bleibt. Weiterleitungen sind nur innerhalb desselben
+HTTPS-Ursprungs erlaubt. Zugangsdaten in URLs und unsichere URLs werden
 abgelehnt. Keine Quellenzugriffe schreiben Daten in die Dienste.
 
 Die PWA-Registry verwendet keinen WPS. WPS ist deshalb kein Eingabetyp in
@@ -388,11 +392,11 @@ Der Hundetracker übermittelt den GPS-Standort eines Smartphones an ein Hund-Pro
 
 1. In der Jagdkarte anmelden, ein Revierprofil öffnen und den Jagdmodus einschalten.
 2. Unter **Hunde im Revier** einen Hund registrieren und **Smartphone koppeln** auswählen.
-3. Mit Tracker-Kamera den in Jagdkarte angezeigten QR-Code scannen oder den Schlüssel manuell eingeben. Ohne Tracker-Kamera im DogTracker **QR-Code fuer Jagdkarte anzeigen** wählen, danach in Jagdkarte beim Hund **DogTracker-QR scannen**. Nach der Erfolgsmeldung in Jagdkarte zum Tracker zurückkehren und **Jagdkarte hat gekoppelt** bestätigen.
-4. Der QR-Schlüssel wird nur für diesen Kopplungsvorgang angezeigt; geheim halten und nur mit der Jagdkarte des gewünschten Reviers scannen.
-5. Das Standortintervall festlegen und **Tracking starten** wählen. Beim ersten Start benötigt die App Zugriff auf den genauen Standort und, ab Android 13, auf Benachrichtigungen.
+3. Entweder den von Jagdkarte angezeigten QR-Code im DogTracker scannen (oder den Schlüssel manuell eingeben), oder im DogTracker **QR-Code fuer Jagdkarte anzeigen** wählen und beim passenden Hund in Jagdkarte **DogTracker-QR scannen**.
+4. Bei einem DogTracker-QR kehrt man nach dem Scan zum Tracker zurück und tippt **Kopplung bestaetigen**. Bis dahin bleibt der bisherige Schlüssel aktiv. Wird abgebrochen, bleibt der bisherige Schlüssel aktiv; nach einem unklaren Timeout kann die Bestätigung wiederholt werden.
+5. Den QR-Schlüssel geheim halten und nur mit dem gewünschten Revier koppeln. Das Standortintervall festlegen und **Tracking starten** wählen. Beim ersten Start benötigt die App Zugriff auf den genauen Standort und, ab Android 13, auf Benachrichtigungen.
 
-Der Gegenweg DogTracker-QR benötigt die additive RPC-Migration [`register_hunting_dog_device_token`](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/migrations/202611110001_register_hunting_dog_device_token.sql) im gemeinsamen Supabase-Projekt. Sie ist im PWA-Repository vorbereitet, aber noch nicht ausgerollt; bis dahin bleibt **Smartphone koppeln** in Jagdkarte der verfügbare Weg.
+Der DogTracker-QR-Gegenweg benötigt die additiven RPC-Migrationen [`202611110001_register_hunting_dog_device_token.sql`](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/migrations/202611110001_register_hunting_dog_device_token.sql) und [`202611110002_two_phase_dog_device_pairing.sql`](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/migrations/202611110002_two_phase_dog_device_pairing.sql) im gemeinsamen Supabase-Projekt. Laut Rückmeldung wurden beide Migrationen ausgeführt und das PWA-Repository aktualisiert; Zielprojekt und Laufzeitverhalten sind hier nicht unabhängig verifiziert. Jagdkarte-QR und manuelle Schlüsseleingabe bleiben ebenfalls verfügbar.
 
 Die App ist für Android ab Version 12 vorgesehen. Pro Hund kann derzeit ein Smartphone gleichzeitig gekoppelt sein. Wenn ein Smartphone ersetzt wird oder der Schlüssel verloren geht, muss es in der Jagdkarte erneut gekoppelt werden.
 
@@ -404,7 +408,8 @@ Owner und Bearbeiter können einen registrierten Hund in **Hunde im Revier** nac
 - Standortintervall zwischen 15 Sekunden und 60 Minuten wählen; bei der ersten Einrichtung sind 15 Sekunden voreingestellt. Ein geänderter Wert bleibt gespeichert.
 - Standort im Hintergrund über einen Android-Standortdienst erfassen. Eine dauerhafte Benachrichtigung zeigt die aktive Sitzung an und bietet auch eine Stopp-Schaltfläche.
 - Position, GPS-Genauigkeit und Messzeitpunkt über eine verschlüsselte HTTPS-Verbindung übertragen.
-- Bei fehlender Internetverbindung Messungen lokal puffern und den Upload bei verfügbarer Verbindung erneut versuchen.
+- Bei fehlender Internetverbindung nur die neueste GPS-Position lokal puffern; sie wird nach 24 Stunden verworfen. Bei verfügbarer Verbindung folgt der Upload automatisch.
+- GPS-Nutzdaten lokal mit AES-GCM und einem Android-Keystore-Schlüssel verschlüsseln; die Zeit-/Queue-Metadaten in SQLite bleiben lesbar. `location_outbox.db` ist von Cloud-Backup und Geräteübertragung ausgeschlossen.
 - Optional als Tracker-Relais teilnehmen: verschlüsselte und signierte Positionsmeldungen werden nach einer bestätigten Nearby-Verbindung per Bluetooth/WLAN an einen anderen Tracker übergeben. Relay läuft nur während des aktiven Trackings und benötigt eine vorherige Online-Kopplung.
 - Der Status unterscheidet lokal gespeicherte, noch ausstehende Meldungen von einer vom Server bestätigten Übertragung und zeigt weitere Wartemeldungen an.
 - Den Geräteschlüssel geschützt im Android Keystore speichern.
@@ -413,7 +418,7 @@ Das Tracking beginnt erst nach **Tracking starten** und lässt sich in der App o
 
 ## Hinweise
 
-Für die Erfassung sind aktivierter Standort und die erforderlichen Android-Berechtigungen nötig. Die Übertragung benötigt eine Internetverbindung; ohne Verbindung werden Positionen zunächst auf dem Smartphone gespeichert. Android-Energiesparfunktionen, Empfang und GPS-Bedingungen können Aktualisierungen verzögern. Der Tracker ist keine garantierte Echtzeitortung und kein Notrufsystem.
+Für die Erfassung sind aktivierter Standort und die erforderlichen Android-Berechtigungen nötig. Die Übertragung benötigt eine Internetverbindung; ohne Verbindung bleibt nur die neueste Position höchstens 24 Stunden auf dem Smartphone gespeichert. Relay-Nachrichten verwenden weiterhin ihre eigene Ablauf- und Bestätigungssemantik. Android-Energiesparfunktionen, Empfang und GPS-Bedingungen können Aktualisierungen verzögern. Der Tracker ist keine garantierte Echtzeitortung und kein Notrufsystem.
 
 Die experimentelle Relaisfunktion ist standardmäßig ausgeschaltet. Beim Verbinden muss der Sicherheitscode auf beiden Geräten verglichen und bestätigt werden. Unterstützt wird derzeit ein einzelner Relay-Hop; die Ende-zu-Ende-Strecke ist noch nicht auf mehreren realen Geräten validiert.
 

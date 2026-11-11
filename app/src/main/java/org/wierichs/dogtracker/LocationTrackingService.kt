@@ -39,6 +39,7 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 import org.wierichs.dogtracker.communication.CommunicationMessage
+import org.wierichs.dogtracker.communication.LocationPayloadCryptoException
 import org.wierichs.dogtracker.communication.NearbyRelayTransport
 import org.wierichs.dogtracker.communication.RelayEnvelope
 import org.wierichs.dogtracker.communication.RelayEnvelopeEncoder
@@ -162,16 +163,25 @@ class LocationTrackingService : Service() {
             .toString()
 
         serviceScope.launch(Dispatchers.IO) {
-            val pendingCount = SqliteMessageStore(this@LocationTrackingService).use { store ->
-                store.enqueue(
-                    CommunicationMessage.create(
-                        type = "location.fix",
-                        destination = endpoint,
-                        payload = payload.toByteArray(Charsets.UTF_8)
+            val pendingCount = try {
+                SqliteMessageStore(this@LocationTrackingService).use { store ->
+                    store.enqueue(
+                        CommunicationMessage.create(
+                            type = "location.fix",
+                            destination = endpoint,
+                            createdAtEpochMillis = location.time,
+                            payload = payload.toByteArray(Charsets.UTF_8)
+                        )
                     )
+                    createRelayEnvelopeIfReady(payload)?.let(store::enqueue)
+                    store.pendingCount()
+                }
+            } catch (_: LocationPayloadCryptoException) {
+                TrackerPreferences.setStatus(
+                    this@LocationTrackingService,
+                    "GPS-Position konnte nicht sicher gespeichert werden; der naechste Fix wird erneut versucht."
                 )
-                createRelayEnvelopeIfReady(payload)?.let(store::enqueue)
-                store.pendingCount()
+                return@launch
             }
             TrackerPreferences.setStatus(
                 this@LocationTrackingService,

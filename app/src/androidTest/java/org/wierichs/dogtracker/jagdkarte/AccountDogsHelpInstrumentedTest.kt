@@ -120,7 +120,7 @@ class AccountDogsHelpInstrumentedTest {
         rule.setContent { MaterialTheme {
             DogsDialog(repository = JagdkarteRepository(context), profile = profile, canEdit = true,
                 onUseDeviceToken = { false }, onDismiss = {}, loadDogs = { listOf(dog) }, deleteDog = {},
-                registerDeviceToken = { dogId, deviceToken -> registered = dogId to deviceToken },
+                stageDeviceToken = { dogId, deviceToken -> registered = dogId to deviceToken },
                 scanDogTrackerQr = { onScanned -> onScanned(dogTrackerPairingQr(token)) })
         } }
 
@@ -128,7 +128,7 @@ class AccountDogsHelpInstrumentedTest {
         rule.onNodeWithText("DogTracker-QR scannen").performClick()
         rule.waitUntil(5_000) { registered != null }
         assertEquals(dog.id to token, registered)
-        rule.onNodeWithText("DogTracker erfolgreich gekoppelt.", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("Schluessel fuer Faehrte in Testrevier vorgemerkt.", substring = true).assertIsDisplayed()
     }
 
     @Test fun jagdkarteCanPairFromDogTrackerQrWithoutTrackerCamera() {
@@ -140,7 +140,7 @@ class AccountDogsHelpInstrumentedTest {
         rule.setContent { MaterialTheme {
             DogsDialog(repository = JagdkarteRepository(context), profile = profile, canEdit = true,
                 onUseDeviceToken = { false }, onDismiss = {}, loadDogs = { listOf(dog) }, deleteDog = {},
-                registerDeviceToken = { dogId, deviceToken -> registered = dogId to deviceToken },
+                stageDeviceToken = { dogId, deviceToken -> registered = dogId to deviceToken },
                 scanDogTrackerQr = { onScanned -> onScanned(dogTrackerPairingQr(token)) })
         } }
 
@@ -148,7 +148,7 @@ class AccountDogsHelpInstrumentedTest {
         rule.onNodeWithText("DogTracker-QR scannen").performClick()
         rule.waitUntil(5_000) { registered != null }
         assertEquals(dog.id to token, registered)
-        rule.onNodeWithText("DogTracker erfolgreich gekoppelt.", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("Schluessel fuer Faehrte in Testrevier vorgemerkt.", substring = true).assertIsDisplayed()
     }
 
     @Test fun nativeHelpCoversLoginDogsOfflineMapsAndTroubleshooting() {

@@ -46,13 +46,14 @@ Owner und Bearbeiter koennen im ausgewaehlten Revier Personen per E-Mail als Gas
 
 Ein Gast darf gemeinsame Markierungen sehen sowie eigene Anschuss- und Wildsichtungsmeldungen setzen. Bearbeiter duerfen zusaetzlich dauerhafte Markierungen, Standplaetze und Einladungen verwalten. Das Profil loeschen darf nur der Owner.
 
-Positionsbezogene Gastlinks laufen nach sieben Tagen ab und koennen weitergegeben werden. Teile sie nur mit Personen, denen du den Revierzugang anvertrauen willst.
+Positionsbezogene Gastlinks laufen nach sieben Tagen ab und koennen weitergegeben werden. Teile sie nur mit Personen, denen du den Revierzugang anvertrauen willst. Nach dem Annehmen wird die Zielmarkierung auf der Karte zentriert und ihr Infofenster geoeffnet.
+Bei aktivierter Android-App-Link-Zuordnung kann auch die normale Jagdkarte-Startseite ohne Gastlink die App statt des Browsers oeffnen. Andere Jagdkarte-Unterseiten bleiben Browser-Links. Die Zuordnung kann in den Android-App-Einstellungen verwaltet werden.
 
 ## Hunde und Tracker
 
 Oeffne Revier und Verwaltung, aktiviere bei Bedarf den Jagdmodus und waehle Hunde. Owner und Bearbeiter koennen einen Hund registrieren und ein Smartphone koppeln. Mit Tracker-Kamera scannst du den von Jagdkarte angezeigten QR-Code im DogTracker oder gibst den Schluessel manuell ein.
 
-Hat das Tracker-Smartphone keine Kamera, waehle dort **QR-Code fuer Jagdkarte anzeigen**. In Jagdkarte beim passenden Hund **DogTracker-QR scannen** waehlen; nach der Erfolgsmeldung zum Tracker zurueckkehren und **Jagdkarte hat gekoppelt** bestaetigen. Dieser Gegenweg ist erst nach Ausrollen der `register_hunting_dog_device_token`-Migration im gemeinsamen Backend verfuegbar. Bis dahin den QR-Code aus Jagdkarte oder die manuelle Schluesseleingabe verwenden.
+Alternativ kann der DogTracker selbst den Schluessel erstellen: **QR-Code fuer Jagdkarte anzeigen** waehlen und in Jagdkarte beim passenden Hund **DogTracker-QR scannen**. Danach zum Tracker zurueckkehren und **Kopplung bestaetigen**. Der bisherige Schluessel bleibt bis dahin aktiv. Ein Abbruch behaelt den bisherigen Schluessel; nach einem unklaren Timeout kann die Bestaetigung wiederholt werden. Fuer diesen Gegenweg muessen die Migrationen `202611110001_register_hunting_dog_device_token` und `202611110002_two_phase_dog_device_pairing` im gemeinsamen Backend ausgerollt sein. Bis dahin den QR-Code aus Jagdkarte oder die manuelle Schluesseleingabe verwenden.
 
 Der Geraeteschluessel wird nur einmal angezeigt. Halte ihn geheim. Pro Hund kann ein Smartphone aktiv gekoppelt sein. Die Tracker-App braucht Standortberechtigung und fuer verlaessliches Tracking meist auch Benachrichtigungs- und Hintergrundberechtigung.
 
@@ -64,7 +65,7 @@ Die Zielscheibe zeigt nur deinen eigenen Standort auf deinem Geraet; sie teilt i
 
 Der Jagdmodus steuert, ob Gruppen- und Hundestandorte fuer das Revier uebermittelt werden duerfen. Owner und Bearbeiter koennen ihn verwalten. Beim Ausschalten werden gespeicherte Gruppen- und Hundepositionen serverseitig entfernt.
 
-Standorte sind keine sichere Echtzeitortung. Ohne Verbindung kann eine letzte Position noch kurz sichtbar sein. Hundepositionen koennen auch ausserhalb der Reviergrenze angezeigt werden; die eigene Standortfreigabe und bestimmte Markierungen sind dagegen an die Reviergrenze gebunden.
+Standorte sind keine sichere Echtzeitortung. Ohne Verbindung bleibt im DogTracker nur die neueste GPS-Position bis zu 24 Stunden auf dem Smartphone; aeltere Fixes werden ersetzt oder verworfen. GPS-Nutzdaten sind lokal mit AES-GCM und einem Schluessel aus dem Android Keystore verschluesselt; SQLite-Zeit- und Queue-Metadaten bleiben lesbar. Die Outbox wird nicht gesichert oder auf ein anderes Geraet uebertragen. Kann ein gespeicherter Fix nach Schluesselverlust nicht entschluesselt werden, wird er verworfen und der Tracker zeigt einen Statushinweis. Relay-Nachrichten haben eine eigene Ablauf- und Bestaetigungssemantik. Hundepositionen koennen auch ausserhalb der Reviergrenze angezeigt werden; die eigene Standortfreigabe und bestimmte Markierungen sind dagegen an die Reviergrenze gebunden.
 
 Bei frischen, ausreichend genauen Positionen zeigt ein kleiner Pfeil neben Person oder Hund die Bewegungsrichtung ueber Grund. Die Himmelsrichtung wird aus zwei GPS-Positionen abgeleitet; sie zeigt nicht, wohin eine Person schaut oder wie das Smartphone ausgerichtet ist. Bei Stillstand, ungenauem GPS oder alten Positionen wird kein Richtungspfeil angezeigt.
 

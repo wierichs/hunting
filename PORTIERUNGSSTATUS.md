@@ -120,9 +120,13 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
   erzeugt PWA-kompatible 32-Byte-URL-safe-Token, teilt den sieben Tage gueltigen
   Link und nimmt ihn nach verifizierter Anmeldung an; das Zielprofil wird
   geoeffnet und die Karte auf die verknuepfte Markierung fokussiert. JVM-Tests
-  und 22 Emulator-Tests bestehen. Live-RPC-Abnahme steht aus. Die HTTPS-
-  App-Link-Zuordnung ist nicht verifiziert; ohne Website-Association bleibt
-  das Oeffnen in der PWA/im Browser als Fallback erhalten.
+  und 22 Emulator-Tests bestehen. Der Nutzer bestaetigt, dass ein per PWA
+  geteilter Gastlink auf einem Android-15-Geraet das richtige Revier und die
+  Zielmarkierung oeffnet. Die breitere Live-RPC-/Rollenabnahme steht aus.
+  Die HTTPS-App-Link-Domain wurde auf dem Geraet als `verified` bestaetigt;
+  die Browser-Weiterleitung einer Unterseite wurde geprueft. Der exakte Pfad
+  `/Jagdkarte/` umfasst auch die PWA-Startseite
+  ohne Gastlink; andere Unterseiten bleiben ausserhalb des App-Link-Filters.
 - **Umgesetzt**: Eigenen Anzeigenamen im Benutzerkonto laden, bearbeiten,
   speichern und entfernen. Der Eintrag ist auf 60 Zeichen begrenzt und nutzt
   die bestehende RLS-geschuetzte Tabelle; Live-Schreib-/RLS-Abnahme steht aus.
@@ -405,10 +409,12 @@ wiederholen.
 
 ### Profile, Rollen und Rechte
 
-- **Offen**: Die additive `register_hunting_dog_device_token`-Migration im
-  isolierten Supabase-Testprojekt anwenden und beide Kopplungswege pruefen.
-  Owner/Bearbeiter duerfen koppeln, Gaeste nicht; ein neuer Token muss den
-  vorherigen widerrufen, unpassende QR-Formate muessen abgelehnt werden.
+- **Offen**: Beide Kopplungswege mit echten Rollen/RPC-Rechten im isolierten
+  Supabase-Testprojekt pruefen. Der Nutzer meldet, Migration 002 nach Migration
+  001 ausgefuehrt und das PWA-Repository aktualisiert zu haben; Zielprojekt und
+  Laufzeitverhalten wurden hier nicht unabhaengig verifiziert. Owner/Bearbeiter
+  duerfen vormerken, Gaeste nicht; Bestaetigung, Abbruch, Doppelscan und
+  Wiederholung nach Timeout muessen den erwarteten Schluesselzustand erhalten.
   Bestehende Jagdkarte-QR- und Manuellwege duerfen nicht regressieren.
 - **Offen**: Owner-Profil loeschen und RLS-/Cascade-Verhalten fuer Marker,
   Einladungen und Mitgliedschaften im Testprojekt bestaetigen.
@@ -473,41 +479,85 @@ Die Punkte stammen aus einem read-only Code-Review vom 2026-11-11. In der
 naechsten Arbeitsphase einzeln abarbeiten, jeweils mit gezielten Tests und ohne
 Produktionsdeployment.
 
-- [ ] **P1 – SSRF bei eigenen Datendienstquellen**: In `PublicBoundarySource`
-  alle nicht global routbaren IPv4-/IPv6-Sonderbereiche blockieren, darunter
-  RFC6598 `100.64.0.0/10`. In `PublicBoundaryClient` die DNS-Pruefung an die
-  tatsaechliche Verbindung binden, statt den Host nach der Pruefung erneut
-  aufloesen zu lassen; TLS-Hostnamepruefung beibehalten. Tests fuer Sonderbereiche,
-  mehrere DNS-Antworten, DNS-Wechsel und Redirects ergaenzen.
-- [ ] **P2 – DogTracker-QR-Pairing atomar und wiederholbar machen**: Die neue
-  `register_hunting_dog_device_token`-RPC widerruft den alten Schluessel, bevor
-  DogTracker den neuen lokal bestaetigt. Pending-QR-Abbruch kann dadurch den
-  alten lokalen Schluessel ungueltig hinterlassen; Wiederholung desselben QR
-  kollidiert ausserdem mit dem global eindeutigen `token_hash`. Zwei-Phasen-
-  Aktivierung oder idempotente Registrierung mit expliziter Abbruchsemantik
-  entwerfen. Timeout nach Servercommit, Abbruch, Doppelscan und falsches
-  Zielprofil testen; RLS/RPC-Pruefung nur im isolierten Supabase-Testprojekt.
-- [ ] **P2 – GPS-Outbox begrenzen und kompaktieren**: `location.fix`-Meldungen
-  haben derzeit kein Ablaufdatum und werden einzeln FIFO abgearbeitet; bei
-  15-Sekunden-Intervall kann die 10.000-Eintraege-Queue etwa 41 Stunden fassen.
-  Eine fachlich festgelegte TTL und/oder Zusammenfassung auf den neuesten
-  Dog-Fix einfuehren; Relay-Nachrichten separat nach ihrer bestehenden
-  Ablauf-/Bestaetigungssemantik behandeln. Offline-Rueckkehr und Bandbreite
-  messen.
-- [ ] **P2 – GPS-Outbox at-rest schuetzen**: `location_outbox.db` enthaelt
-  Koordinaten und Zeitstempel als unverschluessertes SQLite-Payload. Keystore-
-  Verschluesselung vor Persistenz ergaenzen und Migration, Schluesselverlust,
-  Queuebereinigung sowie Backupausschluss testen.
-- [ ] **P2 – Transiente HTTP-Fehler nicht verwerfen**: `LocationUploadWorker`
-  bestaetigt derzeit alle 4xx ausser 401/409 als endgueltig; insbesondere 429
-  kann dadurch eine GPS-Meldung verlieren. 408/425/429 als Retry behandeln,
-  `Retry-After` beachten und permanente Validierungsfehler getrennt behandeln.
-- [ ] **P2 – Gastlink-App-Link absichern**: Der exportierte HTTPS-Intent-Filter
-  ist nicht als verifizierter App Link deklariert; Gastlinks tragen einen
-  Bearer-Token im Fragment. Domain-Association/`assetlinks.json` und
-  `android:autoVerify` auf einem installierten Geraet pruefen. Falls die
-  GitHub-Pages-Domain nicht sicher verifiziert werden kann, Browser/PWA-Fallback
-  beibehalten und keinen stillen App-Link-Vertrauensstatus annehmen.
+- [x] **P1 – SSRF bei eigenen Datendienstquellen (Umgesetzt)**: Nicht global
+  routbare IPv4-/IPv6-Sonderbereiche einschliesslich RFC6598 `100.64.0.0/10`
+  werden blockiert. `PublicBoundaryClient` verwendet OkHttp mit validierter
+  DNS-Aufloesung fuer die tatsaechliche Verbindung; die TLS-Hostnamepruefung
+  bleibt aktiv. Redirects sind auf denselben HTTPS-Ursprung begrenzt.
+  JVM-Tests decken Sonderbereiche, mehrere DNS-Antworten, DNS-Aenderungen und
+  Redirects ab. Kein Produktionsdeployment erforderlich.
+- [x] **P2 – DogTracker-QR-Pairing atomar und wiederholbar machen (Code umgesetzt,
+  Live-Abnahme offen)**: Die neue `stage_hunting_dog_device_token`-RPC laesst
+  den aktiven Schluessel bis zur Bestaetigung unangetastet; Wiederholung desselben
+  QR ist fuer denselben Hund idempotent. `complete_hunting_dog_device_pairing`
+  behandelt Bestaetigung, Abbruch und Wiederholung nach unklarem Timeout; der
+  Jagdkarte-erzeugte QR bleibt unmittelbar nutzbar und entfernt veraltete
+  Vormerkungen. Die alte `register_hunting_dog_device_token`-RPC behaelt ihren
+  bisherigen Vertrag; die aktuelle Android-App ruft nur die neue Vormerk-RPC
+  auf. Android-JVM- und PGlite-Tests bestehen (25 Deno-Tests insgesamt).
+  Der Nutzer meldet Migration 002 als ausgefuehrt und das PWA-Repository als
+  aktualisiert; dies wurde nicht unabhaengig verifiziert. Reale Supabase-RLS/
+  RPC- und Geraeteabnahme bleibt offen.
+- [x] **P2 – GPS-Outbox begrenzen und kompaktieren (Code umgesetzt,
+  Geraeteabnahme offen)**: Die Outbox behaelt pro DogTracker-Datenbank nur den
+  neuesten `location.fix` nach Messzeitpunkt und verwirft ihn nach 24 Stunden.
+  Bereits vorhandene GPS-Rueckstaende werden beim Aufraeumen auf den neuesten
+  Fix reduziert. Relay-Nachrichten bleiben von der Kompaktierung unberuehrt und
+  folgen weiter ihrer eigenen Ablauf-/Bestaetigungssemantik. Instrumentierte
+  Tests fuer Ersetzung, verspaetete aeltere Fixes, TTL und vorhandene
+  Rueckstaende sind ergaenzt und kompilieren; mangels verbundenem Geraet wurden
+  sie nicht ausgefuehrt. Offline-Rueckkehr und Bandbreite sind auf realen
+  Geraeten noch zu pruefen.
+- [x] **P2 – GPS-Outbox at-rest schuetzen (Code umgesetzt, Geraeteabnahme offen)**:
+  `location.fix`-Payloads werden vor Persistenz mit AES-GCM und einem separaten
+  Android-Keystore-Schluessel verschluesselt; die Messzeit-/Queue-Metadaten
+  bleiben lesbar. Datenbankversion 3 verschluesselt bestehende GPS-Payloads
+  innerhalb der Upgrade-Transaktion. Bei fehlendem/ungueltigem Schluessel wird
+  der unlesbare Fix verworfen und ein Statushinweis angezeigt. SQLite
+  `secure_delete` ist aktiviert; die Datenbank ist von Cloud-Backup und
+  Geraeteuebertragung ausgeschlossen. Instrumentierte Tests fuer Verschluesselung,
+  Upgrade und Schluesselverlust sind ergaenzt und kompilieren, aber mangels
+  verbundenem Geraet nicht ausgefuehrt.
+- [x] **P2 – Transiente HTTP-Fehler nicht verwerfen (Code umgesetzt, Serverabnahme offen)**:
+  408/425/429 und Serverfehler werden erneut versucht; 401/409 behalten ihr
+  Sonderverhalten, andere 4xx werden als permanente Ablehnung behandelt.
+  `Retry-After` wird als Delta-Sekundenwert oder HTTP-Datum gelesen und auf
+  30 Sekunden bis 24 Stunden begrenzt. Die persistierte globale Wartefrist
+  verhindert, dass neue GPS-Fixes sie umgehen. JVM-Tests sind ergaenzt;
+  Verhalten an der realen Edge Function und bei WorkManager-Restore noch pruefen.
+- [x] **P2 – Gastlink-App-Link absichern (Geraet getestet)**: Die Android-App akzeptiert
+  Gastlink-Tokens nur noch von `https://wierichs.github.io/Jagdkarte/` ohne
+  fremden Port oder Userinfo; Tests decken fremde Hosts und Schemes ab. Die
+  Domain-Association ist auf einem Android-15-Geraet als `verified` bestaetigt:
+  Die veroeffentlichte
+  `https://wierichs.github.io/.well-known/assetlinks.json` lieferte bei der
+  Pruefung am 2026-11-11 HTTP 200 mit passender App-ID und passendem
+  Release-Zertifikat. Der Nutzer hat einen
+  Release-Keystore erstellt und gesichert sowie die APK ueber Android Studio
+  signiert. `apksigner verify` bestaetigte am 2026-11-11 die APK-v2-Signatur
+  (RSA, 3072 Bit). Zertifikat-SHA-256:
+  `04:66:52:77:23:EA:06:7B:35:DD:BA:87:2E:6E:DE:A7:FD:90:09:7A:AC:91:6F:F0:E8:F7:62:6B:4E:D2:1D:4D`.
+  Die Signierung erfolgt bislang ueber den Android-Studio-Assistenten, nicht
+  automatisch bei einem Gradle-Release-Build. Der Nutzer hat entschieden,
+  `android:autoVerify` fuer den exakten Pfad `/Jagdkarte/` zu aktivieren:
+  Android kann das Fragment `#gast=...` nicht filtern, daher wird auch die
+  normale PWA-Startseite von diesem App-Link erfasst. Andere Unterseiten sind
+  nicht mehr Teil des Intent-Filters. Die neu signierte Release-APK wurde am
+  2026-11-11 auf App-ID, Zertifikat und enthaltenen App-Link-Filter geprueft.
+  Die signierte APK stuerzte beim Start wegen einer R8-Klassen-Zugriffsverletzung ab. Die
+  eingeschraenkte Optimierungs-Package-Scope-Konfiguration wurde entfernt.
+  Der regulaere Release-Build und die JVM-Tests bestanden; die korrigierte
+  APK wurde mit demselben Zertifikat signiert, als Update installiert und
+  startete auf dem Geraet. Die Domain blieb danach `verified`. Auf dem Geraet
+  oeffnete `/Jagdkarte/` die Android-App und `/Jagdkarte/hilfe.html` den
+  Browser. Der Nutzer bestaetigte, dass ein echter PWA-Gastlink das richtige
+  Revier und die Zielmarkierung oeffnet. Auf seinen Hinweis wird nun
+  zusaetzlich das Infofenster der Zielmarkierung geoeffnet. Im ersten
+  Praxistest erschien das Fenster nicht. Eine weitere Korrektur beruecksichtigt
+  das kurzzeitige Nachladen des Revierstands; der erweiterte
+  Instrumentierungstest auf demselben Geraet besteht. Die korrigierte APK
+  wurde signiert und als Update installiert; der erneute Praxistest des
+  Infofensters steht auf Wunsch des Nutzers noch aus.
 - [ ] **P3 – Lokale Kartenkamera-Praefenz bewerten**: Zentrum/Zoom werden als
   Klartext-JSON in `SharedPreferences` gespeichert. Entscheiden, ob diese
   Revier-/Suchposition als sensibel gilt; bei Bedarf verschluesseln oder
@@ -519,14 +569,17 @@ Produktionsdeployment.
 
 ### Übergabe für den nächsten Kontext
 
-- Einstieg: diese TODO-Liste bei **P1 – SSRF** beginnen; erst den URL-/DNS-
-  Schutz samt Tests schliessen, danach Pairing-Transaktion, GPS-Outbox und
-  App-Link-Verifikation einzeln angehen.
-- Pairing-Migration: Nutzer meldet SQL-Editor-Ausführung und Aktualisierung des
-  PWA-Repositories. Nicht erneut ausführen und kein Produktiondeployment
-  vornehmen; Zielprojekt und Funktion muessen bei der naechsten autorisierten
-  Testabnahme verifiziert werden.
+- Einstieg: **P1 – SSRF**, **P2 – DogTracker-QR-Pairing**, die GPS-Outbox-Punkte,
+  die Behandlung transienter HTTP-Fehler und die Gastlink-App-Link-Zuordnung
+  sind im Code umgesetzt. Die neue Gastlink-Markeranzeige noch in einer
+  signierten Release-APK mit einem echten Gastlink pruefen.
+- Der Nutzer meldet Pairing-Migration 002 als ausgefuehrt und das
+  PWA-Repository als aktualisiert. Nicht erneut ausfuehren; Zielprojekt und
+  echte RPC-/RLS-Rechte bei autorisierter Abnahme verifizieren.
 - Letzte Verifikation vor dieser Übergabe: `:app:testDebugUnitTest`, gezielte
   Android-Tests fuer Start/Resume, Cache, Karten, Marker und Pairing sowie
   `:app:assembleDebug :app:assembleRelease` bestanden. Reale Geraete-/GPS-
-  Abnahmen sind offen.
+  Abnahmen sind offen. In der aktuellen Sitzung bestanden erneut
+  `:app:testDebugUnitTest` und die 25 Deno-Tests; die Instrumentierungstests
+  kompilierten, konnten aber mangels per ADB verbundenem Android-Geraet/Emulator
+  nicht ausgefuehrt werden.

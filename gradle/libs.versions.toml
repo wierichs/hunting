@@ -16,6 +16,7 @@ osmdroid = "6.1.20"
 jts = "1.20.0"
 androidSvg = "1.4"
 markwon = "4.6.2"
+okhttp = "4.12.0"
 
 [libraries]
 osmdroid = { group = "org.osmdroid", name = "osmdroid-android", version.ref = "osmdroid" }
@@ -25,6 +26,7 @@ jts-geojson = { group = "org.locationtech.jts.io", name = "jts-io-common", versi
 androidsvg = { group = "com.caverock", name = "androidsvg-aar", version.ref = "androidSvg" }
 markwon = { group = "io.noties.markwon", name = "core", version.ref = "markwon" }
 json-test = { group = "org.json", name = "json", version = "20250517" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 zxing-core = { group = "com.google.zxing", name = "core", version = "3.5.3" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }

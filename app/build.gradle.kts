@@ -37,7 +37,6 @@ android {
         release {
             optimization {
                 enable = true
-                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
             }
         }
     }
@@ -73,6 +72,7 @@ dependencies {
     implementation(libs.jts.core)
     implementation(libs.jts.geojson)
     implementation(libs.zxing.core)
+    implementation(libs.okhttp)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

@@ -1348,6 +1348,7 @@ internal fun NativeHuntingMap(
     }
     var fittedProfileId by remember { mutableStateOf<String?>(null) }
     var focusedGuestRequest by remember { mutableStateOf(-1) }
+    var restoreGuestPopup by remember(focusRequest) { mutableStateOf(false) }
     var renderedContent by remember { mutableStateOf<Any?>(null) }
     var choosingPosition by remember(snapshot?.profile?.id) { mutableStateOf(false) }
     var locationLegendExpanded by remember { mutableStateOf(false) }
@@ -1401,6 +1402,12 @@ internal fun NativeHuntingMap(
                 boundaryEdit?.polygon, boundaryEdit?.ring, boundaryEdit?.vertex, boundaryEdit?.drawingPoints, boundaryEdit?.enabled)
             if (renderedContent != renderKey) {
                 renderedContent = renderKey
+                val openGuestMarker = focusMarkerId?.let { targetId ->
+                    view.overlays.filterIsInstance<Marker>()
+                        .firstOrNull { it.id == targetId && it.isInfoWindowShown }
+                }
+                if (openGuestMarker != null) restoreGuestPopup = true
+                openGuestMarker?.closeInfoWindow()
                 view.overlays.clear()
                 if (snapshot != null) view.overlays.add(MapEventsOverlay(object : MapEventsReceiver {
                     override fun singleTapConfirmedHelper(point: GeoPoint): Boolean = false
@@ -1444,6 +1451,7 @@ internal fun NativeHuntingMap(
                         ?.takeIf { isDirectionFresh(it, now) }
                     val directionLabel = movement?.let { compassDirectionLabel(it.bearingDegrees) }
                     view.overlays.add(Marker(view).apply {
+                        id = point.markerId
                         position = GeoPoint(point.latitude, point.longitude)
                         title = point.title + (if (point.staleAt(now)) " (veraltet)" else "") +
                             (directionLabel?.let { " · Bewegung $it" } ?: "")
@@ -1544,12 +1552,22 @@ internal fun NativeHuntingMap(
                 }
                 if (ownLocationVisible) view.overlays.add(ownLocationOverlay)
                 val guestTarget = points.firstOrNull { it.markerId == focusMarkerId }
+                if (restoreGuestPopup && guestTarget != null) {
+                    view.overlays.filterIsInstance<Marker>()
+                        .firstOrNull { it.id == focusMarkerId }?.showInfoWindow()
+                    restoreGuestPopup = false
+                }
                 if (snapshot != null && guestTarget != null && focusedGuestRequest != focusRequest) {
                     fittedProfileId = "$currentUserId:${snapshot.profile.id}"
                     focusedGuestRequest = focusRequest
                     view.post {
-                        view.controller.setZoom(16.0)
-                        view.controller.animateTo(GeoPoint(guestTarget.latitude, guestTarget.longitude))
+                        if (focusedGuestRequest == focusRequest) {
+                            view.controller.setZoom(16.0)
+                            view.controller.animateTo(GeoPoint(guestTarget.latitude, guestTarget.longitude))
+                            val marker = view.overlays.filterIsInstance<Marker>()
+                                .firstOrNull { it.id == focusMarkerId }
+                            if (marker == null) restoreGuestPopup = true else marker.showInfoWindow()
+                        }
                     }
                 } else if (previewBoundary != null && previewBoundaryKey.isNotBlank() && fittedProfileId != previewBoundaryKey) {
                     fittedProfileId = previewBoundaryKey

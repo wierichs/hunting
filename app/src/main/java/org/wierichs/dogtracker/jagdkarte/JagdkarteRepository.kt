@@ -1,6 +1,8 @@
 package org.wierichs.dogtracker.jagdkarte
 
 import android.content.Context
+import java.net.URI
+import java.net.URISyntaxException
 import java.net.URL
 import java.security.SecureRandom
 import java.time.Instant
@@ -176,6 +178,23 @@ internal fun guestLinkTokenFromFragment(fragment: String?): String? {
         if (separator > 0 && component.substring(0, separator) == "gast") component.substring(separator + 1) else null
     }
     return token?.takeIf { GUEST_LINK_TOKEN_PATTERN.matches(it) }
+}
+
+internal fun guestLinkTokenFromUrl(url: String?): String? {
+    val uri = try {
+        URI(url ?: return null)
+    } catch (_: URISyntaxException) {
+        return null
+    }
+    if (uri.scheme?.equals("https", ignoreCase = true) != true ||
+        uri.host?.equals("wierichs.github.io", ignoreCase = true) != true ||
+        uri.userInfo != null ||
+        (uri.port != -1 && uri.port != 443) ||
+        uri.rawPath?.startsWith("/Jagdkarte/") != true
+    ) {
+        return null
+    }
+    return guestLinkTokenFromFragment(uri.rawFragment)
 }
 
 internal fun guestLinkUrl(token: String): String {
@@ -543,9 +562,9 @@ internal class JagdkarteRepository(context: Context) {
         }
     }
 
-    suspend fun registerDogDeviceToken(dogId: String, deviceToken: String) = authenticated { token ->
+    suspend fun stageDogDeviceToken(dogId: String, deviceToken: String) = authenticated { token ->
         require(Regex("^[0-9a-f]{64}$").matches(deviceToken)) { "Ungueltiger Geraeteschluessel." }
-        request("rest/v1/rpc/register_hunting_dog_device_token", "POST", JSONObject()
+        request("rest/v1/rpc/stage_hunting_dog_device_token", "POST", JSONObject()
             .put("p_dog_id", uuid(dogId)).put("p_device_token", deviceToken), token)
         Unit
     }
@@ -623,6 +642,7 @@ internal class JagdkarteRepository(context: Context) {
                     400, 422 -> "Die Anfrage wurde abgelehnt. Eingaben und Berechtigungen pruefen."
                     401 -> "Sitzung oder Code ungueltig. Bitte erneut anmelden."
                     403 -> "Keine Berechtigung fuer diese Aktion."
+                    404 -> "Die Zwei-Phasen-Kopplung ist im Backend noch nicht verfuegbar. Der bisherige Schluessel bleibt aktiv."
                     429 -> "Zu viele Anfragen. Bitte spaeter erneut versuchen."
                     else -> "Server derzeit nicht erreichbar."
                 }

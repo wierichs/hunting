@@ -7,17 +7,19 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import okhttp3.Dns
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.Inet6Address
 import java.net.InetAddress
+import java.net.Proxy
 import java.net.URI
-import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.text.Normalizer
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 internal object PublicBoundaryRequests {
     const val PAGE_SIZE = 500
@@ -45,6 +47,15 @@ internal object PublicBoundaryRequests {
         val resolved = URI(current).resolve(link).normalize()
         require(resolved.scheme.equals("https", true) && resolved.userInfo == null && resolved.fragment == null &&
             resolved.origin() == expectedOrigin) { "Der Datendienst verweist bei der Paginierung auf einen anderen Ursprung." }
+        return resolved.toASCIIString()
+    }
+
+    fun redirectUrl(current: String, location: String, expectedOrigin: String): String {
+        val resolved = URI(current).resolve(location).normalize()
+        require(resolved.scheme.equals("https", true) && resolved.userInfo == null && resolved.fragment == null &&
+            resolved.origin() == expectedOrigin) {
+            "Der Datendienst leitet auf einen anderen oder unsicheren Ursprung weiter."
+        }
         return resolved.toASCIIString()
     }
 
@@ -88,7 +99,22 @@ internal class PublicBoundaryRequestBudget(
     }
 }
 
-internal class PublicBoundaryClient {
+internal class PublicBoundaryClient(
+    addressLookup: (String) -> Array<InetAddress> = InetAddress::getAllByName
+) {
+    private val httpClient = OkHttpClient.Builder()
+        .dns(object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> =
+                resolvePublicBoundaryAddresses(hostname, addressLookup)
+        })
+        .proxy(Proxy.NO_PROXY)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
+        .callTimeout(PublicBoundaryRequests.MAX_TOTAL_TIME_MILLIS, TimeUnit.MILLISECONDS)
+        .build()
+
     suspend fun search(source: PublicBoundarySource, query: String = ""): List<PublicBoundaryFeature> =
         withContext(Dispatchers.IO) {
             val checked = validatePublicBoundarySource(source)
@@ -170,39 +196,33 @@ internal class PublicBoundaryClient {
     }
 
     private suspend fun getJson(url: String, budget: PublicBoundaryRequestBudget): JSONObject {
-        var target = URL(validatePublicBoundarySource(PublicBoundarySource("request", "Request",
-            PublicBoundaryService.GEOJSON, url)).url)
-        val originalHost = target.host.lowercase(Locale.ROOT)
+        var target = validatePublicBoundarySource(PublicBoundarySource("request", "Request",
+            PublicBoundaryService.GEOJSON, url)).url
+        val expectedOrigin = PublicBoundaryRequests.origin(target)
         for (redirect in 0..3) {
             currentCoroutineContext().ensureActive()
             budget.checkTime()
-            validateResolvedHost(target.host)
-            val connection = target.openConnection() as? HttpURLConnection
-                ?: throw IOException("Nur HTTPS-Datendienste werden unterstuetzt.")
+            val request = Request.Builder().url(target)
+                .header("Accept", "application/geo+json, application/json")
+                .header("User-Agent", "Jagdkarte-Android/1.0")
+                .build()
+            val response = httpClient.newCall(request).execute()
             try {
-                connection.connectTimeout = 12_000
-                connection.readTimeout = 25_000
-                connection.instanceFollowRedirects = false
-                connection.setRequestProperty("Accept", "application/geo+json, application/json")
-                connection.setRequestProperty("User-Agent", "Jagdkarte-Android/1.0")
-                val status = connection.responseCode
+                val status = response.code
                 if (status in 300..399) {
                     require(redirect < 3) { "Zu viele Weiterleitungen beim Datendienst." }
-                    val location = connection.getHeaderField("Location") ?: error("Weiterleitung ohne Zieladresse.")
-                    val resolved = target.toURI().resolve(location).toURL()
-                    require(resolved.protocol == "https" && resolved.host.equals(originalHost, true) && resolved.userInfo == null) {
-                        "Der Datendienst leitet auf einen anderen oder unsicheren Host weiter."
-                    }
-                    target = resolved
+                    val location = response.header("Location") ?: error("Weiterleitung ohne Zieladresse.")
+                    target = PublicBoundaryRequests.redirectUrl(target, location, expectedOrigin)
                     continue
                 }
                 if (status !in 200..299) throw IOException("Datendienst: HTTP $status")
-                val declaredLength = connection.contentLengthLong
+                val body = response.body ?: throw IOException("Der Datendienst liefert keine Antwortdaten.")
+                val declaredLength = body.contentLength()
                 require(declaredLength < 0 || declaredLength <= PublicBoundaryRequests.MAX_RESPONSE_BYTES) {
                     "Die Datendienst-Antwort ist groesser als 12 MB."
                 }
                 val bytes = ByteArrayOutputStream()
-                connection.inputStream.use { input ->
+                body.byteStream().use { input ->
                     val buffer = ByteArray(16 * 1024)
                     while (true) {
                         currentCoroutineContext().ensureActive()
@@ -217,16 +237,9 @@ internal class PublicBoundaryClient {
                 }
                 return try { JSONObject(bytes.toString(Charsets.UTF_8.name()).removePrefix("\uFEFF")) }
                 catch (_: Exception) { throw IOException("Der Datendienst liefert kein GeoJSON-JSON.") }
-            } finally { connection.disconnect() }
+            } finally { response.close() }
         }
         throw IOException("Datendienst konnte nicht geladen werden.")
-    }
-
-    private fun validateResolvedHost(host: String) {
-        val addresses = InetAddress.getAllByName(host)
-        require(addresses.isNotEmpty() && addresses.all(::isPublicBoundaryAddress)) {
-            "Lokale oder private Datendienst-Adressen werden nicht abgerufen."
-        }
     }
 
     private fun ensureFeatureLimit(count: Int) {

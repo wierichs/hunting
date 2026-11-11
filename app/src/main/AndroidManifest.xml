@@ -42,7 +42,7 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <intent-filter>
+            <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
 
                 <category android:name="android.intent.category.DEFAULT" />
@@ -50,7 +50,7 @@
 
                 <data
                     android:host="wierichs.github.io"
-                    android:pathPrefix="/Jagdkarte/"
+                    android:path="/Jagdkarte/"
                     android:scheme="https" />
             </intent-filter>
         </activity>

@@ -45,8 +45,8 @@ internal fun DogsDialog(
     onDismiss: () -> Unit,
     loadDogs: suspend (String) -> List<HuntingDog> = { repository.dogs(it) },
     deleteDog: suspend (String) -> Unit = { repository.deleteDog(it) },
-    registerDeviceToken: suspend (String, String) -> Unit = { dogId, token ->
-        repository.registerDogDeviceToken(dogId, token)
+    stageDeviceToken: suspend (String, String) -> Unit = { dogId, token ->
+        repository.stageDogDeviceToken(dogId, token)
     },
     scanDogTrackerQr: (((String?) -> Unit) -> Unit)? = null
 ) {
@@ -106,7 +106,7 @@ internal fun DogsDialog(
                         }
                     }) { Text("Auf diesem Geraet verwenden") }
                 } else if (dogToPair != null) {
-                    Text("${dogToPair.name}: Beim Koppeln wird der bisherige Geraeteschluessel widerrufen.")
+                    Text("${dogToPair.name}: Der bisherige Geraeteschluessel bleibt aktiv, bis du die Kopplung im DogTracker bestaetigst.")
                     OutlinedButton(enabled = !busy, onClick = {
                         fun handleScan(rawValue: String?) {
                             val deviceToken = dogTrackerDeviceTokenFromQr(rawValue)
@@ -118,9 +118,9 @@ internal fun DogsDialog(
                             error = ""
                             scope.launch {
                                 try {
-                                    registerDeviceToken(dogToPair.id, deviceToken)
+                                    stageDeviceToken(dogToPair.id, deviceToken)
                                     selectedDog = null
-                                    notice = "DogTracker erfolgreich gekoppelt. Kehre zum Tracker zurueck und bestaetige den Schluessel."
+                                    notice = "Schluessel fuer ${dogToPair.name} in ${profile.name} vorgemerkt. Kehre zum Tracker zurueck und bestaetige die Kopplung."
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
                                 } catch (failure: Exception) {

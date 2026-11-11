@@ -2,13 +2,25 @@
 
 ## Ziel
 
-Standortmeldungen sollen auch dann die Jagdkarte erreichen können, wenn das Smartphone eines Hundes selbst keine Internetverbindung hat. Ist ein anderer Tracker per Bluetooth oder lokalem WLAN erreichbar und dieser Tracker online, kann er Nachrichten zwischenspeichern und an den Server weiterleiten.
+Standortmeldungen von Hunden **und Revierteilnehmern** sollen die berechtigten
+Reviermitglieder auch bei eingeschränkter Internetverbindung möglichst gut
+erreichen. Ist ein berechtigtes Gerät per Bluetooth oder lokalem WLAN erreichbar
+und online, kann es Nachrichten zwischenspeichern und an den Server weiterleiten.
+Die Darstellung unterstützt die Lageeinschätzung; sie garantiert weder
+Echtzeitdaten noch eine lückenlose Erkennung von Gefahren.
 
-Jedes Gerät kann dabei beide Rollen übernehmen: Es erzeugt eigene Positionsmeldungen und kann zusätzlich als Relais für berechtigte andere Geräte dienen. Die Funkverbindung allein begründet jedoch keine Berechtigung. Weitergegeben werden nur authentifizierte Nachrichten aus einer freigegebenen Tracker-Gruppe.
+Geräte können eigene Positionsmeldungen erzeugen und, sofern unterstützt und
+freigegeben, als Relais für berechtigte andere Geräte dienen. Die Funkverbindung
+allein begründet keine Berechtigung. Teilnehmer- und Hundepositionen bleiben
+unterschiedlichen Identitäten zugeordnet; eine Hundekopplung ist für die
+Standortfreigabe eines Teilnehmers nicht erforderlich.
 
 ## Ausgangslage
 
-Die Android-App erfasst Positionen während einer gestarteten Tracking-Sitzung, speichert sie in einer lokalen SQLite-Warteschlange und lädt sie per HTTPS hoch, sobald das Gerät Internet hat. Die Anmeldung am bestehenden Upload-Endpunkt erfolgt mit dem Geräteschlüssel des Trackers. Eine lokale Geräte-zu-Geräte-Verbindung und serverseitige Deduplizierung sind im aktuellen Stand nicht vorhanden.
+Ausgangspunkt des ursprünglichen Hunde-Relay-Ausbaus war die Erfassung während
+einer gestarteten DogTracker-Sitzung mit lokaler SQLite-Warteschlange und
+HTTPS-Upload per Hundegeräteschlüssel. Der heutige Implementierungsstand für
+Hunde und Teilnehmer ist in den folgenden Abschnitten beschrieben.
 
 Die Relaisfunktion benötigt daher Änderungen an der Android-App **und** an der Server-Schnittstelle der Jagdkarte. Eine App-seitige Änderung allein kann die Nachrichten nicht sicher im Namen eines anderen Trackers annehmen.
 
@@ -74,9 +86,10 @@ von den bestehenden Verschluesselungsschluesseln zu verwalten. Bereitstellung,
 Warteschlangenlimits und offene Abnahmen stehen in der
 [Anleitung zur Relay-Serverstufe](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md).
 
-Die Serverstufe ist lokal gegen Kryptografie-, HTTP- und PostgreSQL-Fixtures
-getestet, aber noch nicht deployed. Die PWA-Web-App und die produktive
-Supabase-Installation wurden nicht veraendert. Die unten genannten
+Die Serverstufe ist gegen Kryptografie-, HTTP- und PostgreSQL-Fixtures
+getestet und wurde laut Projektstatus im Supabase-Testprojekt bereitgestellt
+und abgenommen, aber nicht in Produktion deployed. Die PWA-Web-App und die
+produktive Supabase-Installation wurden nicht veraendert. Die unten genannten
 Abnahmekriterien sind insbesondere fuer reale Funkabbrueche, mehrere physische
 Geraete und echte Supabase-/PostGIS-Rechte noch nicht vollstaendig abgenommen.
 

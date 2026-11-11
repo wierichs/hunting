@@ -142,6 +142,16 @@ class HuntingLocationTest {
         assertEquals(token, guestLinkTokenFromFragment("other=value&gast=$token"))
         assertNull(guestLinkTokenFromFragment("gast=invalid"))
         assertNull(guestLinkTokenFromFragment("other=$token"))
+        assertEquals(token, guestLinkTokenFromUrl(guestLinkUrl(token)))
+        assertEquals(token, guestLinkTokenFromUrl("https://WIERICHS.GITHUB.IO:443/Jagdkarte/map.html#gast=$token"))
+        listOf(
+            "http://wierichs.github.io/Jagdkarte/#gast=$token",
+            "https://wierichs.github.io.evil.example/Jagdkarte/#gast=$token",
+            "https://evil.example@wierichs.github.io/Jagdkarte/#gast=$token",
+            "https://wierichs.github.io:8443/Jagdkarte/#gast=$token",
+            "https://wierichs.github.io/other/#gast=$token",
+            "not a URL"
+        ).forEach { assertNull(guestLinkTokenFromUrl(it)) }
     }
 
     @Test fun guestLinkTargetRequiresValidProfileAndMarkerIds() {
