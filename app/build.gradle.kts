@@ -49,6 +49,11 @@ android {
         compose = true
         buildConfig = true
     }
+    sourceSets {
+        getByName("main") {
+            assets.directories.add(rootProject.file("docs/help").absolutePath)
+        }
+    }
 }
 
 androidComponents {
@@ -64,6 +69,7 @@ dependencies {
         exclude(group = "com.caverock", module = "androidsvg")
     }
     implementation(libs.androidsvg)
+    implementation(libs.markwon)
     implementation(libs.jts.core)
     implementation(libs.jts.geojson)
     implementation(libs.zxing.core)

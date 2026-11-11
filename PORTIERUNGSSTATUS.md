@@ -1,6 +1,6 @@
 # Android-Portierungsstatus
 
-Stand: 2026-11-10
+Stand: 2026-11-11
 
 ## Ziel und Geltungsbereich
 
@@ -27,8 +27,17 @@ Arbeitsgegenstand wird nur nach gemeinsamer Festlegung eingetragen.
 
 ## Aktueller Fokus
 
-Aktueller Arbeitsgegenstand ist die Auswahl der Kartenbasis und die Neubewertung
-der Offlinekarten. Auf Wunsch nach moeglichst kostenloser Nutzung wurde
+Die zuvor offenen Punkte unter Konto, Hunde und Hilfe sind umgesetzt. Die
+Android-Anmeldung bleibt bewusst beim E-Mail-Code; ein Hinweis im Anmeldedialog
+und in der nativen Hilfe erklaert, dass Mail-Links zur Web-App fuehren koennen.
+Owner und Bearbeiter koennen Hunde nach Bestaetigung ueber die vorhandene,
+serverseitig berechtigungspruefende RPC loeschen. Die native Hilfe deckt die
+PWA-Themen und Android-Abweichungen einschliesslich Fehlerbehebung ab. Drei
+dedizierte Emulatorpruefungen fuer Hundeloeschung, Gaesterechte und Hilfe
+bestehen; Live-RLS-/Schreibabnahmen bleiben Teil der manuellen Pruefung.
+
+Die Kartenbasis und Offlinekarten bleiben wie zuvor umgesetzt. Auf Wunsch
+nach moeglichst kostenloser Nutzung wurde
 MapTiler in Android durch frei zugaengliche amtliche Luftbilder ersetzt.
 Android bietet OpenStreetMap, Luftbild (zunaechst Geobasis NRW, ohne Konto oder
 Schluessel) und bei vollstaendiger lokaler Revierabdeckung Offline an.
@@ -58,12 +67,34 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
 
 ### Reviersuche und Daten
 
-- **Offen**: Oeffentliche Regionsuche ohne Anmeldung, inklusive regionaler
-  Datenquellen, Suchfeldern, Aktualisierung sowie Quellen- und Lizenzangaben.
+- **Angepasst**: Oeffentliche Reviersuche ohne Anmeldung, bewusst ohne die
+  restriktive PWA-Regel, offizielle Quellen vorzuziehen. Die 15 bereits in der
+  PWA geprueften Datenquellen werden mit ihren URLs, Protokollparametern,
+  Namens-/ID-Feldern und Quellenmetadaten uebernommen: 3 WFS, 6 ArcGIS REST,
+  5 OGC API Features und ein datierter GeoJSON-Snapshot. Anwender waehlen die
+  Quelle explizit und koennen eigene HTTPS-GeoJSON-/WFS-Quellen lokal ergaenzen,
+  aendern und entfernen. WPS ist nicht Teil der PWA-Registry und bleibt ohne
+  konkreten GeoJSON-Prozessvertrag unimplementiert. Treffer zeigen die
+  uebernommenen Quellen-/Lizenzangaben; GeoJSON-Polygon-/MultiPolygon-Features
+  werden mit JTS validiert. Begrenzte Paginierung, Antwort-/Feature-/Zeitlimits,
+  HTTPS-only, private Zieladressen- und unsichere Redirect-Sperren sind enthalten.
+  Treffer koennen anonym auf der Karte vorgeschaut werden; eigenes Profil wird
+  erst nach Anmeldung ueber bestehende RPCs angelegt. Eigene Quellenprofile
+  verwenden `user-imports`; keine Backendmigration. Zehn JVM-Vertragstests,
+  sechs Such-Emulatorpruefungen und die vollstaendige Suite mit 61 Android-Tests
+  bestehen. Offen bleiben Android-Live-Lesepruefungen und Profilanlage/RLS im
+  isolierten Supabase-Testprojekt. Die PWA-Quellenbewertung wird nicht erneut
+  vorgenommen; Abnahme prueft Android-Abruf, Geometrie und Anzeige.
 
 ### Profile und Zusammenarbeit
 
-- **Offen**: Eigenes Revierprofil aus einem gefundenen Revier anlegen.
+- **Umgesetzt**: Ein gepruefter GeoJSON-/WFS-/OGC-API-/ArcGIS-Fund kann nach
+  Anmeldung als eigenes Profil angelegt werden. Bekannte PWA-Quellen behalten
+  ihre `source_id` und Feature-ID; eigene Quellen verwenden den bestehenden
+  `user-imports`-Eintrag ohne Backendmigration. Die Geometrie wird vor dem
+  Schreiben validiert; bei Grenz-RPC-Fehler wird das neue Profil best-effort
+  entfernt. JVM- und Emulator-Vertragstests bestehen; Live-RLS- und
+  Profilanlage-Abnahme im isolierten Supabase-Testprojekt steht aus.
 - **Umgesetzt**: Eigenes Revierprofil loeschen. Die Aktion ist nur fuer Owner
   sichtbar und wird vor dem Cascade-Delete bestaetigt; Editor und Gast koennen
   kein Profil loeschen. Die Owner-Regel ist per JVM-Test geprueft; Live-RLS-
@@ -176,17 +207,39 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
   Kartenpakete enthalten keine privaten Revierdaten. JVM-Abdeckungstests und
   Emulatorpruefungen mit echter Mapsforge-Datei bestehen. Reale
   Geraete-/Grosspaketabnahme bleibt offen; PWA-Offlineablauf bleibt unabhaengig.
-- **Offen**: Oeffentliche Reviergrenzen und benoetigte App-Inhalte fuer
-  Offline-Nutzung verfuegbar machen. Private Revierdaten duerfen dadurch nicht
-  ungewollt als dauerhafte Offline-Kopie gespeichert werden.
+- **Angepasst**: Statische App-Inhalte (Suchquellenregistry, Markerkatalog und
+  Symbole) sind bereits in der APK enthalten. Oeffentliche Suchgrenzen werden
+  nicht automatisch geladen oder gecacht; der Anwender kann einzelne Treffer
+  ausdruecklich fuer Offline speichern. Bei unklarer Lizenz ist eine
+  Bestaetigung der geprueften Nutzungsbedingungen erforderlich. Anzeige in der
+  lokalen Offline-Grenzen-Liste mit Quelle, Lizenz und Speicherzeit sowie
+  Oeffnen/Entfernen sind umgesetzt. Speicherung erfolgt getrennt von
+  Mapsforge in `noBackupFilesDir`, maximal 4 MiB je Grenze, 64 MiB und 100
+  Eintraege gesamt; kein Sync und keine automatische Aktualisierung. Private
+  Profile, Marker und Live-Positionen werden nicht durch diese Funktion
+  dauerhaft lokal gespeichert. JVM- und Offline-Store-/UI-Tests bestehen.
+  Noch offen: reale Offline-Abnahme im Flugmodus einschliesslich Lizenzpruefung,
+  Neustart, Entfernen, knappen Speicherplatzes sowie bestaetigen, dass private
+  Serverdaten nicht persistiert werden.
 
 ### Konto, Hunde und Hilfe
 
-- **Offen**: Anmeldung ueber E-Mail-Link als Alternative zum E-Mail-Code
-  unterstuetzen oder eine Android-gerechte Alternative dokumentieren.
-- **Offen**: Registrierte Hunde loeschen koennen.
-- **Offen**: Vollstaendige Hilfe und Fehlerbehebung der PWA fuer die native App
-  bereitstellen.
+- **Angepasst**: Die native Android-App meldet sich bewusst mit E-Mail-Code an.
+  Ein E-Mail-Link kann Browser oder PWA oeffnen und authentifiziert nicht
+  zuverlaessig die native Sitzung. Der Unterschied wird im Anmeldedialog und in
+  der Hilfe erklaert; die PWA unterstuetzt weiterhin ihren eigenen Link-Flow.
+- **Umgesetzt**: Owner und Bearbeiter koennen registrierte Hunde nach
+  ausdruecklicher Bestaetigung ueber `delete_hunting_dog` loeschen. Der
+  bestehende Serververtrag prueft die Rolle und entfernt zugehoerige
+  Tracker-Kopplung sowie Hundeposition per Cascade. Gaeste sehen keine
+  Loeschaktion. Emulator-UI-Tests verwenden lokale injizierte Aktionen; eine
+  Live-RLS-/Cascade-Abnahme bleibt offen.
+- **Umgesetzt**: Native Hilfe und Fehlerbehebung ueber das Info-Symbol in der
+  Kartenleiste. `docs/help/hilfe.md` ist die einzige redaktionelle Quelle; die
+  README verlinkt darauf und die Android-App rendert dieselbe Datei offline als
+  Markdown. Sie deckt die PWA-Hilfethemen ab und erklaert native Bedienung,
+  Code-Anmeldung, Hundeloeschung und Android-Offlineverhalten. Emulatorpruefung
+  der zentralen Themen besteht.
 
 ### Plattformbedingte Abweichungen
 
@@ -244,6 +297,57 @@ wiederholen.
 - **Offen**: Teilfehler beim Merge im Testprojekt ausloesen und Rollback neu
   eingefuegter Marker sowie Meldung moeglicher Restdaten pruefen.
 
+### Oeffentliche Reviersuche
+
+- **Offen**: Die bereits in der PWA geprueften Quellen nicht erneut fachlich
+  zertifizieren. Android-seitig schreibfrei mindestens einen Live-Treffer je
+  Protokoll (Snapshot, WFS, OGC API Features, ArcGIS REST) laden und Adapter,
+  Feature-Name, unveraenderte Koordinaten/Geometrie sowie die Anzeige der
+  uebernommenen Quellen- und Lizenzangaben kontrollieren. Fehler, veralteten
+  Snapshot und nicht verfuegbare Dienste pruefen.
+- **Offen**: Benutzerdefinierte GeoJSON-FeatureCollection und WFS-2.0-Quelle
+  am Testdienst hinzufuegen, bearbeiten, auswaehlen und loeschen. Lokal
+  gespeicherte Quellen duerfen weder in der PWA erscheinen noch deren
+  Konfiguration aendern. HTTP, Credentials, Loopback/private Ziele,
+  Cross-Origin-Seitenlinks, ungueltiges GeoJSON, Antworten ueber 12 MB pro
+  Seite/48 MB insgesamt, Suchdauer ueber 90 Sekunden und Datensaetze ueber
+  20.000 Features muessen abgelehnt werden.
+- **Offen**: Suche ohne Anmeldung ausfuehren, Treffer auf der Karte ansehen,
+  Vorschau schliessen und bestaetigen, dass dabei weder Serverprofile noch
+  andere Daten geschrieben werden. Erst die Aktion zum eigenen Profil darf
+  Anmeldung und danach den bestehenden Profil-/Grenz-RPC verwenden.
+- **Offen**: Mit Testkonto ein Revier aus jeder Quellenart als eigenes Profil
+  anlegen; Rolle, Boundary und `source_id`/`feature_id` nach erneutem Laden
+  pruefen. Eigene Quellen muessen unter `user-imports` landen. Gast darf nicht
+  anlegen. RPC-Fehler/Abbruch darf kein leeres Profil zuruecklassen.
+- **Offen**: Bestaetigen, dass Quellen ohne automatische offizielle
+  Bevorzugung waehlbar sind, eigene Quellen lokal bleiben und WPS ohne
+  vereinbarten GeoJSON-Prozessvertrag nicht angeboten wird. Keine erneute
+  generelle PWA-Lizenz-/Quellenbewertung; nur die korrekte Uebernahme und
+  Darstellung vorhandener Anbieterhinweise kontrollieren.
+
+### Oeffentliche Offline-Grenzen
+
+- **Automatisiert geprueft**: Speichern mit klarer Lizenz sowie erforderliche
+  Bestaetigung bei unklarer Lizenz; gesperrtes Speichern vor Bestaetigung,
+  Anzeige von Quelle/Lizenz/Speicherzeit und Entfernen. Storetests pruefen
+  `noBackupFilesDir`, Aktualisierung ohne Duplikate und Ablehnung eines
+  ueberschrittenen Einzelgrenzenlimits ohne Teil-Datei.
+- **Offen (manuell)**: Auf einem Geraet nach App-Neustart gespeicherte Grenzen
+  wiederfinden und Quelle/Lizenz/Speicherzeit kontrollieren; eine Grenze auf
+  der Karte oeffnen und wieder entfernen. Lizenzbedingungen der tatsaechlich
+  gewaehlten Datenquelle fachlich bestaetigen.
+- **Offen**: Mit gespeicherter Grenze und Mapsforge-Paket im Flugmodus
+  Kartenvorschau pruefen. Keine Online-Suche oder stillen Online-Fallback
+  voraussetzen; private Profil-/Marker-/Live-Daten duerfen nicht neu dauerhaft
+  gespeichert oder in den Grenzcache aufgenommen werden.
+- **Offen**: Gesamtspeicher ueber 64 MiB und mehr als 100 Eintraege kontrolliert
+  ablehnen; Entfernen muss den lokalen Platz freigeben. Einzelgrenzen ueber
+  4 MiB und Update derselben Quelle/Feature-ID ohne Duplikat sind automatisiert
+  geprueft.
+- **Offen**: App-Backup-/Wiederherstellungsverhalten des `noBackupFilesDir`
+  bestaetigen; die Offlinekopien werden nicht mit PWA oder Konto synchronisiert.
+
 ### Grenzbearbeitung
 
 - **Offen**: Im isolierten Supabase-Testprojekt als Owner und Editor Punkte
@@ -278,6 +382,9 @@ wiederholen.
   Geraet bestaetigen.
 - **Offen**: Anzeigename schreiben/loeschen und Owner-E-Mail-RPC mit echten
   Testkonten und RLS pruefen.
+- **Offen**: Hund als Owner/Bearbeiter loeschen und als Gast verweigern;
+  RLS-Cascade fuer Tracker-Kopplung und gespeicherte Hundeposition im
+  isolierten Testprojekt bestaetigen.
 - **Offen**: Marker verschieben, temporaere Marker loeschen und Owner-/Editor-/
   Gastberechtigungen mit tatsaechlichem GPS und RLS pruefen.
 

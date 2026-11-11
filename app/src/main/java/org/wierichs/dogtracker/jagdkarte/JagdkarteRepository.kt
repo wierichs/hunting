@@ -408,6 +408,27 @@ internal class JagdkarteRepository(context: Context) {
         profileId
     }
 
+    suspend fun createPublicBoundaryProfile(source: PublicBoundarySource, feature: PublicBoundaryFeature): String = authenticated { token ->
+        check(feature.source.id == source.id) { "Revier und Datenquelle passen nicht zusammen." }
+        val sourceId = if (source.userDefined) "user-imports" else source.id
+        val featureId = if (source.userDefined) "search-${UUID.randomUUID()}" else feature.id
+        require(featureId.length <= 240) { "Die Revierkennung der Quelle ist zu lang." }
+        val createdProfile = request("rest/v1/rpc/create_hunting_profile", "POST", JSONObject()
+            .put("p_source_id", sourceId).put("p_feature_id", featureId)
+            .put("p_district_name", feature.name), token)
+        val profileId = createdProfileIdFromResponse(createdProfile)
+            ?: error("Das Revierprofil wurde ohne Profil-ID angelegt.")
+        try {
+            request("rest/v1/rpc/set_hunting_profile_boundary", "POST", JSONObject()
+                .put("p_profile_id", profileId).put("p_geometry", feature.geometry), token)
+        } catch (failure: Exception) {
+            runCatching { request("rest/v1/hunting_profiles?id=eq.$profileId", "DELETE", bearer = token) }
+                .exceptionOrNull()?.let(failure::addSuppressed)
+            throw failure
+        }
+        profileId
+    }
+
     suspend fun mergeJwdProfile(profileId: String, imported: JwdImportedProfile): String = authenticated { token ->
         val existingProfile = loadProfile(token, profileId)
         check(canEditProfile(token, existingProfile)) { "Nur Owner und Bearbeiter duerfen Revierdaten zusammenfuehren." }
@@ -490,6 +511,12 @@ internal class JagdkarteRepository(context: Context) {
             result += HuntingDog(it.getString("id"), it.getString("name"))
         }
         result
+    }
+
+    suspend fun deleteDog(dogId: String) = authenticated { token ->
+        request("rest/v1/rpc/delete_hunting_dog", "POST", JSONObject()
+            .put("p_dog_id", uuid(dogId)), token)
+        Unit
     }
 
     suspend fun createDog(profileId: String, name: String) = authenticated { token ->

@@ -15,6 +15,8 @@ Die Android-App hat die eigene App-ID `org.wierichs.jagdkarte`. Sie kann neben
 `org.wierichs.dogtracker` installiert werden; dessen Einstellungen und
 Geraetekopplung werden nicht automatisch uebernommen. Mindestversion: Android 12.
 
+Nutzeranleitungen und Fehlerbehebung stehen in der [Hilfe fuer Android](docs/help/hilfe.md). Diese Markdown-Datei wird auch im nativen Hilfe-Dialog angezeigt.
+
 ## Stand der Portierung
 
 Die Funktionen werden schrittweise zusaetzlich nativ angeboten. Der aktuelle
@@ -179,6 +181,78 @@ OpenStreetMap kann der Nutzer selbst auswaehlen. Offlinekarten bleiben davon
 unabhaengig. Eine einzelne NRW-Bildkachel sowie die native Luftbildansicht bei
 320 dp wurden automatisiert ohne Anmeldung oder Schluessel erfolgreich geprueft.
 
+### Oeffentliche Reviersuche
+
+Die Suche ist ueber das Lupensymbol in der oberen Kartenleiste erreichbar und
+funktioniert ohne Anmeldung. Die App uebernimmt die 15 oeffentlichen
+Suchquellen der PWA unveraendert hinsichtlich URL, Protokollparametern,
+Namens-/ID-Feldern, Quellenangabe und Lizenzmetadaten: 3 WFS-, 6 ArcGIS-REST-,
+5 OGC-API-Features-Dienste und den datierten GeoJSON-Snapshot des Rhein-Kreises
+Neuss. Das sind die bei Portierung aus der PWA uebernommenen, dort bereits
+geprueften Eintraege; die PWA-Registry und PWA-Funktionen bleiben unangetastet.
+
+Die Suche priorisiert keine als offiziell markierten Anbieter. Der Nutzer
+waehlt die gewuenschte Quelle aus und sucht in deren Namen und Featurefeldern.
+Treffer zeigen Quelle, verfuegbare Metadaten und Lizenz. **Auf Karte zeigen**
+legt nur eine lokale, temporaere Grenzvorschau an. **Eigenes Revier anlegen**
+verlangt eine Anmeldung und legt das Profil ueber den bestehenden
+`create_hunting_profile`-RPC sowie die vorhandene Grenz-RPC an. Es gibt keine
+neue Backendmigration. Bei eigenen Quellen wird das Profil unter dem
+vorhandenen `user-imports`-Eintrag gespeichert; externe Quellenmetadaten werden
+nicht als neue Serverquelle registriert.
+
+Eine einzelne oeffentliche Grenze kann im Trefferdetail ausdruecklich mit
+**Offline speichern** fuer spaeter vorgemerkt werden. Bei Quellen mit nicht
+konkret ausgewiesener Lizenz muss der Anwender bestaetigen, dass er die
+Nutzungsbedingungen geprueft hat. Unter **Offline-Grenzen** lassen sich die
+gespeicherten Umrisse samt Name, Quelle, Lizenz und Speicherzeit ohne
+Netzverbindung wieder oeffnen oder entfernen. Es werden keine Profile angelegt
+und keine Serverdaten geschrieben. Die Kopien liegen getrennt von
+Mapsforge-Basiskarten im privaten, vom Android-Backup ausgeschlossenen
+`noBackupFilesDir`; sie werden nicht mit der PWA oder einem Konto synchronisiert.
+Grenzen sind auf 4 MiB pro Feature, 64 MiB insgesamt und 100 Eintraege begrenzt.
+Es gibt keinen automatischen Download oder automatische Aktualisierung. Zum
+Aktualisieren die gespeicherte Grenze entfernen, online neu suchen und erneut
+ausdruecklich speichern.
+
+Die Suche selbst braucht Internet. Offline verfuegbar sind nur zuvor gespeicherte
+Einzelgrenzen und die unabhaengig installierten Mapsforge-Pakete. Profile,
+Marker und Teilnehmer-/Hundepositionen aus Supabase werden durch diese Funktion
+nicht dauerhaft lokal gespeichert. Beim App-Neustart ist daher keine private
+Profil-/Live-Datenansicht versprochen.
+
+Unter **Quellen verwalten** koennen Anwender eigene HTTPS-GeoJSON- und
+WFS-2.0-Quellen hinzufuegen, bearbeiten und lokal loeschen. Je Eintrag sind
+Anzeigename, URL, WFS-Layer, Namens-/ID-Felder, Quellenangabe und Lizenzlinks
+konfigurierbar. Eigene Eintraege gelten nur auf diesem Geraet und werden nicht
+mit der PWA synchronisiert. Die Quellenliste bleibt gleichberechtigt; es gibt
+keine Vorrangregel fuer amtliche Anbieter.
+
+Alle Dienste muessen Polygon- oder MultiPolygon-Features als GeoJSON liefern.
+WFS wird mit 500 Features pro Seite abgefragt, OGC-API-Seitenlinks duerfen den
+Ursprung nicht wechseln, ArcGIS verwendet dessen Feature-/Offset-API. Maximal
+40 Seiten beziehungsweise 20.000 Features und 12 MB pro Antwort werden
+verarbeitet; ueber alle Seiten zusammen gelten zusaetzlich 48 MB und 90 Sekunden.
+Geometrien werden mit JTS normalisiert und auf Gueltigkeit
+geprueft, bevor sie angezeigt oder zur Profilanlage angeboten werden. Die
+Suche sendet erst nach **Suchen** eine HTTPS-Anfrage direkt vom Geraet an die
+ausgewaehlte Quelle; es gibt keinen Proxy. Lokale/private Zieladressen,
+Zugangsdaten in URLs, unsichere URLs und unsichere Weiterleitungen werden
+abgelehnt. Keine Quellenzugriffe schreiben Daten in die Dienste.
+
+Die PWA-Registry verwendet keinen WPS. WPS ist deshalb kein Eingabetyp in
+Android; konkrete WPS-Prozesse koennen spaeter nur bei einem festgelegten
+Prozessvertrag mit GeoJSON-Ergebnis ergaenzt werden.
+
+Die JVM-Tests decken GeoJSON-Validierung, Quellensicherheit, WFS-/ArcGIS-
+Parameter, OGC-Paginierungsursprung, Umlautsuche und Speicherbudgets ab. Sieben Emulator-Tests
+pruefen die 15er-Registry, lokale benutzerdefinierte Quellen, anonyme Suche,
+Kartenvorschau, lokale Offline-Grenzen und Fortsetzung der Profilanlage nach Anmeldung. Drei weitere Offline-Store-Tests
+pruefen Wiederladen, Deduplizierung, Entfernen und Speicherlimits. Der
+Quellenmanager wurde zusaetzlich im Emulator mit dem Ablauf GeoJSON-Adresse
+hinzufuegen, auswaehlen und durchsuchen geprueft. Fuer diese Tests wurde keine
+echte Quelle und kein Supabase-Schreibzugriff verwendet.
+
 #### Isolierter Offline-Renderertest
 
 `MapAppearanceInstrumentedTest` prueft Menue, fehlenden Online-Fallback,
@@ -285,12 +359,13 @@ Ein JDK und das Android SDK muessen eingerichtet sein. Die zweite Pruefung
 benoetigt einen laufenden Emulator oder ein angeschlossenes Geraet. Die APK liegt
 unter `app/build/outputs/apk/debug/app-debug.apk`.
 
-Verifiziert: 27 JVM-Tests fuer Nachrichten, Relay-Kryptografie, Grenzpruefung,
-Positionsalter, Teilnehmer-RPC sowie Marker-Schreib-, Bearbeitungs- und
-Loeschvertraege sowie 18 Instrumentierungstests auf dem API-37-Emulator fuer
-App-Start, Navigation, Login-Dialog, SQLite-Migration, atomare
-Relay-Bestaetigungen, Keystore, Kartenpositionswahl, Marker-Dialoge,
-Markerbearbeitung, Loeschbestaetigung und ausdrueckliche Relaiszustimmung.
+Verifiziert: Die vollstaendige Debug-Suite umfasst 80 JVM- und 61
+Android-Instrumentierungstests. Abgedeckt sind unter anderem Nachrichten,
+Relay-Kryptografie, Grenzpruefung, Positionsalter, Teilnehmer-RPC,
+Marker-Schreib-/Bearbeitungsvertraege, App-Start und Navigation,
+Login-Dialog, SQLite-Migration, atomare Relay-Bestaetigungen, Keystore,
+Kartenpositionswahl, Hunde-/Hilfedialoge, Markerbearbeitung,
+Loeschbestaetigung und ausdrueckliche Relaiszustimmung.
 Die Marker-Dialoge werden mit lokalen Testdaten, ohne Produktionsschreibzugriff
 und auch bei 320 dp geprueft. Eine Anmeldung gegen Produktionsdaten, echte Rollen-/RLS-Schreibtests,
 reale GPS-Erfassung und Nearby-Transfers zwischen mehreren physischen Geraeten
@@ -311,6 +386,8 @@ Der Hundetracker übermittelt den GPS-Standort eines Smartphones an ein Hund-Pro
 
 Die App ist für Android ab Version 12 vorgesehen. Pro Hund kann derzeit ein Smartphone gleichzeitig gekoppelt sein. Wenn ein Smartphone ersetzt wird oder der Schlüssel verloren geht, muss es in der Jagdkarte erneut gekoppelt werden.
 
+Owner und Bearbeiter können einen registrierten Hund in **Hunde im Revier** nach einer Bestätigung dauerhaft löschen. Dabei werden auch die Serverkopplung und die gespeicherte Hundeposition entfernt; Gäste können keine Hunde löschen.
+
 ## Funktionen
 
 - QR-Code scannen oder den 64-stelligen Geräteschlüssel manuell eingeben.
@@ -330,4 +407,4 @@ Für die Erfassung sind aktivierter Standort und die erforderlichen Android-Bere
 
 Die experimentelle Relaisfunktion ist standardmäßig ausgeschaltet. Beim Verbinden muss der Sicherheitscode auf beiden Geräten verglichen und bestätigt werden. Unterstützt wird derzeit ein einzelner Relay-Hop; die Ende-zu-Ende-Strecke ist noch nicht auf mehreren realen Geräten validiert.
 
-Die Jagdkarte zeigt Hundepositionen im gekoppelten Revierprofil an, auch außerhalb der Reviergrenze. Weitere Informationen zur Registrierung und Kopplung stehen in der [Hilfe zur Jagdkarte](https://wierichs.github.io/Jagdkarte/hilfe.html#hunde).
+Die Jagdkarte zeigt Hundepositionen im gekoppelten Revierprofil an, auch außerhalb der Reviergrenze. Die [Android-Hilfe](docs/help/hilfe.md) und Fehlerbehebung öffnest du auch über das Info-Symbol in der Kartenleiste. Die [PWA-Hilfe](https://wierichs.github.io/Jagdkarte/hilfe.html#hunde) bleibt zusätzlich für die Web-App verfügbar.

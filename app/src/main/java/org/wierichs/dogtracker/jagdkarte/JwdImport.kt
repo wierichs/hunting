@@ -232,7 +232,7 @@ private fun normalizeGeoJsonRing(points: JSONArray, label: String): JSONArray {
     } }
 }
 
-private fun normalizeGeoJsonGeometry(geometry: JSONObject, label: String): Pair<JSONObject, Int> {
+internal fun normalizeGeoJsonGeometry(geometry: JSONObject, label: String): Pair<JSONObject, Int> {
     val normalized = when (geometry.optString("type")) {
         "Polygon" -> {
             val rings = geometry.optJSONArray("coordinates")
@@ -274,8 +274,13 @@ private fun normalizeGeoJsonGeometry(geometry: JSONObject, label: String): Pair<
     return normalized to pacifiedCount
 }
 
-private fun geoJsonFeatureName(properties: JSONObject?, fallback: String): String {
+internal fun geoJsonFeatureName(properties: JSONObject?, fallback: String, preferredFields: List<String> = emptyList()): String {
     if (properties == null) return fallback
+    preferredFields.forEach { field ->
+        val value = properties.opt(field)
+        if (value is String && value.trim().isNotEmpty()) return value.trim()
+        if (value is Number) return value.toString()
+    }
     for (key in properties.keys()) {
         val value = properties.opt(key)
         if (normalizedGeoJsonKey(key) in GEOJSON_NAME_KEYS && value is String && value.trim().isNotEmpty()) {

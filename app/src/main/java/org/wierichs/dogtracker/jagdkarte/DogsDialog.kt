@@ -40,7 +40,9 @@ internal fun DogsDialog(
     profile: HuntingProfile,
     canEdit: Boolean,
     onUseDeviceToken: (String) -> Boolean,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    loadDogs: suspend (String) -> List<HuntingDog> = { repository.dogs(it) },
+    deleteDog: suspend (String) -> Unit = { repository.deleteDog(it) }
 ) {
     val scope = rememberCoroutineScope()
     var dogs by remember(profile.id) { mutableStateOf(emptyList<HuntingDog>()) }
@@ -48,12 +50,13 @@ internal fun DogsDialog(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var selectedDog by remember { mutableStateOf<HuntingDog?>(null) }
+    var pendingDogDeletion by remember(profile.id) { mutableStateOf<HuntingDog?>(null) }
     var deviceToken by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(profile.id) {
         busy = true
         try {
-            dogs = repository.dogs(profile.id)
+            dogs = loadDogs(profile.id)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -68,6 +71,7 @@ internal fun DogsDialog(
         properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
         title = { Text(when {
             deviceToken != null -> "Geraeteschluessel"
+            pendingDogDeletion != null -> "Hund loeschen?"
             selectedDog != null -> "Smartphone neu koppeln?"
             else -> "Hunde im Revier"
         }) },
@@ -76,7 +80,11 @@ internal fun DogsDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 val token = deviceToken
                 val dogToPair = selectedDog
-                if (token != null) {
+                val dogToDelete = pendingDogDeletion
+                if (dogToDelete != null) {
+                    Text("${dogToDelete.name} wird dauerhaft aus diesem Revier entfernt. Die zugehoerige Smartphone-Kopplung und gespeicherte Hundeposition werden ebenfalls geloescht.")
+                    Text("Diese Aktion kann nicht rueckgaengig gemacht werden.")
+                } else if (token != null) {
                     val bitmap = remember(token) {
                         val matrix = QRCodeWriter().encode(token, BarcodeFormat.QR_CODE, 384, 384)
                         val pixels = IntArray(matrix.width * matrix.height) { index ->
@@ -102,9 +110,16 @@ internal fun DogsDialog(
                     if (dogs.isEmpty() && !busy) Text("Keine Hunde registriert.")
                     dogs.forEach { dog ->
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(dog.name, Modifier.weight(1f))
-                            if (canEdit) TextButton(enabled = !busy, onClick = { selectedDog = dog; error = "" }) {
-                                Text("Koppeln")
+                            Text(dog.name, Modifier.weight(1f), maxLines = 1)
+                            if (canEdit) {
+                                TextButton(enabled = !busy, onClick = { selectedDog = dog; error = "" }) {
+                                    Text("Koppeln")
+                                }
+                                TextButton(enabled = !busy, onClick = {
+                                    pendingDogDeletion = dog
+                                    error = ""
+                                }, colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error)) { Text("Loeschen") }
                             }
                         }
                     }
@@ -135,7 +150,27 @@ internal fun DogsDialog(
             }
         },
         confirmButton = {
-            if (selectedDog != null && deviceToken == null) {
+            if (pendingDogDeletion != null && deviceToken == null) {
+                TextButton(enabled = !busy, onClick = {
+                    val dogId = pendingDogDeletion?.id ?: return@TextButton
+                    busy = true
+                    error = ""
+                    scope.launch {
+                        try {
+                            deleteDog(dogId)
+                            dogs = dogs.filterNot { it.id == dogId }
+                            pendingDogDeletion = null
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            error = failure.message ?: "Hund konnte nicht geloescht werden."
+                        } finally {
+                            busy = false
+                        }
+                    }
+                }, colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error)) { Text("Hund dauerhaft loeschen") }
+            } else if (selectedDog != null && deviceToken == null) {
                 TextButton(enabled = !busy, onClick = {
                     val dogId = selectedDog?.id ?: return@TextButton
                     busy = true
@@ -158,9 +193,10 @@ internal fun DogsDialog(
             }
         },
         dismissButton = {
-            if (selectedDog != null && deviceToken == null) TextButton(enabled = !busy, onClick = { selectedDog = null }) {
-                Text("Abbrechen")
-            }
+            if (pendingDogDeletion != null && deviceToken == null) TextButton(enabled = !busy,
+                onClick = { pendingDogDeletion = null }) { Text("Abbrechen") }
+            else if (selectedDog != null && deviceToken == null) TextButton(enabled = !busy,
+                onClick = { selectedDog = null }) { Text("Abbrechen") }
         }
     )
 }

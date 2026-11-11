@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.ZoomOutMap
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -126,6 +127,7 @@ import org.wierichs.dogtracker.TrackerPreferences
 
 private const val MAX_JWD_FILE_SIZE_BYTES = 10 * 1024 * 1024
 internal const val MAX_HUNTING_MAP_ZOOM = 20.0
+private data class PendingBoundaryClaim(val source: PublicBoundarySource, val feature: PublicBoundaryFeature)
 
 private fun readRevierDocument(context: android.content.Context, uri: Uri): List<JwdImportedProfile> {
     val fileName = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
@@ -172,6 +174,10 @@ internal fun JagdkarteScreen(
     var revision by remember { mutableStateOf(0) }
     var menuOpen by remember { mutableStateOf(false) }
     var managementOpen by remember { mutableStateOf(false) }
+    var publicBoundarySearchOpen by remember { mutableStateOf(false) }
+    var publicBoundaryPreview by remember { mutableStateOf<PublicBoundaryFeature?>(null) }
+    var pendingBoundaryClaim by remember { mutableStateOf<PendingBoundaryClaim?>(null) }
+    var publicBoundaryClaimBusy by remember { mutableStateOf(false) }
     var boundaryEditorProfile by remember { mutableStateOf<HuntingSnapshot?>(null) }
     var offlineMapsOpen by remember { mutableStateOf(false) }
     var offlineMapRevision by remember { mutableStateOf(0) }
@@ -194,6 +200,7 @@ internal fun JagdkarteScreen(
     var permissionProfileId by remember { mutableStateOf<String?>(null) }
     var signingOut by remember { mutableStateOf(false) }
     var dogsOpen by remember { mutableStateOf(false) }
+    var helpOpen by remember { mutableStateOf(false) }
     var inviteProfile by remember { mutableStateOf<HuntingProfile?>(null) }
     var pendingGuestLinkToken by remember { mutableStateOf<String?>(null) }
     var guestLinkDestination by remember { mutableStateOf<GuestLinkTarget?>(null) }
@@ -222,6 +229,25 @@ internal fun JagdkarteScreen(
         editingMarker = null
         inviteProfile = null
         boundaryEditorProfile = null
+    }
+    LaunchedEffect(signedIn, pendingBoundaryClaim) {
+        val pending = pendingBoundaryClaim ?: return@LaunchedEffect
+        if (!signedIn || publicBoundaryClaimBusy) return@LaunchedEffect
+        publicBoundaryClaimBusy = true
+        try {
+            val id = repository.createPublicBoundaryProfile(pending.source, pending.feature)
+            pendingBoundaryClaim = null
+            publicBoundaryPreview = null
+            profiles = repository.profiles()
+            selectedId = id
+            revision++
+            status = "Eigenes Revierprofil angelegt."
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            pendingBoundaryClaim = null
+            status = failure.message ?: "Eigenes Revierprofil konnte nicht angelegt werden."
+        } finally { publicBoundaryClaimBusy = false }
     }
     val sharingMutex = remember { Mutex() }
     val relayPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -510,8 +536,14 @@ internal fun JagdkarteScreen(
                     }
                 }
                 if (loading) CircularProgressIndicator(Modifier.size(24.dp).padding(4.dp))
+                IconButton(onClick = { publicBoundarySearchOpen = true }, enabled = !loading) {
+                    Icon(Icons.Default.Search, "Oeffentliche Reviersuche")
+                }
                 IconButton(onClick = { revision++ }, enabled = signedIn && !loading) {
                     Icon(Icons.Default.Refresh, "Aktualisieren")
+                }
+                IconButton(onClick = { helpOpen = true }) {
+                    Icon(Icons.Default.Info, "Hilfe und Fehlerbehebung")
                 }
                 IconButton(onClick = { managementOpen = true }, enabled = signedIn) {
                     Icon(Icons.Default.MoreVert, "Revier und Verwaltung")
@@ -547,7 +579,11 @@ internal fun JagdkarteScreen(
             isFullScreen = isFullScreen,
             onToggleFullScreen = { onFullScreenChanged(!isFullScreen) },
             offlineMapRevision = offlineMapRevision,
-            onManageOfflineMaps = { offlineMapsOpen = true })
+            onManageOfflineMaps = { offlineMapsOpen = true },
+            previewBoundary = publicBoundaryPreview?.geometry,
+            previewBoundaryLabel = publicBoundaryPreview?.name.orEmpty(),
+            previewBoundaryKey = publicBoundaryPreview?.let { "${it.source.id}:${it.id}" }.orEmpty(),
+            onClearBoundaryPreview = { publicBoundaryPreview = null })
     }
 
     if (managementOpen) {
@@ -680,6 +716,26 @@ internal fun JagdkarteScreen(
         offlineMapsOpen = false
         offlineMapRevision++
     })
+
+    if (publicBoundarySearchOpen) PublicBoundarySearchSheet(signedIn = signedIn,
+        onSignIn = { source, feature ->
+            pendingBoundaryClaim = PendingBoundaryClaim(source, feature)
+            accountOpen = true
+        }, onPreview = { publicBoundaryPreview = it },
+        onCreateProfile = { source, feature ->
+            if (signedIn) {
+                val id = repository.createPublicBoundaryProfile(source, feature)
+                profiles = repository.profiles()
+                selectedId = id
+                publicBoundaryPreview = null
+                revision++
+                status = "Eigenes Revierprofil angelegt."
+            } else {
+                pendingBoundaryClaim = PendingBoundaryClaim(source, feature)
+                status = "Melde dich an, um dieses Revier als eigenes Profil anzulegen."
+                accountOpen = true
+            }
+        }, onDismiss = { publicBoundarySearchOpen = false })
 
     boundaryEditorProfile?.let { editingProfile ->
         BoundaryEditor(editingProfile, onSave = { original, draft ->
@@ -865,6 +921,7 @@ internal fun JagdkarteScreen(
         DogsDialog(repository, current.profile, current.canEdit, onUseDeviceToken,
             onDismiss = { dogsOpen = false })
     }
+    if (helpOpen) HelpDialog(onDismiss = { helpOpen = false })
 
     val profileToInvite = inviteProfile
     if (profileToInvite != null && signedIn && selectedId == profileToInvite.id) {
@@ -1046,6 +1103,8 @@ private fun SignInDialog(repository: JagdkarteRepository, onDismiss: () -> Unit,
                     Checkbox(register, onCheckedChange = { register = it; requestedEmail = null; code = "" }, enabled = !busy)
                     Text("Neues Konto")
                 }
+                Text("In der Android-App per Zahlencode anmelden. Ein E-Mail-Link kann Browser oder PWA oeffnen und meldet nicht sicher in dieser App an.",
+                    style = MaterialTheme.typography.bodySmall)
                 if (requestedEmail != null) {
                     OutlinedTextField(code, onValueChange = { code = it.filter(Char::isDigit).take(10) },
                         label = { Text("E-Mail-Code") }, singleLine = true, enabled = !busy,
@@ -1113,7 +1172,11 @@ internal fun NativeHuntingMap(
     onToggleFullScreen: () -> Unit = {},
     boundaryEdit: BoundaryMapEdit? = null,
     offlineMapRevision: Int = 0,
-    onManageOfflineMaps: (() -> Unit)? = null
+    onManageOfflineMaps: (() -> Unit)? = null,
+    previewBoundary: JSONObject? = null,
+    previewBoundaryLabel: String = "",
+    previewBoundaryKey: String = "",
+    onClearBoundaryPreview: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -1194,7 +1257,7 @@ internal fun NativeHuntingMap(
         AndroidView(factory = { map }, modifier = Modifier.fillMaxSize().clipToBounds(), update = { view ->
             val points = snapshot?.points.orEmpty().filter { it.visibleAt(now) }
             val boundary = snapshot?.profile?.boundary
-            val renderKey = listOf(snapshot?.profile?.id, boundary?.toString(), boundaryVisible, ownLocationVisible, points,
+            val renderKey = listOf(snapshot?.profile?.id, boundary?.toString(), previewBoundary?.toString(), boundaryVisible, ownLocationVisible, points,
                 points.map { it.staleAt(now) }, markerIconSize, focusMarkerId, focusRequest,
                 boundaryEdit?.polygon, boundaryEdit?.ring, boundaryEdit?.vertex, boundaryEdit?.drawingPoints, boundaryEdit?.enabled)
             if (renderedContent != renderKey) {
@@ -1224,6 +1287,17 @@ internal fun NativeHuntingMap(
                         }
                         view.overlays.add(polygon)
                     }
+                    bounds.addAll(rings.first())
+                }
+                geometryPolygons(previewBoundary).forEach { rings ->
+                    view.overlays.add(Polygon(view).apply {
+                        title = previewBoundaryLabel
+                        outlinePaint.color = android.graphics.Color.rgb(204, 100, 25)
+                        outlinePaint.strokeWidth = 6f
+                        fillPaint.color = android.graphics.Color.argb(42, 204, 100, 25)
+                        setPoints(rings.first())
+                        holes = rings.drop(1)
+                    })
                     bounds.addAll(rings.first())
                 }
                 points.forEach { point ->
@@ -1309,8 +1383,15 @@ internal fun NativeHuntingMap(
                         view.controller.setZoom(16.0)
                         view.controller.animateTo(GeoPoint(guestTarget.latitude, guestTarget.longitude))
                     }
-                } else if (snapshot != null && fittedProfileId != snapshot.profile.id) {
-                    fittedProfileId = snapshot.profile.id
+                } else if (previewBoundary != null && previewBoundaryKey.isNotBlank() && fittedProfileId != previewBoundaryKey) {
+                    fittedProfileId = previewBoundaryKey
+                    val previewBounds = geometryPolygons(previewBoundary).flatMap { it.first() }
+                    if (previewBounds.isNotEmpty()) {
+                        val box = BoundingBox.fromGeoPoints(previewBounds)
+                        view.post { view.zoomToBoundingBox(box, false, 48, 17.0, null) }
+                    }
+                } else if (snapshot != null && fittedProfileId != previewBoundaryKey.ifBlank { snapshot.profile.id }) {
+                    fittedProfileId = previewBoundaryKey.ifBlank { snapshot.profile.id }
                     if (bounds.isEmpty()) bounds.addAll(points.map { GeoPoint(it.latitude, it.longitude) })
                     if (bounds.isNotEmpty()) {
                         val box = BoundingBox.fromGeoPoints(bounds)
@@ -1356,6 +1437,16 @@ internal fun NativeHuntingMap(
                         Icon(Icons.Default.Info,
                             if (locationLegendExpanded) "Legende ausblenden" else "Legende anzeigen")
                     }
+                }
+            }
+        }
+        if (previewBoundary != null && boundaryEdit == null) {
+            Surface(color = Color.White.copy(alpha = 0.96f), shadowElevation = 4.dp,
+                shape = RoundedCornerShape(4.dp), modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp)) {
+                    Text("Vorschau: $previewBoundaryLabel", style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
+                    IconButton(onClick = onClearBoundaryPreview) { Icon(Icons.Default.Close, "Vorschau schliessen") }
                 }
             }
         }

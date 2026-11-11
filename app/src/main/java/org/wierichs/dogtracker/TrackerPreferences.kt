@@ -79,7 +79,7 @@ internal object TrackerPreferences {
     }
 
     fun hiddenHuntingProfileIds(context: Context, userId: String): Set<String> {
-        require(userId.isNotBlank())
+        if (userId.isBlank()) return emptySet()
         return preferences(context).getStringSet("$KEY_HIDDEN_HUNTING_PROFILES:$userId", emptySet())?.toSet()
             ?: emptySet()
     }
