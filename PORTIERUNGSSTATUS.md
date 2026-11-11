@@ -36,6 +36,13 @@ PWA-Themen und Android-Abweichungen einschliesslich Fehlerbehebung ab. Drei
 dedizierte Emulatorpruefungen fuer Hundeloeschung, Gaesterechte und Hilfe
 bestehen; Live-RLS-/Schreibabnahmen bleiben Teil der manuellen Pruefung.
 
+Start und Wiederaufnahme: Beim ersten Start ist DogTracker vorausgewaehlt;
+danach werden letzter Tab und letztes Revier pro Konto, Kartenkamera pro
+Revier und Vollbildansicht wiederhergestellt. Die Standortfreigabe bleibt als
+explizite Zustimmung pro Konto/Revier gemerkt und wird nur nach frischer
+Onlinepruefung, aktivem Jagdmodus und vorhandener Android-Berechtigung
+reaktiviert.
+
 Die Kartenbasis und Offlinekarten bleiben wie zuvor umgesetzt. Auf Wunsch
 nach moeglichst kostenloser Nutzung wurde
 MapTiler in Android durch frei zugaengliche amtliche Luftbilder ersetzt.
@@ -215,12 +222,21 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
   lokalen Offline-Grenzen-Liste mit Quelle, Lizenz und Speicherzeit sowie
   Oeffnen/Entfernen sind umgesetzt. Speicherung erfolgt getrennt von
   Mapsforge in `noBackupFilesDir`, maximal 4 MiB je Grenze, 64 MiB und 100
-  Eintraege gesamt; kein Sync und keine automatische Aktualisierung. Private
-  Profile, Marker und Live-Positionen werden nicht durch diese Funktion
-  dauerhaft lokal gespeichert. JVM- und Offline-Store-/UI-Tests bestehen.
+  Eintraege gesamt; kein Sync und keine automatische Aktualisierung. Der
+  oeffentliche Grenzcache enthaelt keine privaten Profile, Marker oder
+  Live-Positionen. JVM- und Offline-Store-/UI-Tests bestehen.
   Noch offen: reale Offline-Abnahme im Flugmodus einschliesslich Lizenzpruefung,
-  Neustart, Entfernen, knappen Speicherplatzes sowie bestaetigen, dass private
-  Serverdaten nicht persistiert werden.
+  Neustart, Entfernen und knappen Speicherplatzes sowie bestaetigen, dass dieser
+  oeffentliche Cache keine privaten Serverdaten enthaelt.
+
+- **Umgesetzt**: Letzte Reviergrenze und Markierungen nach erfolgreichem
+  Onlineabruf lokal verschluesselt fuer den Offline-Read-only-Fallback halten.
+  Speicherung in `noBackupFilesDir`, maximal sieben Tage, 4 MiB pro Revier,
+  32 MiB und 20 Reviere insgesamt. Der Cache ist konto-/revierisoliert,
+  unveraenderbar offline und schliesst Teilnehmer-/Hund-Livepositionen aus.
+  Statische Profile pollen alle fuenf Minuten, aktiver Jagdmodus weiter alle
+  30 Sekunden; wiederholte Netzwerkfehler verwenden exponentiellen Backoff.
+  Cache-Verschluesselung, Limits und Ausschluss von Livepositionen sind getestet.
 
 ### Konto, Hunde und Hilfe
 
@@ -234,6 +250,14 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
   Tracker-Kopplung sowie Hundeposition per Cascade. Gaeste sehen keine
   Loeschaktion. Emulator-UI-Tests verwenden lokale injizierte Aktionen; eine
   Live-RLS-/Cascade-Abnahme bleibt offen.
+- **Angepasst**: Hundekopplung funktioniert weiter rueckwaertskompatibel mit
+  dem Jagdkarte-QR oder manuell. Zusaetzlich ist der Gegenweg vorbereitet:
+  DogTracker zeigt einen zufaelligen einmaligen QR, Jagdkarte scannt ihn und
+  bindet nur dessen SHA-256-Hash ueber eine Owner-/Editor-pruefende RPC.
+  Die additive Migration `Jagdkarte/supabase/migrations/202611110001_register_hunting_dog_device_token.sql`
+  liegt im PWA-Repository; sie wurde nicht deployed. Der Gegenweg wird erst nach
+  deren Rollout erfolgreich funktionieren; der bisherige Jagdkarte-QR-/Manuellweg
+  bleibt unveraendert. Tokenformat-, Parser- und injizierte UI-Tests bestehen.
 - **Umgesetzt**: Native Hilfe und Fehlerbehebung ueber das Info-Symbol in der
   Kartenleiste. `docs/help/hilfe.md` ist die einzige redaktionelle Quelle; die
   README verlinkt darauf und die Android-App rendert dieselbe Datei offline als
@@ -373,6 +397,11 @@ wiederholen.
 
 ### Profile, Rollen und Rechte
 
+- **Offen**: Die additive `register_hunting_dog_device_token`-Migration im
+  isolierten Supabase-Testprojekt anwenden und beide Kopplungswege pruefen.
+  Owner/Bearbeiter duerfen koppeln, Gaeste nicht; ein neuer Token muss den
+  vorherigen widerrufen, unpassende QR-Formate muessen abgelehnt werden.
+  Bestehende Jagdkarte-QR- und Manuellwege duerfen nicht regressieren.
 - **Offen**: Owner-Profil loeschen und RLS-/Cascade-Verhalten fuer Marker,
   Einladungen und Mitgliedschaften im Testprojekt bestaetigen.
 - **Offen**: Einladungen mit realem Test-Mailversand, Owner-/Editor-/Gastrollen
@@ -390,6 +419,17 @@ wiederholen.
 
 ### Karte, Standort und Geraete
 
+- **Offen**: Auf einem Geraet Erststart mit DogTracker, Tabwechsel und
+  Kaltstart-Wiederherstellung pruefen. Letztes Konto/Revier, Kartenmitte, Zoom,
+  Vollbild und die pro Revier gespeicherte Standortzustimmung kontrollieren.
+  Widerrufene Android-Berechtigungen duerfen die Freigabe nicht starten; nach
+  erneuter Freigabe darf die vorhandene App-Zustimmung ohne erneuten Dialog
+  weitergelten.
+- **Offen**: Nach Onlineabruf Revier wechseln und App neu starten; im Flugmodus
+  muss der letzte Snapshot als veraltet und read-only erscheinen. Keine
+  Teilnehmer-/Hund-Livepositionen anzeigen oder puffern; nach sieben Tagen muss
+  der Cache ablaufen. Netzwerkzugriffe fuer statische Profile duerfen im
+  Normalbetrieb nicht haeufiger als vorgesehen stattfinden.
 - **Offen**: Reale Marker und Reviergrenze bei mehreren Zoomstufen mit der
   Kartenbasis vergleichen; insbesondere Marker nahe der Grenze kontrollieren.
 - **Offen**: Eigenen Standort, GPS-Berechtigung, manuelles Einpassen,
@@ -407,8 +447,10 @@ wiederholen.
   Offline darf nur bei vollstaendiger Abdeckung neu angeboten werden.
 - **Offen**: Flugmodus, App-Neustart, Revierwechsel, geaenderte Grenze und
   geloeschtes Paket im gewaehlten Offline-Modus pruefen. Kein stiller
-  Online-Fallback; private Revierdaten duerfen nicht neu dauerhaft gespeichert
-  werden. Der Kartenmodus allein deaktiviert keine bestehende Kommunikation.
+  Online-Fallback; der verschluesselte Snapshot muss als veraltet und read-only
+  erscheinen, Live-Positionen muessen fehlen und abgelaufene Kopien duerfen
+  nicht angezeigt werden. Der Kartenmodus allein deaktiviert keine bestehende
+  Kommunikation.
 - **Offen**: Grosse Kartenpakete (mehrere GB), knappen Speicher, abgebrochenen
   oder fehlerhaften Import, doppelte Datei sowie Laden/Loeschen pruefen.
   Gleichnamige, zur Karte passende Extraktgrenze sicherstellen; bei

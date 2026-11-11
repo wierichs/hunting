@@ -80,7 +80,9 @@ internal data class HuntingMapPoint(
 internal data class HuntingSnapshot(
     val profile: HuntingProfile,
     val points: List<HuntingMapPoint>,
-    val canEdit: Boolean
+    val canEdit: Boolean,
+    val cachedAt: Instant? = null,
+    val isStale: Boolean = false
 )
 
 internal data class HuntingDog(val id: String, val name: String)
@@ -532,6 +534,13 @@ internal class JagdkarteRepository(context: Context) {
         result.getJSONObject(0).getString("device_token").also {
             check(Regex("[0-9a-f]{64}").matches(it)) { "Ungueltiger Geraeteschluessel in der Serverantwort." }
         }
+    }
+
+    suspend fun registerDogDeviceToken(dogId: String, deviceToken: String) = authenticated { token ->
+        require(Regex("^[0-9a-f]{64}$").matches(deviceToken)) { "Ungueltiger Geraeteschluessel." }
+        request("rest/v1/rpc/register_hunting_dog_device_token", "POST", JSONObject()
+            .put("p_dog_id", uuid(dogId)).put("p_device_token", deviceToken), token)
+        Unit
     }
 
     suspend fun shareLocation(profileId: String, latitude: Double, longitude: Double, accuracy: Float): Boolean = authenticated { token ->

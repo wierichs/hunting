@@ -6,6 +6,8 @@ import org.json.JSONObject
 import org.wierichs.dogtracker.jagdkarte.JWD_EXPORT_MARKER_TYPE_LABELS
 import org.wierichs.dogtracker.jagdkarte.defaultJwdMarkerTypeMapping
 
+internal data class HuntingMapCamera(val latitude: Double, val longitude: Double, val zoom: Double)
+
 internal object TrackerPreferences {
     private const val FILE_NAME = "tracker_settings"
     private const val KEY_INTERVAL_SECONDS = "interval_seconds"
@@ -19,6 +21,11 @@ internal object TrackerPreferences {
     private const val KEY_RELAY_ENCRYPTION_KEY_ID = "relay_encryption_key_id"
     private const val KEY_RELAY_ENCRYPTION_PUBLIC_KEY = "relay_encryption_public_key"
     private const val KEY_RELAY_ENABLED = "relay_enabled"
+    private const val KEY_LAST_TAB_TRACKER = "last_tab_tracker"
+    private const val KEY_LAST_PROFILE_PREFIX = "last_profile:"
+    private const val KEY_LOCATION_SHARE_PREFIX = "location_share:"
+    private const val KEY_MAP_CAMERA_PREFIX = "map_camera:"
+    private const val KEY_MAP_FULL_SCREEN = "map_full_screen"
     val ENDPOINT = BackendConfiguration.dogLocationEndpoint
     val RELAY_ENDPOINT = BackendConfiguration.dogRelayEndpoint
 
@@ -108,6 +115,69 @@ internal object TrackerPreferences {
 
     fun relayEnabled(context: Context): Boolean =
         preferences(context).getBoolean(KEY_RELAY_ENABLED, false)
+
+    fun lastTabIsTracker(context: Context): Boolean =
+        preferences(context).getBoolean(KEY_LAST_TAB_TRACKER, true)
+
+    fun setLastTabIsTracker(context: Context, selected: Boolean) {
+        preferences(context).edit { putBoolean(KEY_LAST_TAB_TRACKER, selected) }
+    }
+
+    fun lastHuntingProfileId(context: Context, userId: String): String? {
+        if (userId.isBlank()) return null
+        return preferences(context).getString("$KEY_LAST_PROFILE_PREFIX$userId", null)
+    }
+
+    fun setLastHuntingProfileId(context: Context, userId: String, profileId: String?) {
+        if (userId.isBlank()) return
+        preferences(context).edit {
+            val key = "$KEY_LAST_PROFILE_PREFIX$userId"
+            if (profileId.isNullOrBlank()) remove(key) else putString(key, profileId)
+        }
+    }
+
+    fun locationShareConsented(context: Context, userId: String, profileId: String): Boolean {
+        if (userId.isBlank() || profileId.isBlank()) return false
+        return preferences(context).getBoolean("$KEY_LOCATION_SHARE_PREFIX$userId:$profileId", false)
+    }
+
+    fun setLocationShareConsent(context: Context, userId: String, profileId: String, enabled: Boolean) {
+        require(userId.isNotBlank() && profileId.isNotBlank())
+        preferences(context).edit {
+            putBoolean("$KEY_LOCATION_SHARE_PREFIX$userId:$profileId", enabled)
+        }
+    }
+
+    fun mapCamera(context: Context, userId: String, profileId: String): HuntingMapCamera? {
+        if (profileId.isBlank()) return null
+        val accountId = userId.ifBlank { "anonymous" }
+        val json = runCatching {
+            JSONObject(preferences(context).getString("$KEY_MAP_CAMERA_PREFIX$accountId:$profileId", null) ?: return null)
+        }.getOrNull() ?: return null
+        val latitude = json.optDouble("latitude", Double.NaN)
+        val longitude = json.optDouble("longitude", Double.NaN)
+        val zoom = json.optDouble("zoom", Double.NaN)
+        return HuntingMapCamera(latitude, longitude, zoom).takeIf {
+            latitude.isFinite() && latitude in -90.0..90.0 && longitude.isFinite() && longitude in -180.0..180.0 &&
+                zoom.isFinite() && zoom in 3.0..20.0
+        }
+    }
+
+    fun setMapCamera(context: Context, userId: String, profileId: String, camera: HuntingMapCamera) {
+        require(profileId.isNotBlank() && camera.latitude.isFinite() && camera.latitude in -90.0..90.0 &&
+            camera.longitude.isFinite() && camera.longitude in -180.0..180.0 && camera.zoom.isFinite() && camera.zoom in 3.0..20.0)
+        val accountId = userId.ifBlank { "anonymous" }
+        preferences(context).edit {
+            putString("$KEY_MAP_CAMERA_PREFIX$accountId:$profileId", JSONObject()
+                .put("latitude", camera.latitude).put("longitude", camera.longitude).put("zoom", camera.zoom).toString())
+        }
+    }
+
+    fun mapFullScreen(context: Context): Boolean = preferences(context).getBoolean(KEY_MAP_FULL_SCREEN, false)
+
+    fun setMapFullScreen(context: Context, enabled: Boolean) {
+        preferences(context).edit { putBoolean(KEY_MAP_FULL_SCREEN, enabled) }
+    }
 
     fun setRelayEnabled(context: Context, enabled: Boolean) {
         preferences(context).edit { putBoolean(KEY_RELAY_ENABLED, enabled) }

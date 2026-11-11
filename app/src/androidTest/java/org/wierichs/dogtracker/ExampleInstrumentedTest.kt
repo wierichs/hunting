@@ -4,6 +4,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -33,6 +34,10 @@ class ExampleInstrumentedTest {
 
     @Test
     fun mapStartsWithoutRequestingLocationAndTrackerRemainsAvailable() {
+        val trackerVisible = composeRule.onAllNodesWithText("Hundetracker").fetchSemanticsNodes().isNotEmpty()
+        if (!trackerVisible) composeRule.onNodeWithText("DogTracker").performClick()
+        composeRule.onNodeWithText("Hundetracker").assertIsDisplayed()
+        composeRule.onNodeWithText("Jagdkarte").performClick()
         composeRule.onNodeWithContentDescription("Benutzerkonto").assertIsDisplayed()
         composeRule.onNodeWithText("Revier auswaehlen").assertIsDisplayed()
         composeRule.onNodeWithText("DogTracker").performClick()

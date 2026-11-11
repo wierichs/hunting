@@ -14,6 +14,7 @@ rueckwaertskompatibel bleiben.
 Die Android-App hat die eigene App-ID `org.wierichs.jagdkarte`. Sie kann neben
 `org.wierichs.dogtracker` installiert werden; dessen Einstellungen und
 Geraetekopplung werden nicht automatisch uebernommen. Mindestversion: Android 12.
+Beim ersten Start oeffnet DogTracker; danach stellt die App den zuletzt genutzten Bereich und das letzte Revier wieder her.
 
 Nutzeranleitungen und Fehlerbehebung stehen in der [Hilfe fuer Android](docs/help/hilfe.md). Diese Markdown-Datei wird auch im nativen Hilfe-Dialog angezeigt.
 
@@ -62,13 +63,16 @@ bleibt davon unberuehrt.
 
 Online-Kartenkacheln werden im privaten App-Cache gespeichert. Das ist kein
 garantierter Offline-Kartenbestand; dafuer gibt es importierte Mapsforge-Pakete.
-Private Revierdaten werden nicht als dauerhafte
-Offline-Kopie gespeichert. Ohne Verbindung werden keine alten Kartenpositionen
-als aktuelle Live-Daten weiter angezeigt. Kann eine Teilnehmerposition beim
-Stoppen nicht entfernt werden, kann sie bis zur 90-Sekunden-Grenze sichtbar
-bleiben. Ohne Relaisfreigabe werden Teilnehmerpositionen nicht offline
-nachgesendet. Mit bereitgestelltem Relay-Server bleiben eigene Meldungen nur
-bis zu 90 Sekunden ab Messzeit ausstehend; eine Historie wird nicht aufgebaut.
+Der zuletzt geladene Revierstand (Grenze und Markierungen) wird zusaetzlich
+verschluesselt fuer hoechstens sieben Tage und 32 MiB im nicht gesicherten
+App-Speicher gehalten. Die Offlinekopie ist nur lesbar, wird nicht synchronisiert
+und enthaelt keine Teilnehmer- oder Hund-Livepositionen. Ohne Verbindung werden
+alte Karten- oder Standortdaten nicht als aktuelle Live-Daten dargestellt. Kann
+eine Teilnehmerposition beim Stoppen nicht entfernt werden, kann sie bis zur
+90-Sekunden-Grenze sichtbar bleiben. Ohne Relaisfreigabe werden
+Teilnehmerpositionen nicht offline nachgesendet. Mit bereitgestelltem
+Relay-Server bleiben eigene Meldungen nur bis zu 90 Sekunden ab Messzeit
+ausstehend; eine Historie wird nicht aufgebaut.
 
 ### Kartendarstellung und Offlinekarten
 
@@ -381,8 +385,11 @@ Der Hundetracker übermittelt den GPS-Standort eines Smartphones an ein Hund-Pro
 
 1. In der Jagdkarte anmelden, ein Revierprofil öffnen und den Jagdmodus einschalten.
 2. Unter **Hunde im Revier** einen Hund registrieren und **Smartphone koppeln** auswählen.
-3. Den angezeigten QR-Code mit dem Hundetracker scannen oder den Geräteschlüssel manuell einfügen. Der Schlüssel wird in der Jagdkarte nur einmal angezeigt und sollte geheim bleiben.
-4. Das Standortintervall festlegen und **Tracking starten** wählen. Beim ersten Start benötigt die App Zugriff auf den genauen Standort und, ab Android 13, auf Benachrichtigungen.
+3. Mit Tracker-Kamera den in Jagdkarte angezeigten QR-Code scannen oder den Schlüssel manuell eingeben. Ohne Tracker-Kamera im DogTracker **QR-Code fuer Jagdkarte anzeigen** wählen, danach in Jagdkarte beim Hund **DogTracker-QR scannen**. Nach der Erfolgsmeldung in Jagdkarte zum Tracker zurückkehren und **Jagdkarte hat gekoppelt** bestätigen.
+4. Der QR-Schlüssel wird nur für diesen Kopplungsvorgang angezeigt; geheim halten und nur mit der Jagdkarte des gewünschten Reviers scannen.
+5. Das Standortintervall festlegen und **Tracking starten** wählen. Beim ersten Start benötigt die App Zugriff auf den genauen Standort und, ab Android 13, auf Benachrichtigungen.
+
+Der Gegenweg DogTracker-QR benötigt die additive RPC-Migration [`register_hunting_dog_device_token`](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/migrations/202611110001_register_hunting_dog_device_token.sql) im gemeinsamen Supabase-Projekt. Sie ist im PWA-Repository vorbereitet, aber noch nicht ausgerollt; bis dahin bleibt **Smartphone koppeln** in Jagdkarte der verfügbare Weg.
 
 Die App ist für Android ab Version 12 vorgesehen. Pro Hund kann derzeit ein Smartphone gleichzeitig gekoppelt sein. Wenn ein Smartphone ersetzt wird oder der Schlüssel verloren geht, muss es in der Jagdkarte erneut gekoppelt werden.
 

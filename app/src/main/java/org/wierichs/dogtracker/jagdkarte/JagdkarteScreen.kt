@@ -9,6 +9,8 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.PictureDrawable
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.widget.ImageView
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -110,6 +112,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.osmdroid.config.Configuration
+import org.osmdroid.events.MapListener
+import org.osmdroid.events.ScrollEvent
+import org.osmdroid.events.ZoomEvent
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
@@ -123,6 +128,7 @@ import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import org.wierichs.dogtracker.communication.RelayGateway
 import org.wierichs.dogtracker.communication.RelayGatewayService
+import org.wierichs.dogtracker.HuntingMapCamera
 import org.wierichs.dogtracker.TrackerPreferences
 
 private const val MAX_JWD_FILE_SIZE_BYTES = 10 * 1024 * 1024
@@ -162,11 +168,14 @@ internal fun JagdkarteScreen(
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val repository = remember { JagdkarteRepository(context) }
+    val offlineCache = remember { JagdkarteOfflineCache(context) }
     val scope = rememberCoroutineScope()
     var signedIn by remember { mutableStateOf(repository.signedIn) }
     var profiles by remember { mutableStateOf(emptyList<HuntingProfile>()) }
     var hiddenProfileIds by remember { mutableStateOf(TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)) }
-    var selectedId by remember { mutableStateOf<String?>(null) }
+    var selectedId by remember(repository.userId) {
+        mutableStateOf(TrackerPreferences.lastHuntingProfileId(context, repository.userId))
+    }
     var snapshot by remember { mutableStateOf<HuntingSnapshot?>(null) }
     var status by remember { mutableStateOf("") }
     var invitationStatus by remember { mutableStateOf("") }
@@ -264,6 +273,11 @@ internal fun JagdkarteScreen(
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         sharing = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true && signedIn &&
             selectedId == permissionProfileId && snapshot?.profile?.huntingMode == true
+        if (sharing) {
+            permissionProfileId?.let { profileId ->
+                TrackerPreferences.setLocationShareConsent(context, repository.userId, profileId, true)
+            }
+        }
         permissionProfileId = null
         if (!sharing) sharingStatus = "Genauer Standort wurde nicht freigegeben."
     }
@@ -389,6 +403,15 @@ internal fun JagdkarteScreen(
         if (snapshot?.profile?.huntingMode == false && relayForProfile) RelayGateway.stop(context)
     }
 
+    LaunchedEffect(selectedId, signedIn, snapshot?.profile?.huntingMode, snapshot?.isStale, relayForProfile) {
+        val profileId = selectedId ?: return@LaunchedEffect
+        val profile = snapshot?.profile?.takeIf { it.id == profileId }
+        sharing = signedIn && profile?.huntingMode == true && snapshot?.isStale == false && !relayForProfile &&
+            TrackerPreferences.locationShareConsented(context, repository.userId, profileId) &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context,
+                Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    }
+
     LaunchedEffect(selectedId, sharing, signedIn, relayForProfile) {
         val profileId = selectedId?.takeIf { sharing && signedIn } ?: return@LaunchedEffect
         sharingMutex.withLock {
@@ -431,13 +454,25 @@ internal fun JagdkarteScreen(
     }
 
     LaunchedEffect(signedIn, revision) {
-        profiles = emptyList()
         if (!signedIn) {
+            profiles = emptyList()
             hiddenProfileIds = emptySet()
             return@LaunchedEffect
         }
         loading = true
+        var cachedProfiles = emptyList<CachedHuntingSnapshot>()
         try {
+            cachedProfiles = withContext(Dispatchers.IO) { offlineCache.allForUser(repository.userId) }
+            if (profiles.isEmpty() && cachedProfiles.isNotEmpty()) {
+                profiles = cachedProfiles.map { it.snapshot.profile }.distinctBy { it.id }
+                val cachedIds = profiles.map { it.id }.toSet()
+                hiddenProfileIds = TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)
+                    .intersect(cachedIds)
+                if (selectedId !in cachedIds) {
+                    selectedId = TrackerPreferences.lastHuntingProfileId(context, repository.userId)
+                        ?.takeIf { it in cachedIds }
+                }
+            }
             val loadedProfiles = repository.profiles()
             val availableIds = loadedProfiles.map { it.id }.toSet()
             val loadedHiddenIds = TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)
@@ -453,6 +488,7 @@ internal fun JagdkarteScreen(
                         hiddenProfileIds = loadedHiddenIds - guestTarget.profileId
                     }
                     selectedId = guestTarget.profileId
+                    TrackerPreferences.setLastHuntingProfileId(context, repository.userId, guestTarget.profileId)
                     guestFocusMarkerId = guestTarget.markerId
                     guestFocusRequest++
                     status = "Gastlink angenommen. Das Revier wurde geoeffnet."
@@ -463,7 +499,13 @@ internal fun JagdkarteScreen(
                 guestLinkDestination = null
             } else {
                 val visibleProfiles = loadedProfiles.filterNot { it.id in loadedHiddenIds }
-                if (visibleProfiles.none { it.id == selectedId }) selectedId = null
+                val rememberedProfileId = TrackerPreferences.lastHuntingProfileId(context, repository.userId)
+                if (visibleProfiles.none { it.id == selectedId }) {
+                    selectedId = rememberedProfileId?.takeIf { id -> visibleProfiles.any { it.id == id } }
+                }
+                if (rememberedProfileId != null && loadedProfiles.none { it.id == rememberedProfileId }) {
+                    TrackerPreferences.setLastHuntingProfileId(context, repository.userId, null)
+                }
                 status = when {
                     loadedProfiles.isEmpty() -> "Keine gespeicherten Reviere vorhanden."
                     visibleProfiles.isEmpty() -> "Alle Reviere sind auf diesem Geraet ausgeblendet."
@@ -473,29 +515,59 @@ internal fun JagdkarteScreen(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            snapshot = null
-            status = error.message ?: "Reviere konnten nicht geladen werden."
+            if (cachedProfiles.isNotEmpty()) {
+                profiles = cachedProfiles.map { it.snapshot.profile }.distinctBy { it.id }
+                val cachedIds = profiles.map { it.id }.toSet()
+                hiddenProfileIds = TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)
+                    .intersect(cachedIds)
+                if (selectedId !in cachedIds) {
+                    selectedId = TrackerPreferences.lastHuntingProfileId(context, repository.userId)
+                        ?.takeIf { it in cachedIds }
+                }
+                status = "Offline: gespeicherte Reviere. ${error.message ?: "Aktualisierung nicht moeglich."}"
+            } else {
+                status = error.message ?: "Reviere konnten nicht geladen werden."
+            }
         } finally {
             loading = false
         }
     }
 
     LaunchedEffect(selectedId, signedIn, revision) {
-        snapshot = null
         val profileId = selectedId?.takeIf { signedIn } ?: return@LaunchedEffect
+        snapshot = withContext(Dispatchers.IO) { offlineCache.load(repository.userId, profileId)?.snapshot }
+        snapshot?.cachedAt?.let { cachedAt ->
+            status = "Offline-Stand vom $cachedAt. Live-Positionen fehlen."
+        }
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            var consecutiveFailures = 0
             try {
                 while (true) {
                     try {
-                        snapshot = repository.snapshot(profileId)
+                        val freshSnapshot = repository.snapshot(profileId)
+                        snapshot = freshSnapshot
+                        withContext(Dispatchers.IO) {
+                            runCatching { offlineCache.save(repository.userId, freshSnapshot) }
+                        }
+                        consecutiveFailures = 0
                         status = "Stand: ${java.time.LocalTime.now().withNano(0)}"
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
-                        snapshot = null
-                        status = error.message ?: "Aktualisierung fehlgeschlagen."
+                        consecutiveFailures++
+                        val cached = withContext(Dispatchers.IO) { offlineCache.load(repository.userId, profileId) }
+                        if (cached != null) {
+                            snapshot = cached.snapshot
+                            status = "Offline-Stand vom ${cached.savedAt}. Live-Positionen fehlen."
+                        } else {
+                            snapshot = null
+                            status = error.message ?: "Aktualisierung fehlgeschlagen."
+                        }
                     }
-                    delay(30_000)
+                    val retryDelay = if (consecutiveFailures > 0) {
+                        minOf(300_000L, 30_000L * (1L shl (consecutiveFailures - 1).coerceAtMost(4)))
+                    } else if (snapshot?.profile?.huntingMode == true) 30_000L else 300_000L
+                    delay(retryDelay)
                 }
             } finally {
                 snapshot = null
@@ -530,6 +602,7 @@ internal fun JagdkarteScreen(
                                 sharingStatus = ""
                                 snapshot = null
                                 selectedId = profile.id
+                                TrackerPreferences.setLastHuntingProfileId(context, repository.userId, profile.id)
                                 menuOpen = false
                             })
                         }
@@ -555,17 +628,19 @@ internal fun JagdkarteScreen(
         }
         NativeHuntingMap(snapshot, now, Modifier.weight(1f).fillMaxWidth(), onChooseLocation = { coordinates ->
             val current = snapshot
-            if (current != null && locationInsideBoundary(current.profile.boundary, coordinates.latitude, coordinates.longitude)) {
+            if (current != null && !current.isStale &&
+                locationInsideBoundary(current.profile.boundary, coordinates.latitude, coordinates.longitude)) {
                 markerCoordinates = coordinates
                 markerProfile = current
                 true
             } else {
-                status = "Die Markierung muss innerhalb der hinterlegten Reviergrenze liegen."
+                status = if (current?.isStale == true) "Offline-Stand: Markierungen koennen erst online geaendert werden."
+                else "Die Markierung muss innerhalb der hinterlegten Reviergrenze liegen."
                 false
             }
         }, markerIconSize = markerIconSize, focusMarkerId = guestFocusMarkerId,
             focusRequest = guestFocusRequest, currentUserId = repository.userId, onMarkerSelected = { markerId ->
-            editingMarker = snapshot?.points?.firstOrNull { it.markerId == markerId }
+            editingMarker = snapshot?.takeUnless { it.isStale }?.points?.firstOrNull { it.markerId == markerId }
         }, statusMessage = status,
             ownLocationVisible = ownLocationVisible,
             onToggleOwnLocation = {
@@ -620,7 +695,7 @@ internal fun JagdkarteScreen(
                         } else Text(if (profile.profile.huntingMode) "Aktiv" else "Aus")
                     }
                     if (snapshot != null || gatewayState.active || gatewayState.starting || gatewayState.status.isNotBlank()) {
-                        RelayGatewayControls(canStart = signedIn && profile.profile.huntingMode &&
+                        RelayGatewayControls(canStart = signedIn && !profile.isStale && profile.profile.huntingMode &&
                             !TrackerPreferences.isTracking(context), state = gatewayState, onEnable = {
                             val id = selectedId
                             if (id != null) {
@@ -636,14 +711,29 @@ internal fun JagdkarteScreen(
                             }
                         }, onStop = { RelayGateway.stop(context) })
                     }
-                    if (profile.profile.huntingMode || sharing) {
+                    if (profile.isStale) {
+                        Text("Offline gespeicherter Stand: Aenderungen und Standortfreigaben benoetigen eine Verbindung.",
+                            style = MaterialTheme.typography.bodySmall)
+                    } else if (profile.profile.huntingMode || sharing) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Standort mit diesem Revier teilen", Modifier.weight(1f),
                                 style = MaterialTheme.typography.labelLarge)
                             Switch(sharing, onCheckedChange = { enabled ->
-                                if (!enabled) sharing = false
+                                if (!enabled) {
+                                    sharing = false
+                                    selectedId?.let { profileId ->
+                                        TrackerPreferences.setLocationShareConsent(context, repository.userId,
+                                            profileId, false)
+                                    }
+                                }
                                 else if (androidx.core.content.ContextCompat.checkSelfPermission(context,
-                                        Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) sharing = true
+                                        Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                                    sharing = true
+                                    selectedId?.let { profileId ->
+                                        TrackerPreferences.setLocationShareConsent(context, repository.userId,
+                                            profileId, true)
+                                    }
+                                }
                                 else {
                                     permissionProfileId = selectedId
                                     locationPermission.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -660,7 +750,8 @@ internal fun JagdkarteScreen(
                         }, modifier = Modifier.fillMaxWidth()) { Text("Reviergrenze bearbeiten") }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { dogsOpen = true }, modifier = Modifier.weight(1f)) { Text("Hunde") }
+                        TextButton(onClick = { dogsOpen = true }, enabled = !profile.isStale,
+                            modifier = Modifier.weight(1f)) { Text("Hunde") }
                         if (profile.canEdit) TextButton(onClick = { inviteProfile = profile.profile },
                             modifier = Modifier.weight(1f)) { Text("Einladen") }
                     }
@@ -669,7 +760,7 @@ internal fun JagdkarteScreen(
                         modifier = Modifier.fillMaxWidth()) {
                         Text(if (jwdExportBusy) "JWD exportieren ..." else "JWD exportieren")
                     }
-                    if (canDeleteHuntingProfile(profile.profile, repository.userId)) {
+                    if (!profile.isStale && canDeleteHuntingProfile(profile.profile, repository.userId)) {
                         TextButton(onClick = {
                             profilePendingDeletion = profile.profile
                             profileDeleteError = ""
@@ -859,7 +950,8 @@ internal fun JagdkarteScreen(
 
     val markerContext = markerProfile
     val coordinates = markerCoordinates
-    if (markerContext != null && coordinates != null && selectedId == markerContext.profile.id && signedIn) {
+    if (markerContext != null && !markerContext.isStale && coordinates != null &&
+        selectedId == markerContext.profile.id && signedIn) {
         MarkerCreateDialog(markerContext.profile, markerContext.canEdit, coordinates,
             onCreate = { draft, currentLocation -> repository.createMarker(markerContext.profile.id, draft, currentLocation) },
             onCreated = { markerCoordinates = null; markerProfile = null; revision++ },
@@ -868,7 +960,7 @@ internal fun JagdkarteScreen(
 
     val editContext = snapshot
     val markerToEdit = editingMarker
-    val canDeleteSelectedMarker = editContext != null && markerToEdit != null &&
+    val canDeleteSelectedMarker = editContext != null && !editContext.isStale && markerToEdit != null &&
         canDeleteHuntingMarker(editContext.canEdit, repository.userId, markerToEdit)
     if (editContext != null && markerToEdit != null && canDeleteSelectedMarker &&
         selectedId == editContext.profile.id && signedIn) {
@@ -1208,6 +1300,37 @@ internal fun NativeHuntingMap(
             controller.setCenter(GeoPoint(51.2, 7.0))
         }
     }
+    DisposableEffect(map, currentUserId, snapshot?.profile?.id) {
+        val profileId = snapshot?.profile?.id
+        if (profileId == null) return@DisposableEffect onDispose { }
+        val handler = Handler(Looper.getMainLooper())
+        val saveCamera = Runnable {
+            val center = map.mapCenter
+            TrackerPreferences.setMapCamera(context, currentUserId, profileId,
+                HuntingMapCamera(center.latitude, center.longitude, map.zoomLevelDouble))
+        }
+        val queueSave = {
+            handler.removeCallbacks(saveCamera)
+            handler.postDelayed(saveCamera, 500)
+        }
+        val mapListener = object : MapListener {
+            override fun onScroll(event: ScrollEvent?): Boolean {
+                queueSave()
+                return false
+            }
+
+            override fun onZoom(event: ZoomEvent?): Boolean {
+                queueSave()
+                return false
+            }
+        }
+        map.addMapListener(mapListener)
+        onDispose {
+            handler.removeCallbacks(saveCamera)
+            saveCamera.run()
+            map.removeMapListener(mapListener)
+        }
+    }
     val ownLocationOverlay = remember(map) { MyLocationNewOverlay(GpsMyLocationProvider(context), map) }
     var fittedProfileId by remember { mutableStateOf<String?>(null) }
     var focusedGuestRequest by remember { mutableStateOf(-1) }
@@ -1377,7 +1500,7 @@ internal fun NativeHuntingMap(
                 if (ownLocationVisible) view.overlays.add(ownLocationOverlay)
                 val guestTarget = points.firstOrNull { it.markerId == focusMarkerId }
                 if (snapshot != null && guestTarget != null && focusedGuestRequest != focusRequest) {
-                    fittedProfileId = snapshot.profile.id
+                    fittedProfileId = "$currentUserId:${snapshot.profile.id}"
                     focusedGuestRequest = focusRequest
                     view.post {
                         view.controller.setZoom(16.0)
@@ -1390,12 +1513,22 @@ internal fun NativeHuntingMap(
                         val box = BoundingBox.fromGeoPoints(previewBounds)
                         view.post { view.zoomToBoundingBox(box, false, 48, 17.0, null) }
                     }
-                } else if (snapshot != null && fittedProfileId != previewBoundaryKey.ifBlank { snapshot.profile.id }) {
-                    fittedProfileId = previewBoundaryKey.ifBlank { snapshot.profile.id }
-                    if (bounds.isEmpty()) bounds.addAll(points.map { GeoPoint(it.latitude, it.longitude) })
-                    if (bounds.isNotEmpty()) {
-                        val box = BoundingBox.fromGeoPoints(bounds)
-                        view.post { view.zoomToBoundingBox(box, false, 48, 17.0, null) }
+                } else if (snapshot != null && fittedProfileId != previewBoundaryKey.ifBlank { "$currentUserId:${snapshot.profile.id}" }) {
+                    fittedProfileId = previewBoundaryKey.ifBlank { "$currentUserId:${snapshot.profile.id}" }
+                    val savedCamera = if (previewBoundaryKey.isBlank()) {
+                        TrackerPreferences.mapCamera(context, currentUserId, snapshot.profile.id)
+                    } else null
+                    if (savedCamera != null) {
+                        view.post {
+                            view.controller.setZoom(savedCamera.zoom)
+                            view.controller.setCenter(GeoPoint(savedCamera.latitude, savedCamera.longitude))
+                        }
+                    } else {
+                        if (bounds.isEmpty()) bounds.addAll(points.map { GeoPoint(it.latitude, it.longitude) })
+                        if (bounds.isNotEmpty()) {
+                            val box = BoundingBox.fromGeoPoints(bounds)
+                            view.post { view.zoomToBoundingBox(box, false, 48, 17.0, null) }
+                        }
                     }
                 }
                 view.invalidate()
@@ -1496,7 +1629,7 @@ internal fun NativeHuntingMap(
                     if (boundaryEdit.drawingPoints != null) "Grenzpunkt an Kartenmitte hinzufuegen" else "Grenzpunkt zur Kartenmitte verschieben")
             }
         }
-        if (snapshot != null && boundaryEdit == null) {
+        if (snapshot != null && !snapshot.isStale && boundaryEdit == null) {
             if (choosingPosition) {
                 Icon(Icons.Default.LocationOn, "Zielposition", Modifier.align(Alignment.Center).offset(y = (-20).dp).size(40.dp),
                     tint = MaterialTheme.colorScheme.primary)

@@ -50,7 +50,9 @@ Positionsbezogene Gastlinks laufen nach sieben Tagen ab und koennen weitergegebe
 
 ## Hunde und Tracker
 
-Oeffne Revier und Verwaltung, aktiviere bei Bedarf den Jagdmodus und waehle Hunde. Owner und Bearbeiter koennen einen Hund registrieren, ein Smartphone koppeln oder einen verlorenen Schluessel durch erneutes Koppeln widerrufen.
+Oeffne Revier und Verwaltung, aktiviere bei Bedarf den Jagdmodus und waehle Hunde. Owner und Bearbeiter koennen einen Hund registrieren und ein Smartphone koppeln. Mit Tracker-Kamera scannst du den von Jagdkarte angezeigten QR-Code im DogTracker oder gibst den Schluessel manuell ein.
+
+Hat das Tracker-Smartphone keine Kamera, waehle dort **QR-Code fuer Jagdkarte anzeigen**. In Jagdkarte beim passenden Hund **DogTracker-QR scannen** waehlen; nach der Erfolgsmeldung zum Tracker zurueckkehren und **Jagdkarte hat gekoppelt** bestaetigen. Dieser Gegenweg ist erst nach Ausrollen der `register_hunting_dog_device_token`-Migration im gemeinsamen Backend verfuegbar. Bis dahin den QR-Code aus Jagdkarte oder die manuelle Schluesseleingabe verwenden.
 
 Der Geraeteschluessel wird nur einmal angezeigt. Halte ihn geheim. Pro Hund kann ein Smartphone aktiv gekoppelt sein. Die Tracker-App braucht Standortberechtigung und fuer verlaessliches Tracking meist auch Benachrichtigungs- und Hintergrundberechtigung.
 
@@ -92,7 +94,9 @@ Fuer Offline-Karten importierst du ein Mapsforge-.map-Paket und die passende .po
 
 Oeffentliche Reviergrenzen werden nicht automatisch geladen oder aktualisiert. Speichere einzelne Suchtreffer ausdruecklich ueber Offline speichern. Bei unklarer Lizenz musst du bestaetigen, dass du die Nutzungsbedingungen geprueft hast. Gespeicherte Grenzen findest und entfernst du unter Offline-Grenzen.
 
-Der Grenzcache liegt getrennt von Kartenpaketen im privaten, vom Android-Backup ausgeschlossenen Speicher. Er synchronisiert nicht mit PWA oder Konto und umfasst keine privaten Profile, Marker oder Live-Positionen. Die Suche selbst braucht Internet.
+Beim naechsten Start oeffnet sich der zuletzt verwendete Bereich. In der Jagdkarte werden letztes Revier, Kartenposition und Zoom wiederhergestellt.
+
+Der zuletzt online geladene Revierstand mit Grenze und Markierungen kann danach verschluesselt fuer hoechstens sieben Tage offline angesehen werden. Er liegt getrennt von Kartenpaketen im privaten, vom Android-Backup ausgeschlossenen Speicher; maximal 20 Reviere, 4 MiB je Revier und 32 MiB insgesamt. Die Offlineansicht ist als veraltet markiert und nur lesbar. Teilnehmer- und Hund-Livepositionen sind nicht enthalten. Aenderungen, Einladungen und Standortfreigaben brauchen weiterhin eine Verbindung. Der Cache synchronisiert nicht mit PWA oder Konto. Die oeffentliche Suche braucht Internet.
 
 ## Wenn etwas nicht klappt
 
