@@ -435,9 +435,11 @@ internal fun JagdkarteScreen(
     LaunchedEffect(lifecycle, selectedId, signedIn, huntingAccess.ready) {
         if (selectedId == null || !signedIn || !huntingAccess.ready) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            relayRetryTick++
             while (true) {
+                val remaining = nextRelayAttemptAt - android.os.SystemClock.elapsedRealtime()
+                delay(if (remaining > 0) remaining else 30_000)
                 relayRetryTick++
-                delay(30_000)
             }
         }
     }

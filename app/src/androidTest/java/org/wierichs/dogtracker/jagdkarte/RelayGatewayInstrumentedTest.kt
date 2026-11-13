@@ -1,5 +1,7 @@
 package org.wierichs.dogtracker.jagdkarte
 
+import android.content.ContextWrapper
+import android.content.Intent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasClickAction
@@ -10,13 +12,18 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.wierichs.dogtracker.communication.RelayGatewayStatus
+import org.wierichs.dogtracker.communication.RelayGateway
 import org.wierichs.dogtracker.HuntingPermissionSettings
 import org.wierichs.dogtracker.HuntingPermissionState
 import org.wierichs.dogtracker.TrackerPreferences
@@ -57,6 +64,28 @@ class RelayGatewayInstrumentedTest {
             assertTrue(TrackerPreferences.permissionIntroductionCompleted(context))
         } finally {
             TrackerPreferences.setHuntingFunctionsConsent(context, false)
+        }
+    }
+
+    @Test fun relayHandoverWaitsForServiceCleanupBeforeTheEngineIsPublished() = runBlocking {
+        assertNull(RelayGateway.engine)
+        val originalState = RelayGateway.state.value
+        val stopRequested = CompletableDeferred<Unit>()
+        val context = object : ContextWrapper(InstrumentationRegistry.getInstrumentation().targetContext) {
+            override fun stopService(name: Intent): Boolean {
+                stopRequested.complete(Unit)
+                return true
+            }
+        }
+        RelayGateway.state.value = RelayGatewayStatus(starting = true)
+        try {
+            val handover = async { RelayGateway.stopAndAwait(context) }
+            stopRequested.await()
+            assertFalse(handover.isCompleted)
+            RelayGateway.state.value = RelayGatewayStatus()
+            handover.await()
+        } finally {
+            RelayGateway.state.value = originalState
         }
     }
 

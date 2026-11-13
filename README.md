@@ -99,15 +99,19 @@ bleibt davon unberuehrt.
 	erklaert und angefordert. Ohne vollstaendige Berechtigungen und ausdrueckliche
 	App-Freigabe bleiben Jagdmodus-Steuerung, Livepositionen und Tracking-Start
 	ausgeblendet; Karten- und Verwaltungsfunktionen bleiben nutzbar.
-- **Jagdteilnahme freigeben** unter **Revier und Verwaltung** bestaetigt eigene
-	Standortfreigabe und Relais gemeinsam fuer das ausgewaehlte Konto/Revier auf
-	diesem Geraet. Ein frischer GPS-Fix und die Grenzpruefung mit JTS sind
-	erforderlich. Beim Start und nach Rueckkehr aus Android-Einstellungen werden
-	Berechtigungen erneut geprueft; die gemerkte Zustimmung aktiviert die Teilnahme
-	erst nach frischer Onlinepruefung und bei aktivem Jagdmodus. Eine fruehere
-	reine Standort- oder Android-Zustimmung wird nicht als gemeinsame Freigabe
-	uebernommen. Wechsel, Abmelden, Jagdmodus aus und Pausieren der Karte beenden
-	die eigene Uebertragung; **Teilnahme beenden** widerruft die gemerkte Zustimmung.
+- Nach der geraetebezogenen Zustimmung laufen Relais und eigene Standortfreigabe
+	im Jagdmodus des ausgewaehlten Reviers automatisch; eine weitere Revierfreigabe
+	oder ein separater Relaisschalter entfaellt, auch in der Benachrichtigung.
+	Ein frischer GPS-Fix, die Grenzpruefung mit JTS und frische Onlineautorisierung
+	bleiben erforderlich. Fehlgeschlagene Relaisstarts werden automatisch erneut
+	versucht. Bestehende Installationen muessen die erweiterte automatische
+	Standortfreigabe einmal in der Einrichtung bestaetigen; alte Zustimmungen
+	oder vorhandene Android-Berechtigungen allein reichen nicht.
+	Wechsel, Abmelden und Jagdmodus aus beenden die bisherige eigene Uebertragung.
+	Beim Pausieren der Karte endet die eigene Standorterfassung; das Relais kann
+	sichtbar im Hintergrund weiterarbeiten. **Jagdfunktionen deaktivieren**
+	beendet alle Jagddienste. Ein ausdruecklich gestarteter DogTracker uebernimmt
+	das Relais erst nach beendetem Revier-Relais, ohne parallele Teilnehmerortung.
 - Jagdmodus-Steuerung durch Owner und Bearbeiter sowie Hunderegistrierung und
 	Smartphone-Kopplung ueber die vorhandenen, serverseitig geschuetzten RPCs.
 	Einmalige Schluessel erscheinen als QR-Code in einem gegen Screenshots

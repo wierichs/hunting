@@ -108,15 +108,28 @@ Standort-/Nearby-/Netzwerk-/Benachrichtigungsberechtigungen und App-Freigabe
 bleiben Jagdmodus-Steuerung, Livepositionen und Tracking-Start ausgeblendet.
 Revierverwaltung und bestehende Serverrollen bleiben unveraendert.
 
-**Jagdteilnahme freigeben** ersetzt die separaten Standort-/Relaisschalter
-durch eine ausdrueckliche gemeinsame Zustimmung pro Konto/Revier auf dem Geraet.
-Die automatische Wiederaufnahme braucht erneut gepruefte Berechtigungen,
-frische Onlineautorisierung und aktiven Jagdmodus. Die Stoppaktion in App oder
-Relaisbenachrichtigung widerruft die Revierzustimmung. Eigene Teilnehmerfixes
-bleiben auf die aktive Karte begrenzt; DogTracker startet weiterhin nur nach
-**Tracking starten** und nutzt Relais innerhalb dieser Sitzung automatisch.
-Alte reine Standortzustimmungen werden nicht zur gemeinsamen Freigabe migriert.
-Gezielte Pruefung: 20 Android-Tests fuer Start, Konto-/Revierzustimmung,
+Die geraetebezogene Einrichtung bestaetigt automatische Standortfreigabe und
+Relais im Jagdmodus des ausgewaehlten Reviers. Separate Teilnahme- und
+Relaisschalter sowie die Relais-Stoppaktion in der Benachrichtigung entfallen.
+Der automatische Start braucht erneut gepruefte Berechtigungen und frische
+Onlineautorisierung; Fehlstarts werden automatisch erneut versucht.
+Eigene Teilnehmerfixes bleiben auf die aktive Karte begrenzt; das Relais darf
+im Hintergrund weiterarbeiten. DogTracker startet weiterhin nur nach
+**Tracking starten**, wartet auf die Beendigung des Revier-Relais und uebernimmt
+den Relaisbetrieb ohne parallele Teilnehmerortung. Die gesamte Einrichtung
+kann weiterhin deaktiviert werden. Bestehende Installationen muessen der
+erweiterten automatischen Standortfreigabe einmal neu zustimmen.
+Die automatische Teilnahme ist mit 29 gezielten Android-Tests auf dem
+isolierten API-37-Emulator geprueft: Start ohne separate Revierzustimmung,
+kein Start ohne Einrichtung oder Jagdmodus, Wiederholung nach Fehlstart,
+fehlende manuelle Relaissteuerung, Altzustimmungspruefung sowie erfolgreiche
+und fehlgeschlagene DogTracker-Uebergabe einschliesslich laufender
+Relaisinitialisierung. Vorhandene Einladungs-, Scanner- und Kopplungstests
+bestehen weiterhin. Debug und signierte Release sind gebaut; das bisherige
+Signaturzertifikat ist unveraendert. Diese Version ist noch nicht auf den
+echten Smartphones installiert; Relais und Kopplung brauchen weiterhin den
+Mehrgeraetetest.
+Vorherige gezielte Pruefung: 20 Android-Tests fuer Start, Konto-/Revierzustimmung,
 Berechtigungssichtbarkeit, Hunde und Hilfe bestehen auf dem isolierten API-37-
 Emulator. Der direkte Android-Testlaeufer hat alle drei ausgewaehlten Klassen
 ausgefuehrt; der Gradle-Aufruf mit kommasepariertem Klassenparameter hatte nur
@@ -546,12 +559,14 @@ wiederholen.
 - **Offen**: Auf einem Geraet Erststart mit Jagdkarte und ueberspringbarer
   Berechtigungserklaerung, Tabwechsel und
   Kaltstart-Wiederherstellung pruefen. Letztes Konto/Revier, Kartenmitte, Zoom,
-  Vollbild und die pro Revier gespeicherte gemeinsame Teilnahmezustimmung kontrollieren.
+  Vollbild und die geraetebezogene Zustimmung zur automatischen Jagdteilnahme kontrollieren.
   Fehlende oder widerrufene Android-Berechtigungen muessen Jagdfunktionen
   ausblenden und die Uebertragung stoppen; nach Rueckkehr aus den Einstellungen
   wird erneut geprueft. Vorhandene Android-Berechtigungen allein duerfen keine
-  Zustimmung erzeugen. Teilnahme beenden muss die automatische Wiederaufnahme
-  verhindern. Konto- und Revierwechsel duerfen keine Zustimmung uebertragen.
+  Zustimmung erzeugen. Bestehende Einrichtung muss die erweiterte automatische
+  Standortfreigabe erneut erklaeren. Jagdfunktionen deaktivieren muss die
+  automatische Wiederaufnahme verhindern. Konto- und Revierwechsel muessen
+  den bisherigen Relaisbetrieb beenden und das neue Revier frisch autorisieren.
 - **Offen**: Nach Onlineabruf Revier wechseln und App neu starten; im Flugmodus
   muss der letzte Snapshot als veraltet und read-only erscheinen. Keine
   Teilnehmer-/Hund-Livepositionen anzeigen oder puffern; nach sieben Tagen muss

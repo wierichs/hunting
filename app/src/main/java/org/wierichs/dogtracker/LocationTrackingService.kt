@@ -79,13 +79,6 @@ class LocationTrackingService : Service() {
             startNearbyRelayIfEligible()
             return START_STICKY
         }
-        if (intent?.action == ACTION_RELAY_STOP) {
-            stopNearbyRelay()
-            if (TrackerPreferences.isTracking(this)) {
-                updateForegroundServiceTypes(includeNearbyRelay = false)
-            }
-            return START_STICKY
-        }
 
         val endpoint = TrackerPreferences.endpoint(this)
         val intervalSeconds = intent?.getLongExtra(
@@ -345,7 +338,6 @@ class LocationTrackingService : Service() {
         const val ACTION_START = "org.wierichs.dogtracker.action.START"
         const val ACTION_STOP = "org.wierichs.dogtracker.action.STOP"
         const val ACTION_RELAY_READY = "org.wierichs.dogtracker.action.RELAY_READY"
-        const val ACTION_RELAY_STOP = "org.wierichs.dogtracker.action.RELAY_STOP"
         const val EXTRA_INTERVAL_SECONDS = "interval_seconds"
 
         private const val NOTIFICATION_CHANNEL_ID = "location_tracking"

@@ -62,6 +62,7 @@ class ProfileInvitationInstrumentedTest {
 
     @After fun clearSignedInAccount() {
         composeRule.runOnIdle { lifecycleOwner.registry.currentState = Lifecycle.State.DESTROYED }
+        TrackerPreferences.setLastHuntingProfileId(context, userId, null)
         DeviceTokenStorage.clear(context, sessionFile, synchronous = true)
         DeviceTokenStorage.clear(context, EMAIL_AUTH_REQUEST_FILE, synchronous = true)
     }
