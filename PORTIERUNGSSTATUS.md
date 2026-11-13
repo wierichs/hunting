@@ -1,6 +1,6 @@
 # Android-Portierungsstatus
 
-Stand: 2026-11-11
+Stand: 2026-11-13
 
 ## Ziel und Geltungsbereich
 
@@ -27,20 +27,119 @@ Arbeitsgegenstand wird nur nach gemeinsamer Festlegung eingetragen.
 
 ## Aktueller Fokus
 
+Die native App heisst jetzt **Jagdbruder**. Jagdkarte und DogTracker bleiben
+die beiden App-Bereiche; App-ID, Anmeldelinks und Signierkonfiguration bleiben
+unveraendert. Die APK-Dateinamen sind **Jagdbruder.apk** fuer Release und
+**Jagdbruder-debug.apk** fuer Debug.
+Debug-/Release-Build und zwei gezielte Android-Tests fuer Einrichtung und
+Navigation bestehen. Beide APKs enthalten den App-Namen Jagdbruder und die
+bisherige App-ID; das Release-Zertifikat stimmt weiterhin mit der bisherigen
+signierten APK ueberein.
+
+Der Einladungsweg fuer bereits angemeldete Konten ist korrigiert:
+Ausstehende PWA-/Android-Einladungen werden vor dem Laden der Revierliste
+bei Start, Wiederaufnahme der Karte und Aktualisierung serverseitig angenommen.
+PWA-Mail-Links ohne eigene lokale Mailanforderung ersetzen keine bestehende
+Sitzung; Revier und Bearbeiterrolle stammen weiterhin vom Server fuer die
+bestaetigte Konto-E-Mail. Zwei neue Emulator-Tests pruefen sichtbare
+Revierauswahl, Annahmereihenfolge, Wiederaufnahme und unveraenderte Sitzung.
+Insgesamt bestehen 9 gezielte Android- und 20 JVM-Tests sowie Debug-/Release-
+Build und Signaturpruefung. Die Korrektur ist noch nicht auf dem Smartphone
+installiert; die reale PWA-Einladung wird dort nach dem Update abgenommen.
+
+Der QR-Scanner-Absturz auf dem Motorola moto g54 5G (Android 15) wurde anhand
+des passenden Release-Mappings auf fehlende ML-Kit-Komponenten zurueckgefuehrt.
+Eine gezielte R8-Regel erhaelt die reflektiv benoetigten Registrar-Konstruktoren;
+die Release-Optimierung und die berechtigungsfreie Google-Code-Scanner-
+Integration bleiben erhalten. Ein isolierter nativer Android-Prueflauf gegen
+die echte signierte APK reproduziert vor der Regel die identische
+NullPointerException und bestaetigt danach die erfolgreiche Scanner-Erstellung.
+Der Nutzer hat die Kamera und das echte QR-Lesen auf dem Motorola nach dem
+Update bestaetigt; das POCO ist das QR-erzeugende DogTracker-Geraet.
+
+Die anschliessend gemeldete fehlende Kopplungsrueckmeldung wird mit einem
+eigenen Wartedialog in Jagdkarte und unmittelbar sichtbarem Fortschritt,
+Fehlerhinweis und Ergebnisdialog im DogTracker adressiert. Jagdkarte zeigt
+Erfolg nur nach serverseitigem Nachweis fuer genau Hund und gescannten QR-Code,
+nicht bereits nach dem Vormerken und nicht wegen eines alten aktiven Trackers.
+Die additive, rein lesende Migration
+`supabase/migrations/202611130001_dog_device_pairing_status.sql` ist vorbereitet:
+Der Nutzer bestaetigt die Ausfuehrung im Supabase-Projekt; die Uebernahme in
+die gemeinsamen PWA-Migrationen ist hier nicht nachgewiesen.
+Sie erweitert keine Tabellenrechte und veraendert keine bestehende Kopplung.
+Die Statuspruefung laeuft nur bei geoeffnetem Wartedialog und sichtbarer App;
+bei einem Fehler ist ein erneuter Versuch moeglich. Die Abnahme dieses Ablaufs
+auf beiden echten Smartphones steht noch aus; beide benoetigen das neue Update.
+Die urspruengliche Rueckmeldung bestand 17 fokussierte Android-Tests auf dem isolierten API-37-Emulator,
+sechs JVM-Kopplungstests und vier PostgreSQL/PGlite-Pruefschritte fuer Status,
+Rollenrechte, exakte QR-Zuordnung und Abbruch. Debug und signierte Release
+bauen erfolgreich; das bestehende Release-Zertifikat bleibt unveraendert.
+
+Die anschliessende echte Smartphone-Abnahme zeigte einen weiteren Fehler:
+Beim Start des Google-Scanners beendet der Karten-Lebenszyklus seine
+Snapshot-Aktualisierung und entfernt den Snapshot. Der daran gebundene
+Hundedialog wurde dadurch zerstoert; sein Coroutine-Scope konnte das
+Scanner-Ergebnis nicht mehr zum Vormerken der Kopplung verwenden.
+Der Dialog besitzt jetzt einen eigenen, kontogebundenen Revierkontext,
+unabhaengig vom Live-Snapshot. Die Live-Kartenbereinigung bleibt unveraendert.
+Ein Regressionstest durchlaeuft den gesamten Karten-/Scanner-Wechsel bis
+CREATED und zurueck und prueft die tatsaechliche authentifizierte Staging-
+Anfrage samt Hund und gescanntem Token.
+
+Die Hundeliste zeigt jetzt serverseitig nachgewiesene Kopplungen mit gruenem
+Haken beziehungsweise fehlende aktive Kopplungen mit rotem X. Eine offene
+Bestaetigung wird separat angezeigt; Fehler bleiben explizit unbekannt.
+Die rein lesende Migration `supabase/migrations/202611130002_dog_pairing_states.sql`
+ist vorbereitet und muss zusaetzlich ausgerollt werden. Es werden weder
+Schluessel noch Token-Hashes zur Hundeliste uebertragen und keine
+Tabellenrechte erweitert. 20 fokussierte Android-Tests und fuenf isolierte
+PostgreSQL/PGlite-Pruefschritte bestehen, einschliesslich Wiedereroeffnen,
+ausstehendem Ersatz, Statusfehlern und Scanner-Lebenszyklus.
+Die Statusanzeige besteht zusaetzlich beide Anzeige-/Fehlerfaelle bei 320 dp;
+die Aktionstasten sind zugunsten lesbarer Hundestatus-Texte untereinander
+angeordnet. Die neue signierte APK ist gebaut und zertifikatsgeprueft,
+aber noch nicht auf die echten Smartphones uebertragen.
+
+Die Bedienung ist an Android-Berechtigungen gekoppelt, ohne Persona-Auswahl.
+Beim ersten Start oeffnet die Jagdkarte mit einer ueberspringbaren Erklaerung;
+spaetere Starts behalten die letzte Ansicht. Die geraetebezogene Einrichtung
+ist im Benutzerkonto auch ohne Anmeldung erreichbar. Ohne vollstaendige
+Standort-/Nearby-/Netzwerk-/Benachrichtigungsberechtigungen und App-Freigabe
+bleiben Jagdmodus-Steuerung, Livepositionen und Tracking-Start ausgeblendet.
+Revierverwaltung und bestehende Serverrollen bleiben unveraendert.
+
+**Jagdteilnahme freigeben** ersetzt die separaten Standort-/Relaisschalter
+durch eine ausdrueckliche gemeinsame Zustimmung pro Konto/Revier auf dem Geraet.
+Die automatische Wiederaufnahme braucht erneut gepruefte Berechtigungen,
+frische Onlineautorisierung und aktiven Jagdmodus. Die Stoppaktion in App oder
+Relaisbenachrichtigung widerruft die Revierzustimmung. Eigene Teilnehmerfixes
+bleiben auf die aktive Karte begrenzt; DogTracker startet weiterhin nur nach
+**Tracking starten** und nutzt Relais innerhalb dieser Sitzung automatisch.
+Alte reine Standortzustimmungen werden nicht zur gemeinsamen Freigabe migriert.
+Gezielte Pruefung: 20 Android-Tests fuer Start, Konto-/Revierzustimmung,
+Berechtigungssichtbarkeit, Hunde und Hilfe bestehen auf dem isolierten API-37-
+Emulator. Der direkte Android-Testlaeufer hat alle drei ausgewaehlten Klassen
+ausgefuehrt; der Gradle-Aufruf mit kommasepariertem Klassenparameter hatte nur
+die erste Klasse ausgefuehrt. 15 gezielte JVM-Tests fuer Android-
+Berechtigungsgrenzen und Standortvertraege sowie Debug-/Release-Build bestehen.
+Reale Funk-, GPS- und Serverabnahme dieser Bedienung bleibt offen.
+
 Die zuvor offenen Punkte unter Konto, Hunde und Hilfe sind umgesetzt. Die
-Android-Anmeldung bleibt bewusst beim E-Mail-Code; ein Hinweis im Anmeldedialog
-und in der nativen Hilfe erklaert, dass Mail-Links zur Web-App fuehren koennen.
+Android-Anmeldung verwendet jetzt den Link aus der Anmelde-Mail und bietet
+den Zahlencode weiterhin als Alternative an. Die vorhandenen Mailvorlagen mit
+`token_hash` und `type=email` sowie Standard-PKCE-Code-Rueckgaben werden
+unterstuetzt; Links kehren auch in die bereits offene Hauptansicht zurueck.
 Owner und Bearbeiter koennen Hunde nach Bestaetigung ueber die vorhandene,
 serverseitig berechtigungspruefende RPC loeschen. Die native Hilfe deckt die
 PWA-Themen und Android-Abweichungen einschliesslich Fehlerbehebung ab. Drei
 dedizierte Emulatorpruefungen fuer Hundeloeschung, Gaesterechte und Hilfe
 bestehen; Live-RLS-/Schreibabnahmen bleiben Teil der manuellen Pruefung.
 
-Start und Wiederaufnahme: Beim ersten Start ist DogTracker vorausgewaehlt;
+Start und Wiederaufnahme: Beim ersten Start ist Jagdkarte vorausgewaehlt;
 danach werden letzter Tab und letztes Revier pro Konto, Kartenkamera pro
-Revier und Vollbildansicht wiederhergestellt. Die Standortfreigabe bleibt als
-explizite Zustimmung pro Konto/Revier gemerkt und wird nur nach frischer
-Onlinepruefung, aktivem Jagdmodus und vorhandener Android-Berechtigung
+Revier und Vollbildansicht wiederhergestellt. Die gemeinsame Teilnahmefreigabe
+bleibt als explizite Zustimmung pro Konto/Revier gemerkt und wird nur nach
+frischer Onlinepruefung, aktivem Jagdmodus und vollstaendigen Android-Berechtigungen
 reaktiviert.
 
 Die Kartenbasis und Offlinekarten bleiben wie zuvor umgesetzt. Auf Wunsch
@@ -250,10 +349,21 @@ Pruefbeleg enthalten; ein erfolgreicher Build allein ist keine Funktionsabnahme.
 
 ### Konto, Hunde und Hilfe
 
-- **Angepasst**: Die native Android-App meldet sich bewusst mit E-Mail-Code an.
-  Ein E-Mail-Link kann Browser oder PWA oeffnen und authentifiziert nicht
-  zuverlaessig die native Sitzung. Der Unterschied wird im Anmeldedialog und in
-  der Hilfe erklaert; die PWA unterstuetzt weiterhin ihren eigenen Link-Flow.
+- **Angepasst**: Native Anmeldung und Registrierung funktionieren per
+  E-Mail-Link mit Zahlencode als Alternative. Die Anmeldeanforderung bleibt
+  verschluesselt ueber App-Neustarts erhalten und ist lokal eine Stunde gueltig.
+  Token-Hash-Verifikation beziehungsweise PKCE-Codeaustausch erfolgen beim
+  bestehenden Auth-Server; erst dessen passende Benutzeridentitaet und die
+  gespeicherte Sitzung bestaetigen die Anmeldung. Die direkte Hash-Verifikation
+  prueft keinen PKCE-Pruefwert. Fremde, abgelaufene und uneindeutige Rueckgaben
+  erhalten eine Handlungsanweisung statt einer Erfolgsmeldung.
+  Bestehende PWA-Mail-Links bleiben unveraendert; laut Nutzer wurde
+  `{{ .Token }}` in beiden benoetigten Vorlagen ergaenzt. Echte Mail-/Server-
+  und Smartphone-Abnahme stehen noch aus.
+  20 gezielte JVM-Tests und 12 Android-Tests wurden erfolgreich geprueft
+  (der korrigierte App-Link-Lebenszyklustest in einem separaten Nachlauf).
+  Debug- und signierter Release-Build samt Release-Vital-Lint bestehen;
+  die APK verwendet das bisherige Release-Zertifikat.
 - **Umgesetzt**: Owner und Bearbeiter koennen registrierte Hunde nach
   ausdruecklicher Bestaetigung ueber `delete_hunting_dog` loeschen. Der
   bestehende Serververtrag prueft die Rolle und entfernt zugehoerige
@@ -433,12 +543,15 @@ wiederholen.
 
 ### Karte, Standort und Geraete
 
-- **Offen**: Auf einem Geraet Erststart mit DogTracker, Tabwechsel und
+- **Offen**: Auf einem Geraet Erststart mit Jagdkarte und ueberspringbarer
+  Berechtigungserklaerung, Tabwechsel und
   Kaltstart-Wiederherstellung pruefen. Letztes Konto/Revier, Kartenmitte, Zoom,
-  Vollbild und die pro Revier gespeicherte Standortzustimmung kontrollieren.
-  Widerrufene Android-Berechtigungen duerfen die Freigabe nicht starten; nach
-  erneuter Freigabe darf die vorhandene App-Zustimmung ohne erneuten Dialog
-  weitergelten.
+  Vollbild und die pro Revier gespeicherte gemeinsame Teilnahmezustimmung kontrollieren.
+  Fehlende oder widerrufene Android-Berechtigungen muessen Jagdfunktionen
+  ausblenden und die Uebertragung stoppen; nach Rueckkehr aus den Einstellungen
+  wird erneut geprueft. Vorhandene Android-Berechtigungen allein duerfen keine
+  Zustimmung erzeugen. Teilnahme beenden muss die automatische Wiederaufnahme
+  verhindern. Konto- und Revierwechsel duerfen keine Zustimmung uebertragen.
 - **Offen**: Nach Onlineabruf Revier wechseln und App neu starten; im Flugmodus
   muss der letzte Snapshot als veraltet und read-only erscheinen. Keine
   Teilnehmer-/Hund-Livepositionen anzeigen oder puffern; nach sieben Tagen muss

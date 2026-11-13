@@ -4,7 +4,6 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
-import androidx.core.content.edit
 import java.nio.ByteBuffer
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -32,20 +31,21 @@ internal object DeviceTokenStorage {
         String(cipher.doFinal(Base64.decode(ciphertext, Base64.NO_WRAP)), Charsets.UTF_8)
     }.getOrNull()
 
-    fun write(context: Context, token: String, fileName: String = FILE_NAME) {
+    fun write(context: Context, token: String, fileName: String = FILE_NAME, synchronous: Boolean = false) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, secretKey())
         val ciphertext = cipher.doFinal(token.toByteArray(Charsets.UTF_8))
-        context.applicationContext.getSharedPreferences(fileName, Context.MODE_PRIVATE).edit {
-            putString(KEY_IV, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-            putString(KEY_CIPHERTEXT, Base64.encodeToString(ciphertext, Base64.NO_WRAP))
-        }
+        val editor = context.applicationContext.getSharedPreferences(fileName, Context.MODE_PRIVATE).edit()
+            .putString(KEY_IV, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+            .putString(KEY_CIPHERTEXT, Base64.encodeToString(ciphertext, Base64.NO_WRAP))
+        if (synchronous) check(editor.commit()) { "Verschluesselte Daten konnten nicht dauerhaft gespeichert werden." }
+        else editor.apply()
     }
 
-    fun clear(context: Context, fileName: String) {
-        context.applicationContext.getSharedPreferences(fileName, Context.MODE_PRIVATE).edit {
-            clear()
-        }
+    fun clear(context: Context, fileName: String, synchronous: Boolean = false) {
+        val editor = context.applicationContext.getSharedPreferences(fileName, Context.MODE_PRIVATE).edit().clear()
+        if (synchronous) check(editor.commit()) { "Gespeicherte Zugangsdaten konnten nicht entfernt werden." }
+        else editor.apply()
     }
 
     fun encrypt(plaintext: ByteArray): ByteArray {

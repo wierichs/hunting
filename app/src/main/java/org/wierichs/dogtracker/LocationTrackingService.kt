@@ -62,6 +62,10 @@ class LocationTrackingService : Service() {
             stopTracking()
             return START_NOT_STICKY
         }
+        if (!readHuntingPermissions(this).ready) {
+            stopTracking("Tracking beendet: Jagdfreigabe oder erforderliche Berechtigung fehlt.")
+            return START_NOT_STICKY
+        }
         if (RelayGateway.state.value.active || RelayGateway.state.value.starting) {
             TrackerPreferences.setStatus(this, "DogTracker pausiert: Revier-Relaisfreigabe ist aktiv.")
             TrackerPreferences.setTracking(this, false)
@@ -154,6 +158,10 @@ class LocationTrackingService : Service() {
     }
 
     private fun storeLocation(location: Location) {
+        if (!readHuntingPermissions(this).ready) {
+            stopTracking("Tracking beendet: Jagdfreigabe oder erforderliche Berechtigung fehlt.")
+            return
+        }
         val endpoint = TrackerPreferences.endpoint(this)
         val payload = JSONObject()
             .put("latitude", location.latitude)
@@ -324,11 +332,11 @@ class LocationTrackingService : Service() {
         )
     }
 
-    private fun stopTracking() {
+    private fun stopTracking(status: String = "Tracking gestoppt.") {
         locationCallback?.let { fusedLocationClient.removeLocationUpdates(it) }
         locationCallback = null
         TrackerPreferences.setTracking(this, false)
-        TrackerPreferences.setStatus(this, "Tracking gestoppt.")
+        TrackerPreferences.setStatus(this, status)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

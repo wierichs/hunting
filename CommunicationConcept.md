@@ -38,15 +38,15 @@ Im korrespondierenden `wierichs.github.io/Jagdkarte`-Repository liegt die separa
 
 Der Kotlin-Build, die Envelope-Krypto-Unit-Tests und die Instrumentierungstest-Kompilierung sind erfolgreich. Es war kein Android-Gerät oder Emulator angeschlossen, daher sind Nearby-Pairing, Berechtigungsdialoge und realer Funktransfer noch nicht auf Hardware validiert.
 
-## Native Jagdkarte im Branch AndroidPort
+## Native App Jagdbruder im Branch AndroidPort
 
-Die native Android-App ist ein zusaetzliches Angebot neben der PWA Jagdkarte,
+Die native Android-App Jagdbruder ist ein zusaetzliches Angebot neben der PWA Jagdkarte,
 keine Abloesung. Die PWA bleibt in ihrem jetzigen Funktionsumfang bestehen.
 Gemeinsame Kommunikations- und Servererweiterungen muessen ihre vorhandenen
 Funktionen und Schnittstellen rueckwaertskompatibel erhalten.
 
-Die native Jagdkarte verwendet den vorhandenen Hundetracker innerhalb derselben
-App weiter. Die neue App-ID lautet `org.wierichs.jagdkarte`; die Nearby-
+Jagdbruder verwendet den vorhandenen Hundetracker innerhalb derselben
+App weiter. Die App-ID bleibt `org.wierichs.jagdkarte`; die Nearby-
 Dienstkennung bleibt fuer den Austausch mit dem bestehenden DogTracker
 `org.wierichs.dogtracker`. Der Sicherheitscode wird unabhaengig von der gerade
 geoeffneten Ansicht angezeigt. Anmeldung, Revierdarstellung und
@@ -60,12 +60,25 @@ Ein Benutzerkonto wird nicht als Hundegeraet ausgegeben. Die Registrierung und
 Erneuerung benoetigen Internet; signierte Verzeichnisse erlauben anschliessend
 eine auf zwei Minuten begrenzte Offline-Pruefung der zugelassenen Urspruenge.
 
-Die Android-App bietet eine ausdrueckliche Relaisfreigabe mit sichtbarem
-Foreground-Service, getrennt von der eigenen Standortfreigabe. Eigene
+Die Android-App erklaert die geraetebezogenen Berechtigungen beim ersten Start
+auf der Jagdkarte und bietet die Einrichtung spaeter im Benutzerkonto an.
+Ohne vollstaendige Android-Berechtigungen und App-Freigabe sind Jagdmodus-
+Steuerung, Livepositionen und Tracking-Start ausgeblendet; Verwaltung bleibt
+nutzbar. Die Persona sind Nutzungskontexte, keine auswaehlbaren Rollen.
+
+Eine zusaetzliche Zustimmung pro Konto/Revier erlaubt Relaisbetrieb mit
+sichtbarem Foreground-Service und eigene Standortfreigabe gemeinsam. Separate
+Schalter entfallen; die beiden Zwecke werden ausdruecklich erklaert. Vorhandene
+Android-Berechtigungen allein gelten nicht als Zustimmung zum Teilen.
+Die Teilnahme wird nach Neustart nur mit gemerkter Revierzustimmung,
+vollstaendigen Berechtigungen und frischer Onlinepruefung bei aktivem Jagdmodus
+wieder aufgenommen. Die Stoppaktion widerruft die Revierzustimmung. Im
+DogTracker wird Relais mit der Berechtigungseinrichtung freigegeben und arbeitet
+nur waehrend einer ausdruecklich gestarteten Tracking-Sitzung. Eigene
 Teilnehmerpositionen werden nur bei aktiver Karte erfasst, als
 `participant.location` verschluesselt eingereiht und nach spaetestens
-90 Sekunden ab Messzeit verworfen. Ein aktiviertes Gateway kann auch ohne
-eigene Positionsfreigabe im Hintergrund weiterarbeiten. Hintergrund-GPS fuer
+90 Sekunden ab Messzeit verworfen. Ein aktiviertes Gateway kann waehrend
+pausierter eigener Standortuebertragung im Hintergrund weiterarbeiten. Hintergrund-GPS fuer
 Teilnehmer und automatische Wiederaufnahme nach Prozessende sind noch nicht
 implementiert.
 
@@ -169,7 +182,7 @@ Die lokale Funkentdeckung überträgt keine GPS-Koordinaten und möglichst keine
 
 ## Einwilligung und Datenschutz
 
-- Relaisbetrieb ist standardmäßig ausgeschaltet und muss auf jedem Gerät ausdrücklich aktiviert werden.
+- Relaisbetrieb ist standardmäßig ausgeschaltet und muss auf jedem Gerät ausdrücklich freigegeben werden. Die native App verbindet die Revierzustimmung für Relais und eigene Position in einer gemeinsamen, beide Zwecke erklärenden Freigabe.
 - Nutzer sehen, ob das Gerät eigene Meldungen sendet, Nachrichten anderer Geräte weiterleitet oder als Internet-Gateway arbeitet.
 - Weitergeleitet werden nur Nachrichten der in der Jagdkarte freigegebenen Gruppe; fremde, unbekannte oder nicht prüfbare Daten werden verworfen.
 - Lokale Nachrichten erhalten eine begrenzte Gültigkeitsdauer und ein Speicherlimit. Der Nutzer kann die Warteschlange löschen und Relaisbetrieb jederzeit beenden.

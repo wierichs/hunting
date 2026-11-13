@@ -27,6 +27,10 @@ internal object TrackerPreferences {
     private const val KEY_LOCATION_SHARE_PREFIX = "location_share:"
     private const val KEY_MAP_CAMERA_PREFIX = "map_camera:"
     private const val KEY_MAP_FULL_SCREEN = "map_full_screen"
+    private const val KEY_PERMISSION_INTRODUCTION = "permission_introduction"
+    private const val KEY_HUNTING_FUNCTIONS_CONSENT = "hunting_functions_consent"
+    private const val KEY_AUTOMATIC_HUNTING_CONSENT = "automatic_hunting_consent"
+    private const val KEY_PARTICIPATION_PREFIX = "hunting_participation:"
     val ENDPOINT = BackendConfiguration.dogLocationEndpoint
     val RELAY_ENDPOINT = BackendConfiguration.dogRelayEndpoint
 
@@ -118,7 +122,41 @@ internal object TrackerPreferences {
         preferences(context).getBoolean(KEY_RELAY_ENABLED, false)
 
     fun lastTabIsTracker(context: Context): Boolean =
-        preferences(context).getBoolean(KEY_LAST_TAB_TRACKER, true)
+        preferences(context).getBoolean(KEY_LAST_TAB_TRACKER, false)
+
+    fun permissionIntroductionCompleted(context: Context): Boolean =
+        !requiresAutomaticHuntingConsent(context) && preferences(context).getBoolean(KEY_PERMISSION_INTRODUCTION,
+            preferences(context).contains(KEY_LAST_TAB_TRACKER))
+
+    fun completePermissionIntroduction(context: Context) {
+        preferences(context).edit { putBoolean(KEY_PERMISSION_INTRODUCTION, true) }
+    }
+
+    fun huntingFunctionsConsented(context: Context): Boolean =
+        preferences(context).getBoolean(KEY_HUNTING_FUNCTIONS_CONSENT, false) &&
+            preferences(context).getBoolean(KEY_AUTOMATIC_HUNTING_CONSENT, false)
+
+    fun requiresAutomaticHuntingConsent(context: Context): Boolean =
+        preferences(context).getBoolean(KEY_HUNTING_FUNCTIONS_CONSENT, false) &&
+            !preferences(context).getBoolean(KEY_AUTOMATIC_HUNTING_CONSENT, false)
+
+    fun setHuntingFunctionsConsent(context: Context, enabled: Boolean) {
+        preferences(context).edit {
+            putBoolean(KEY_HUNTING_FUNCTIONS_CONSENT, enabled)
+            putBoolean(KEY_AUTOMATIC_HUNTING_CONSENT, enabled)
+            putBoolean(KEY_RELAY_ENABLED, enabled)
+        }
+    }
+
+    fun huntingParticipationConsented(context: Context, userId: String, profileId: String): Boolean {
+        if (userId.isBlank() || profileId.isBlank()) return false
+        return preferences(context).getBoolean("$KEY_PARTICIPATION_PREFIX$userId:$profileId", false)
+    }
+
+    fun setHuntingParticipationConsent(context: Context, userId: String, profileId: String, enabled: Boolean) {
+        require(userId.isNotBlank() && profileId.isNotBlank())
+        preferences(context).edit { putBoolean("$KEY_PARTICIPATION_PREFIX$userId:$profileId", enabled) }
+    }
 
     fun setLastTabIsTracker(context: Context, selected: Boolean) {
         preferences(context).edit { putBoolean(KEY_LAST_TAB_TRACKER, selected) }

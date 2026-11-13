@@ -3,13 +3,13 @@ package org.wierichs.dogtracker.jagdkarte
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Point
 import android.graphics.Picture
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.PictureDrawable
 import android.net.Uri
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
@@ -68,7 +68,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Text
@@ -128,9 +127,11 @@ import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import org.wierichs.dogtracker.communication.RelayGateway
-import org.wierichs.dogtracker.communication.RelayGatewayService
+import org.wierichs.dogtracker.communication.RelayGatewayStatus
 import org.wierichs.dogtracker.HuntingMapCamera
 import org.wierichs.dogtracker.TrackerPreferences
+import org.wierichs.dogtracker.HuntingPermissionState
+import org.wierichs.dogtracker.HuntingPermissionSettings
 
 private const val MAX_JWD_FILE_SIZE_BYTES = 10 * 1024 * 1024
 internal const val MAX_HUNTING_MAP_ZOOM = 20.0
@@ -164,11 +165,19 @@ internal fun JagdkarteScreen(
     incomingGuestLinkToken: String? = null,
     onGuestLinkReceived: () -> Unit = {},
     isFullScreen: Boolean = false,
-    onFullScreenChanged: (Boolean) -> Unit = {}
+    onFullScreenChanged: (Boolean) -> Unit = {},
+    huntingAccess: HuntingPermissionState = HuntingPermissionState(),
+    onConfigurePermissions: () -> Unit = {},
+    onDisableHuntingFunctions: () -> Unit = {},
+    incomingEmailAuthLink: EmailAuthLink? = null,
+    onEmailAuthLinkReceived: () -> Unit = {},
+    repositoryFactory: (Context) -> JagdkarteRepository = { JagdkarteRepository(it) },
+    dogTrackerScanner: (((String?) -> Unit) -> Unit)? = null,
+    startRelay: (Context, String) -> Unit = { context, profileId -> RelayGateway.start(context, profileId) }
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val repository = remember { JagdkarteRepository(context) }
+    val repository = remember { repositoryFactory(context) }
     val offlineCache = remember { JagdkarteOfflineCache(context) }
     val scope = rememberCoroutineScope()
     var signedIn by remember { mutableStateOf(repository.signedIn) }
@@ -198,6 +207,9 @@ internal fun JagdkarteScreen(
     var profileHideBusy by remember { mutableStateOf(false) }
     var profileHideError by remember { mutableStateOf("") }
     var accountOpen by remember { mutableStateOf(false) }
+    var emailAuthResultOpen by remember { mutableStateOf(false) }
+    var emailAuthBusy by remember { mutableStateOf(false) }
+    var emailAuthError by remember { mutableStateOf("") }
     var displayName by remember { mutableStateOf("") }
     var displayNameBusy by remember { mutableStateOf(false) }
     var displayNameStatus by remember { mutableStateOf("") }
@@ -207,9 +219,8 @@ internal fun JagdkarteScreen(
     var sharing by remember { mutableStateOf(false) }
     var ownLocationVisible by remember { mutableStateOf(false) }
     var sharingStatus by remember { mutableStateOf("") }
-    var permissionProfileId by remember { mutableStateOf<String?>(null) }
     var signingOut by remember { mutableStateOf(false) }
-    var dogsOpen by remember { mutableStateOf(false) }
+    var dogsDialogTarget by remember(repository.userId) { mutableStateOf<DogsDialogTarget?>(null) }
     var helpOpen by remember { mutableStateOf(false) }
     var inviteProfile by remember { mutableStateOf<HuntingProfile?>(null) }
     var pendingGuestLinkToken by remember { mutableStateOf<String?>(null) }
@@ -227,7 +238,17 @@ internal fun JagdkarteScreen(
     var modePending by remember { mutableStateOf(false) }
     val gatewayState by RelayGateway.state.collectAsState()
     val relayForProfile = gatewayState.active && gatewayState.profileId == selectedId
-    var relayPermissionProfileId by remember { mutableStateOf<String?>(null) }
+    var trackerActive by remember { mutableStateOf(TrackerPreferences.isTracking(context)) }
+    var nextRelayAttemptAt by remember(selectedId, huntingAccess.ready, signedIn) { mutableStateOf(0L) }
+    var relayRetryTick by remember { mutableStateOf(0) }
+    DisposableEffect(context, selectedId, repository.userId) {
+        val preferences = context.getSharedPreferences("tracker_settings", Context.MODE_PRIVATE)
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            trackerActive = TrackerPreferences.isTracking(context)
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     var markerCoordinates by remember { mutableStateOf<MarkerCoordinates?>(null) }
     var markerProfile by remember { mutableStateOf<HuntingSnapshot?>(null) }
     var editingMarker by remember { mutableStateOf<HuntingMapPoint?>(null) }
@@ -260,28 +281,6 @@ internal fun JagdkarteScreen(
         } finally { publicBoundaryClaimBusy = false }
     }
     val sharingMutex = remember { Mutex() }
-    val relayPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        val id = relayPermissionProfileId
-        relayPermissionProfileId = null
-        val required = RelayGatewayService.requiredRelayPermissions() +
-            if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()
-        if (id != null && id == selectedId && signedIn && snapshot?.profile?.huntingMode == true && required.all {
-                grants[it] == true || androidx.core.content.ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-            }) {
-            runCatching { RelayGateway.start(context, id) }.onFailure { status = "Relaisdienst konnte nicht gestartet werden." }
-        } else status = "Relaisfreigabe nicht gestartet. Erforderliche Berechtigungen fehlen oder das Revier hat gewechselt."
-    }
-    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        sharing = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true && signedIn &&
-            selectedId == permissionProfileId && snapshot?.profile?.huntingMode == true
-        if (sharing) {
-            permissionProfileId?.let { profileId ->
-                TrackerPreferences.setLocationShareConsent(context, repository.userId, profileId, true)
-            }
-        }
-        permissionProfileId = null
-        if (!sharing) sharingStatus = "Genauer Standort wurde nicht freigegeben."
-    }
     val mapLocationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
@@ -367,6 +366,40 @@ internal fun JagdkarteScreen(
         }
     }
 
+    LaunchedEffect(incomingEmailAuthLink) {
+        val link = incomingEmailAuthLink ?: return@LaunchedEffect
+        emailAuthResultOpen = true
+        emailAuthBusy = true
+        emailAuthError = ""
+        try {
+            if (link !is EmailAuthLink.Rejected && signedIn && repository.pendingEmailSignIn() == null) {
+                emailAuthResultOpen = false
+                revision++
+                status = "Bereits als ${repository.email} angemeldet. Einladungen werden fuer dieses Konto geprueft."
+                return@LaunchedEffect
+            }
+            when (link) {
+                is EmailAuthLink.Rejected -> error(link.message)
+                is EmailAuthLink.Code, is EmailAuthLink.TokenHash -> repository.verifyEmailLink(link)
+            }
+            signedIn = repository.signedIn
+            accountOpen = false
+            emailAuthResultOpen = false
+            revision++
+            status = "Angemeldet."
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            emailAuthError = if (failure is JagdkarteApiException && failure.status in setOf(400, 401, 422))
+                "Der Anmelde-Link ist ungueltig, abgelaufen oder schon verwendet. Bitte eine neue Anmelde-Mail anfordern."
+            else failure.message ?: "Die Anmeldung konnte nicht bestaetigt werden. Verbindung pruefen und erneut versuchen."
+            status = emailAuthError
+        } finally {
+            emailAuthBusy = false
+            onEmailAuthLinkReceived()
+        }
+    }
+
     LaunchedEffect(pendingGuestLinkToken, signedIn, guestLinkAttempt) {
         val token = pendingGuestLinkToken?.takeIf { signedIn } ?: return@LaunchedEffect
         guestLinkBusy = true
@@ -399,42 +432,57 @@ internal fun JagdkarteScreen(
         }
     }
 
-    LaunchedEffect(snapshot?.profile?.huntingMode, relayForProfile) {
-        if (snapshot?.profile?.huntingMode == false || (snapshot == null && !relayForProfile)) sharing = false
-        if (snapshot?.profile?.huntingMode == false && relayForProfile) RelayGateway.stop(context)
+    LaunchedEffect(lifecycle, selectedId, signedIn, huntingAccess.ready) {
+        if (selectedId == null || !signedIn || !huntingAccess.ready) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                relayRetryTick++
+                delay(30_000)
+            }
+        }
     }
 
-    LaunchedEffect(selectedId, signedIn, snapshot?.profile?.huntingMode, snapshot?.isStale, relayForProfile) {
-        val profileId = selectedId ?: return@LaunchedEffect
+    LaunchedEffect(selectedId, signedIn, snapshot?.profile?.huntingMode, snapshot?.isStale,
+        huntingAccess, trackerActive, gatewayState.active, gatewayState.starting, gatewayState.profileId, relayRetryTick) {
+        val profileId = selectedId
         val profile = snapshot?.profile?.takeIf { it.id == profileId }
-        sharing = signedIn && profile?.huntingMode == true && snapshot?.isStale == false && !relayForProfile &&
-            TrackerPreferences.locationShareConsented(context, repository.userId, profileId) &&
-            androidx.core.content.ContextCompat.checkSelfPermission(context,
-                Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val eligible = huntingAccess.ready && signedIn &&
+            profile?.huntingMode == true && !trackerActive
+        sharing = eligible && relayForProfile
+        if ((!huntingAccess.ready || !signedIn || trackerActive || profileId == null ||
+            gatewayState.profileId != profileId || profile?.huntingMode == false) &&
+            (gatewayState.active || gatewayState.starting)) {
+            RelayGateway.stop(context)
+        } else if (profileId != null && eligible && snapshot?.isStale == false &&
+            lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+            android.os.SystemClock.elapsedRealtime() >= nextRelayAttemptAt &&
+            !gatewayState.active && !gatewayState.starting) {
+            nextRelayAttemptAt = android.os.SystemClock.elapsedRealtime() + 30_000
+            try {
+                startRelay(context, profileId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                status = failure.message ?: "Relaisdienst konnte nicht gestartet werden."
+            }
+        }
     }
 
     LaunchedEffect(selectedId, sharing, signedIn, relayForProfile) {
-        val profileId = selectedId?.takeIf { sharing && signedIn } ?: return@LaunchedEffect
+        val profileId = selectedId?.takeIf { sharing && signedIn && relayForProfile } ?: return@LaunchedEffect
         sharingMutex.withLock {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 try {
                     while (true) {
                         try {
                             val location = freshLocation(context)
-                            if (relayForProfile) {
-                                check(RelayGateway.enqueue(profileId, location))
-                                sharingStatus = "Standort lokal gespeichert; Serverbestaetigung siehe Relaisstatus."
-                            } else {
-                                val sent = repository.shareLocation(profileId, location.latitude, location.longitude, location.accuracy)
-                                sharingStatus = if (sent) "Standort vom Server bestaetigt." else "Standort nicht geteilt: ausserhalb der Grenze oder Jagdmodus aus."
-                            }
+                            check(RelayGateway.enqueue(profileId, location))
+                            sharingStatus = "Standort lokal gespeichert; Serverbestaetigung siehe Relaisstatus."
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (_: Exception) {
-                            if (relayForProfile) {
-                                RelayGateway.cancelOwn(profileId)
-                                runCatching { repository.removeLocation(profileId) }
-                            }
+                            RelayGateway.cancelOwn(profileId)
+                            runCatching { repository.removeLocation(profileId) }
                             sharingStatus = "Standort nicht bestaetigt; Verbindung und GPS pruefen."
                         }
                         delay(30_000)
@@ -460,77 +508,87 @@ internal fun JagdkarteScreen(
             hiddenProfileIds = emptySet()
             return@LaunchedEffect
         }
-        loading = true
-        var cachedProfiles = emptyList<CachedHuntingSnapshot>()
-        try {
-            cachedProfiles = withContext(Dispatchers.IO) { offlineCache.allForUser(repository.userId) }
-            if (profiles.isEmpty() && cachedProfiles.isNotEmpty()) {
-                profiles = cachedProfiles.map { it.snapshot.profile }.distinctBy { it.id }
-                val cachedIds = profiles.map { it.id }.toSet()
-                hiddenProfileIds = TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)
-                    .intersect(cachedIds)
-                if (selectedId !in cachedIds) {
-                    selectedId = TrackerPreferences.lastHuntingProfileId(context, repository.userId)
-                        ?.takeIf { it in cachedIds }
-                }
-            }
-            val loadedProfiles = repository.profiles()
-            val availableIds = loadedProfiles.map { it.id }.toSet()
-            val loadedHiddenIds = TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)
-                .intersect(availableIds)
-            profiles = loadedProfiles
-            hiddenProfileIds = loadedHiddenIds
-            val guestTarget = guestLinkDestination
-            if (guestTarget != null) {
-                if (loadedProfiles.any { it.id == guestTarget.profileId }) {
-                    if (guestTarget.profileId in loadedHiddenIds) {
-                        TrackerPreferences.setHuntingProfileHidden(context, repository.userId,
-                            guestTarget.profileId, false)
-                        hiddenProfileIds = loadedHiddenIds - guestTarget.profileId
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            loading = true
+            var cachedProfiles = emptyList<CachedHuntingSnapshot>()
+            try {
+                cachedProfiles = withContext(Dispatchers.IO) { offlineCache.allForUser(repository.userId) }
+                if (profiles.isEmpty() && cachedProfiles.isNotEmpty()) {
+                    profiles = cachedProfiles.map { it.snapshot.profile }.distinctBy { it.id }
+                    val cachedIds = profiles.map { it.id }.toSet()
+                    hiddenProfileIds = TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)
+                        .intersect(cachedIds)
+                    if (selectedId !in cachedIds) {
+                        selectedId = TrackerPreferences.lastHuntingProfileId(context, repository.userId)
+                            ?.takeIf { it in cachedIds }
                     }
-                    selectedId = guestTarget.profileId
-                    TrackerPreferences.setLastHuntingProfileId(context, repository.userId, guestTarget.profileId)
-                    guestFocusMarkerId = guestTarget.markerId
-                    guestFocusRequest++
-                    status = "Gastlink angenommen. Das Revier wurde geoeffnet."
+                }
+                invitationStatus = try {
+                    repository.acceptProfileInvitations()
+                    ""
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    "Einladungen konnten nicht angenommen werden: ${failure.message ?: "Bitte spaeter erneut versuchen."}"
+                }
+                val loadedProfiles = repository.profiles()
+                val availableIds = loadedProfiles.map { it.id }.toSet()
+                val loadedHiddenIds = TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)
+                    .intersect(availableIds)
+                profiles = loadedProfiles
+                hiddenProfileIds = loadedHiddenIds
+                val guestTarget = guestLinkDestination
+                if (guestTarget != null) {
+                    if (loadedProfiles.any { it.id == guestTarget.profileId }) {
+                        if (guestTarget.profileId in loadedHiddenIds) {
+                            TrackerPreferences.setHuntingProfileHidden(context, repository.userId,
+                                guestTarget.profileId, false)
+                            hiddenProfileIds = loadedHiddenIds - guestTarget.profileId
+                        }
+                        selectedId = guestTarget.profileId
+                        TrackerPreferences.setLastHuntingProfileId(context, repository.userId, guestTarget.profileId)
+                        guestFocusMarkerId = guestTarget.markerId
+                        guestFocusRequest++
+                        status = "Gastlink angenommen. Das Revier wurde geoeffnet."
+                    } else {
+                        selectedId = null
+                        status = "Das Revier aus dem Gastlink ist fuer dieses Konto nicht verfuegbar."
+                    }
+                    guestLinkDestination = null
                 } else {
-                    selectedId = null
-                    status = "Das Revier aus dem Gastlink ist fuer dieses Konto nicht verfuegbar."
+                    val visibleProfiles = loadedProfiles.filterNot { it.id in loadedHiddenIds }
+                    val rememberedProfileId = TrackerPreferences.lastHuntingProfileId(context, repository.userId)
+                    if (visibleProfiles.none { it.id == selectedId }) {
+                        selectedId = rememberedProfileId?.takeIf { id -> visibleProfiles.any { it.id == id } }
+                    }
+                    if (rememberedProfileId != null && loadedProfiles.none { it.id == rememberedProfileId }) {
+                        TrackerPreferences.setLastHuntingProfileId(context, repository.userId, null)
+                    }
+                    status = when {
+                        loadedProfiles.isEmpty() -> "Keine gespeicherten Reviere vorhanden."
+                        visibleProfiles.isEmpty() -> "Alle Reviere sind auf diesem Geraet ausgeblendet."
+                        else -> ""
+                    }
                 }
-                guestLinkDestination = null
-            } else {
-                val visibleProfiles = loadedProfiles.filterNot { it.id in loadedHiddenIds }
-                val rememberedProfileId = TrackerPreferences.lastHuntingProfileId(context, repository.userId)
-                if (visibleProfiles.none { it.id == selectedId }) {
-                    selectedId = rememberedProfileId?.takeIf { id -> visibleProfiles.any { it.id == id } }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (cachedProfiles.isNotEmpty()) {
+                    profiles = cachedProfiles.map { it.snapshot.profile }.distinctBy { it.id }
+                    val cachedIds = profiles.map { it.id }.toSet()
+                    hiddenProfileIds = TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)
+                        .intersect(cachedIds)
+                    if (selectedId !in cachedIds) {
+                        selectedId = TrackerPreferences.lastHuntingProfileId(context, repository.userId)
+                            ?.takeIf { it in cachedIds }
+                    }
+                    status = "Offline: gespeicherte Reviere. ${error.message ?: "Aktualisierung nicht moeglich."}"
+                } else {
+                    status = error.message ?: "Reviere konnten nicht geladen werden."
                 }
-                if (rememberedProfileId != null && loadedProfiles.none { it.id == rememberedProfileId }) {
-                    TrackerPreferences.setLastHuntingProfileId(context, repository.userId, null)
-                }
-                status = when {
-                    loadedProfiles.isEmpty() -> "Keine gespeicherten Reviere vorhanden."
-                    visibleProfiles.isEmpty() -> "Alle Reviere sind auf diesem Geraet ausgeblendet."
-                    else -> ""
-                }
+            } finally {
+                loading = false
             }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            if (cachedProfiles.isNotEmpty()) {
-                profiles = cachedProfiles.map { it.snapshot.profile }.distinctBy { it.id }
-                val cachedIds = profiles.map { it.id }.toSet()
-                hiddenProfileIds = TrackerPreferences.hiddenHuntingProfileIds(context, repository.userId)
-                    .intersect(cachedIds)
-                if (selectedId !in cachedIds) {
-                    selectedId = TrackerPreferences.lastHuntingProfileId(context, repository.userId)
-                        ?.takeIf { it in cachedIds }
-                }
-                status = "Offline: gespeicherte Reviere. ${error.message ?: "Aktualisierung nicht moeglich."}"
-            } else {
-                status = error.message ?: "Reviere konnten nicht geladen werden."
-            }
-        } finally {
-            loading = false
         }
     }
 
@@ -627,7 +685,12 @@ internal fun JagdkarteScreen(
                 }
             }
         }
-        NativeHuntingMap(snapshot, now, Modifier.weight(1f).fillMaxWidth(), onChooseLocation = { coordinates ->
+        val visibleSnapshot = snapshot?.let { current ->
+            if (huntingAccess.ready) current else current.copy(points = current.points.filterNot {
+                it.kind == MapPointKind.PARTICIPANT || it.kind == MapPointKind.DOG
+            })
+        }
+        NativeHuntingMap(visibleSnapshot, now, Modifier.weight(1f).fillMaxWidth(), onChooseLocation = { coordinates ->
             val current = snapshot
             if (current != null && !current.isStale &&
                 locationInsideBoundary(current.profile.boundary, coordinates.latitude, coordinates.longitude)) {
@@ -673,11 +736,10 @@ internal fun JagdkarteScreen(
                     Text("Offlinekarten verwalten")
                 }
                 current?.let { profile ->
-                    Text("Freigaben", style = MaterialTheme.typography.titleSmall)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Jagdmodus", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                        if (profile.canEdit) {
-                            Switch(profile.profile.huntingMode, onCheckedChange = { enabled ->
+                    if (huntingAccess.ready) {
+                        Text("Freigaben", style = MaterialTheme.typography.titleSmall)
+                        HuntingModeControls(huntingAccess.ready, profile.canEdit, profile.profile.huntingMode,
+                            modePending, onModeChanged = { enabled ->
                                 modePending = true
                                 if (!enabled) sharing = false
                                 scope.launch {
@@ -692,56 +754,20 @@ internal fun JagdkarteScreen(
                                         modePending = false
                                     }
                                 }
-                            }, enabled = !modePending)
-                        } else Text(if (profile.profile.huntingMode) "Aktiv" else "Aus")
-                    }
-                    if (snapshot != null || gatewayState.active || gatewayState.starting || gatewayState.status.isNotBlank()) {
-                        RelayGatewayControls(canStart = signedIn && !profile.isStale && profile.profile.huntingMode &&
-                            !TrackerPreferences.isTracking(context), state = gatewayState, onEnable = {
-                            val id = selectedId
-                            if (id != null) {
-                                val required = RelayGatewayService.requiredRelayPermissions() +
-                                    if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()
-                                if (required.all { androidx.core.content.ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
-                                    runCatching { RelayGateway.start(context, id) }
-                                        .onFailure { status = "Relaisdienst konnte nicht gestartet werden." }
-                                } else {
-                                    relayPermissionProfileId = id
-                                    relayPermissionLauncher.launch(required.toTypedArray())
-                                }
-                            }
-                        }, onStop = { RelayGateway.stop(context) })
+                            })
+                        HuntingParticipationStatus(huntingMode = profile.profile.huntingMode,
+                            profileName = profile.profile.name,
+                            state = gatewayState.takeIf { it.profileId == selectedId }
+                                ?: RelayGatewayStatus(),
+                            trackerActive = trackerActive)
+                    } else {
+                        Text("Jagdfunktionen sind ausgeblendet. Einrichtung im Benutzerkonto.",
+                            style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = { managementOpen = false; accountOpen = true }) { Text("Benutzerkonto oeffnen") }
                     }
                     if (profile.isStale) {
                         Text("Offline gespeicherter Stand: Aenderungen und Standortfreigaben benoetigen eine Verbindung.",
                             style = MaterialTheme.typography.bodySmall)
-                    } else if (profile.profile.huntingMode || sharing) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Standort mit diesem Revier teilen", Modifier.weight(1f),
-                                style = MaterialTheme.typography.labelLarge)
-                            Switch(sharing, onCheckedChange = { enabled ->
-                                if (!enabled) {
-                                    sharing = false
-                                    selectedId?.let { profileId ->
-                                        TrackerPreferences.setLocationShareConsent(context, repository.userId,
-                                            profileId, false)
-                                    }
-                                }
-                                else if (androidx.core.content.ContextCompat.checkSelfPermission(context,
-                                        Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                                    sharing = true
-                                    selectedId?.let { profileId ->
-                                        TrackerPreferences.setLocationShareConsent(context, repository.userId,
-                                            profileId, true)
-                                    }
-                                }
-                                else {
-                                    permissionProfileId = selectedId
-                                    locationPermission.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,
-                                        Manifest.permission.ACCESS_FINE_LOCATION))
-                                }
-                            }, enabled = selectedId != null)
-                        }
                     }
                     Text("Revieraktionen", style = MaterialTheme.typography.titleSmall)
                     if (profile.canEdit && profile.profile.boundary != null) {
@@ -751,7 +777,9 @@ internal fun JagdkarteScreen(
                         }, modifier = Modifier.fillMaxWidth()) { Text("Reviergrenze bearbeiten") }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { dogsOpen = true }, enabled = !profile.isStale,
+                        TextButton(onClick = {
+                            dogsDialogTarget = DogsDialogTarget(profile.profile, profile.canEdit)
+                        }, enabled = !profile.isStale,
                             modifier = Modifier.weight(1f)) { Text("Hunde") }
                         if (profile.canEdit) TextButton(onClick = { inviteProfile = profile.profile },
                             modifier = Modifier.weight(1f)) { Text("Einladen") }
@@ -1009,10 +1037,9 @@ internal fun JagdkarteScreen(
         )
     }
 
-    if (dogsOpen && snapshot != null) {
-        val current = snapshot!!
-        DogsDialog(repository, current.profile, current.canEdit, onUseDeviceToken,
-            onDismiss = { dogsOpen = false })
+    dogsDialogTarget?.takeIf { signedIn && it.profile.id == selectedId }?.let { target ->
+        DogsDialog(repository, target.profile, target.canEdit, onUseDeviceToken,
+            onDismiss = { dogsDialogTarget = null }, scanDogTrackerQr = dogTrackerScanner)
     }
     if (helpOpen) HelpDialog(onDismiss = { helpOpen = false })
 
@@ -1053,13 +1080,40 @@ internal fun JagdkarteScreen(
             onDismiss = { pendingRevierImport = null; importTargets = emptyList() })
     }
 
-    if (accountOpen) {
+    if (emailAuthResultOpen) {
+        AlertDialog(onDismissRequest = { if (!emailAuthBusy) emailAuthResultOpen = false },
+            title = { Text(if (emailAuthBusy) "Anmeldung bestaetigen" else "Anmeldung nicht abgeschlossen") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (emailAuthBusy) {
+                        CircularProgressIndicator()
+                        Text("Die Anmeldung aus deiner E-Mail wird geprueft.")
+                    } else Text(emailAuthError)
+                }
+            },
+            confirmButton = {
+                if (!emailAuthBusy) TextButton(onClick = {
+                    emailAuthResultOpen = false
+                    accountOpen = true
+                }) { Text("Anmeldung oeffnen") }
+            },
+            dismissButton = {
+                if (!emailAuthBusy) TextButton(onClick = { emailAuthResultOpen = false }) { Text("Schliessen") }
+            })
+    }
+    if (accountOpen && !emailAuthResultOpen) {
         if (signedIn) {
             AlertDialog(onDismissRequest = { accountOpen = false }, title = { Text("Benutzerkonto") },
                 text = {
                     Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(repository.email)
+                        HuntingPermissionSettings(huntingAccess, onConfigurePermissions, onDisableHuntingFunctions)
+                        if (huntingAccess.ready && selectedId != null) {
+                            TextButton(onClick = { accountOpen = false; managementOpen = true }) {
+                                Text("Jagdteilnahme fuer das ausgewaehlte Revier einrichten")
+                            }
+                        }
                         Text("Anzeigename f\u00fcr Reviermitglieder")
                         OutlinedTextField(displayName, onValueChange = { displayName = it.take(60) },
                             enabled = !displayNameBusy, singleLine = true, placeholder = { Text("Optional") },
@@ -1156,8 +1210,8 @@ internal fun JagdkarteScreen(
                                 status = "Abgemeldet."
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
-                            } catch (_: Exception) {
-                                status = "Lokal abgemeldet; Server-Abmeldung nicht bestaetigt."
+                            } catch (failure: Exception) {
+                                status = "Abmeldung nicht vollstaendig bestaetigt: ${failure.message ?: "Bitte erneut versuchen."}"
                             } finally {
                                 signingOut = false
                             }
@@ -1165,10 +1219,11 @@ internal fun JagdkarteScreen(
                     }) { Text("Abmelden") }
                 }, dismissButton = { TextButton(onClick = { accountOpen = false }) { Text("Schliessen") } })
         } else {
-            SignInDialog(repository, onDismiss = { accountOpen = false }, onSignedIn = { invitationError ->
+            SignInDialog(repository, permissionSettings = {
+                HuntingPermissionSettings(huntingAccess, onConfigurePermissions, onDisableHuntingFunctions)
+            }, onDismiss = { accountOpen = false }, onSignedIn = {
                 signedIn = true
                 accountOpen = false
-                invitationStatus = invitationError.orEmpty()
                 revision++
             })
         }
@@ -1176,19 +1231,25 @@ internal fun JagdkarteScreen(
 }
 
 @Composable
-private fun SignInDialog(repository: JagdkarteRepository, onDismiss: () -> Unit, onSignedIn: (String?) -> Unit) {
+private fun SignInDialog(repository: JagdkarteRepository, permissionSettings: @Composable () -> Unit,
+    onDismiss: () -> Unit, onSignedIn: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var email by remember { mutableStateOf("") }
-    var requestedEmail by remember { mutableStateOf<String?>(null) }
+    val pending = remember { repository.pendingEmailSignIn() }
+    val pendingCurrent = pending?.current() == true
+    var email by remember { mutableStateOf(pending?.email.orEmpty()) }
+    var requestedEmail by remember { mutableStateOf(pending?.email?.takeIf { pendingCurrent }) }
     var code by remember { mutableStateOf("") }
-    var register by remember { mutableStateOf(false) }
+    var register by remember { mutableStateOf(pending?.register ?: false) }
     var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf(if (pending != null && !pendingCurrent)
+        "Die Anmeldeanforderung ist abgelaufen. Bitte eine neue Anmelde-Mail anfordern." else "") }
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text(if (register) "Registrieren" else "Anmelden") },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                permissionSettings()
                 OutlinedTextField(email, onValueChange = { email = it; requestedEmail = null; code = "" },
                     label = { Text("E-Mail") }, singleLine = true, enabled = !busy,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
@@ -1196,13 +1257,14 @@ private fun SignInDialog(repository: JagdkarteRepository, onDismiss: () -> Unit,
                     Checkbox(register, onCheckedChange = { register = it; requestedEmail = null; code = "" }, enabled = !busy)
                     Text("Neues Konto")
                 }
-                Text("In der Android-App per Zahlencode anmelden. Ein E-Mail-Link kann Browser oder PWA oeffnen und meldet nicht sicher in dieser App an.",
+                Text("Oeffne den Link in der neuesten E-Mail auf diesem Handy. Die App bestaetigt dann deine Anmeldung. " +
+                    "Alternativ kannst du den Zahlencode aus derselben E-Mail hier eingeben.",
                     style = MaterialTheme.typography.bodySmall)
                 if (requestedEmail != null) {
                     OutlinedTextField(code, onValueChange = { code = it.filter(Char::isDigit).take(10) },
-                        label = { Text("E-Mail-Code") }, singleLine = true, enabled = !busy,
+                        label = { Text("Zahlencode (alternativ)") }, singleLine = true, enabled = !busy,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword))
-                    TextButton(enabled = !busy, onClick = { requestedEmail = null; code = "" }) { Text("Code erneut anfordern") }
+                    TextButton(enabled = !busy, onClick = { requestedEmail = null; code = "" }) { Text("Neue Mail anfordern") }
                 }
                 if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
                 if (busy) CircularProgressIndicator()
@@ -1221,16 +1283,8 @@ private fun SignInDialog(repository: JagdkarteRepository, onDismiss: () -> Unit,
                             code = ""
                         } else {
                             repository.verifyCode(address, code)
-                            val invitationError = try {
-                                repository.acceptProfileInvitations()
-                                null
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (failure: Exception) {
-                                "Einladungen konnten nicht angenommen werden: ${failure.message ?: "Bitte spaeter erneut versuchen."}"
-                            }
                             code = ""
-                            onSignedIn(invitationError)
+                            onSignedIn()
                         }
                     } catch (cancelled: CancellationException) {
                         throw cancelled
@@ -1240,7 +1294,7 @@ private fun SignInDialog(repository: JagdkarteRepository, onDismiss: () -> Unit,
                         busy = false
                     }
                 }
-            }) { Text(if (requestedEmail == null) "Code anfordern" else "Bestaetigen") }
+            }) { Text(if (requestedEmail == null) "Anmelde-Mail anfordern" else "Code bestaetigen") }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Abbrechen") } }
     )

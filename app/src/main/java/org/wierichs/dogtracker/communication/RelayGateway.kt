@@ -11,12 +11,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.first
+import java.io.IOException
 import org.json.JSONObject
 import org.wierichs.dogtracker.jagdkarte.HuntingProfile
 import org.wierichs.dogtracker.jagdkarte.JagdkarteApiException
 import org.wierichs.dogtracker.jagdkarte.JagdkarteRepository
 import org.wierichs.dogtracker.jagdkarte.locationInsideBoundary
 import org.wierichs.dogtracker.BackendConfiguration
+import org.wierichs.dogtracker.TrackerPreferences
+import org.wierichs.dogtracker.readHuntingPermissions
 
 internal data class RelayGatewayStatus(
     val active: Boolean = false,
@@ -38,21 +44,30 @@ internal object RelayGateway {
             ContextCompat.startForegroundService(context, Intent(context, RelayGatewayService::class.java)
                 .setAction(RelayGatewayService.ACTION_START).putExtra(RelayGatewayService.EXTRA_PROFILE_ID, profileId))
         } catch (failure: Exception) {
-            state.value = RelayGatewayStatus(status = "Relaisdienst konnte nicht gestartet werden.")
+            state.value = RelayGatewayStatus(profileId = profileId, status = "Relaisdienst konnte nicht gestartet werden.")
             throw failure
         }
     }
 
     fun stop(context: Context) {
         state.value = state.value.copy(starting = true, status = "Relaisfreigabe wird beendet.")
-        context.stopService(Intent(context, RelayGatewayService::class.java))
+        if (!context.stopService(Intent(context, RelayGatewayService::class.java)) && engine == null) {
+            state.value = RelayGatewayStatus(profileId = state.value.profileId, status = "Relaisfreigabe beendet.")
+        }
     }
 
     suspend fun stopAndAwait(context: Context) {
-        val current = engine
-        stop(context)
-        current?.cancelOwn()
-        current?.close()
+        try {
+            withTimeout(60_000) {
+                val current = engine
+                stop(context)
+                current?.cancelOwn()
+                current?.close()
+                state.first { !it.active && !it.starting }
+            }
+        } catch (failure: TimeoutCancellationException) {
+            throw IOException("Der Relaisdienst konnte nicht rechtzeitig beendet werden. Bitte erneut versuchen.", failure)
+        }
     }
 
     suspend fun enqueue(profileId: String, location: Location): Boolean {
@@ -120,6 +135,9 @@ internal class RelayGatewayEngine(
 
     suspend fun enqueueLocation(location: Location) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            check(readHuntingPermissions(appContext).ready) {
+                "Jagdfreigabe oder erforderliche Berechtigung wurde entzogen."
+            }
             check(!closed && directory?.current() == true) { "Relaisberechtigung ist abgelaufen. Online-Verbindung erforderlich." }
             require(locationInsideBoundary(profile.boundary, location.latitude, location.longitude)) { "Standort ausserhalb des Reviers." }
             val now = System.currentTimeMillis()

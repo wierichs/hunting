@@ -5,6 +5,13 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val releaseSigningEnabled = providers.gradleProperty("releaseSigning")
+    .map { it.toBooleanStrict() }.getOrElse(false)
+
+fun requiredReleaseSigningProperty(name: String): String =
+    providers.gradleProperty(name).orNull?.takeIf { it.isNotEmpty() }
+        ?: throw GradleException("Release-Signierung: '$name' fehlt. Bitte in der lokalen Gradle-Benutzerkonfiguration eintragen.")
+
 android {
     namespace = "org.wierichs.dogtracker"
     compileSdk {
@@ -33,8 +40,21 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    if (releaseSigningEnabled) {
+        signingConfigs.create("localRelease") {
+            val keystore = file(requiredReleaseSigningProperty("jagdkarteReleaseStoreFile"))
+            require(keystore.isFile) { "Release-Signierung: Keystore-Datei nicht gefunden." }
+            storeFile = keystore
+            storePassword = requiredReleaseSigningProperty("jagdkarteReleaseStorePassword")
+            keyAlias = requiredReleaseSigningProperty("jagdkarteReleaseKeyAlias")
+            keyPassword = requiredReleaseSigningProperty("jagdkarteReleaseKeyPassword")
+        }
+    }
+
     buildTypes {
         release {
+            if (releaseSigningEnabled) signingConfig = signingConfigs.getByName("localRelease")
+            proguardFiles("proguard-rules.pro")
             optimization {
                 enable = true
             }
@@ -57,7 +77,7 @@ android {
 
 androidComponents {
     onVariants(selector().all()) { variant ->
-        val apkFileName = if (variant.buildType == "debug") "Jagdkarte-debug.apk" else "Jagdkarte.apk"
+        val apkFileName = if (variant.buildType == "debug") "Jagdbruder-debug.apk" else "Jagdbruder.apk"
         variant.outputs.forEach { output -> output.outputFileName.set(apkFileName) }
     }
 }

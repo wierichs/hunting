@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import org.wierichs.dogtracker.DeviceTokenStorage
 import org.wierichs.dogtracker.BackendConfiguration
 
@@ -90,6 +91,18 @@ internal data class HuntingSnapshot(
 )
 
 internal data class HuntingDog(val id: String, val name: String)
+
+internal enum class DogDevicePairingStatus { PENDING, ACTIVE, NOT_FOUND }
+
+internal data class DogPairingState(val paired: Boolean, val pending: Boolean)
+
+internal fun dogDevicePairingStatus(response: String): DogDevicePairingStatus =
+    when (JSONTokener(response).nextValue()) {
+        "pending" -> DogDevicePairingStatus.PENDING
+        "active" -> DogDevicePairingStatus.ACTIVE
+        "not_found" -> DogDevicePairingStatus.NOT_FOUND
+        else -> error("Ungueltige Antwort bei der Kopplungspruefung.")
+    }
 
 internal class JagdkarteApiException(val status: Int, val errorCode: String, message: String) : Exception(message)
 
@@ -180,7 +193,7 @@ internal fun guestLinkTokenFromFragment(fragment: String?): String? {
     return token?.takeIf { GUEST_LINK_TOKEN_PATTERN.matches(it) }
 }
 
-internal fun guestLinkTokenFromUrl(url: String?): String? {
+internal fun jagdkarteLinkUri(url: String?): URI? {
     val uri = try {
         URI(url ?: return null)
     } catch (_: URISyntaxException) {
@@ -194,8 +207,11 @@ internal fun guestLinkTokenFromUrl(url: String?): String? {
     ) {
         return null
     }
-    return guestLinkTokenFromFragment(uri.rawFragment)
+    return uri
 }
+
+internal fun guestLinkTokenFromUrl(url: String?): String? =
+    guestLinkTokenFromFragment(jagdkarteLinkUri(url)?.rawFragment)
 
 internal fun guestLinkUrl(token: String): String {
     require(GUEST_LINK_TOKEN_PATTERN.matches(token)) { "Ungueltiger Gastlink-Token." }
@@ -219,7 +235,11 @@ internal fun createdProfileIdFromResponse(response: String): String? {
     return (objectId ?: arrayId)?.takeIf { UUID_PATTERN.matches(it) }
 }
 
-internal class JagdkarteRepository(context: Context) {
+internal class JagdkarteRepository(
+    context: Context,
+    private val authRequestOverride: ((String, JSONObject) -> String)? = null,
+    private val requestOverride: ((String, String, Any?, String?) -> String)? = null
+) {
     private val appContext = context.applicationContext
     private var session = DeviceTokenStorage.read(appContext, SESSION_FILE)?.let {
         runCatching { JSONObject(it) }.getOrNull()
@@ -230,16 +250,52 @@ internal class JagdkarteRepository(context: Context) {
     val userId: String get() = session?.optJSONObject("user")?.optString("id").orEmpty()
 
     suspend fun requestCode(email: String, register: Boolean) = withContext(Dispatchers.IO) {
-        request("auth/v1/otp", "POST", JSONObject()
-            .put("email", email.trim()).put("create_user", register))
-        Unit
+        sessionMutex.withLock {
+            val pending = PendingEmailSignIn.create(email, register)
+            DeviceTokenStorage.write(appContext, pending.toJson().toString(), EMAIL_AUTH_REQUEST_FILE, synchronous = true)
+            authRequest(emailOtpRequestPath(), pending.otpRequestBody())
+            Unit
+        }
+    }
+
+    fun pendingEmailSignIn(): PendingEmailSignIn? =
+        DeviceTokenStorage.read(appContext, EMAIL_AUTH_REQUEST_FILE)?.let { PendingEmailSignIn.fromJson(JSONObject(it)) }
+
+    suspend fun verifyEmailLink(code: String) = verifyEmailLink(EmailAuthLink.Code(code))
+
+    suspend fun verifyEmailLink(link: EmailAuthLink) = withContext(Dispatchers.IO) {
+        sessionMutex.withLock {
+            val pending = pendingEmailSignIn()
+                ?: error("Bitte zuerst auf diesem Handy eine Anmelde-Mail anfordern. Verwende nur den neuesten Link.")
+            check(pending.current()) { "Die Anmeldeanforderung ist abgelaufen. Bitte eine neue Anmelde-Mail anfordern." }
+            val response = when (link) {
+                is EmailAuthLink.Code -> authRequest("auth/v1/token?grant_type=pkce", pending.exchangeRequestBody(link.value))
+                is EmailAuthLink.TokenHash -> authRequest("auth/v1/verify", pending.tokenHashRequestBody(link.value))
+                is EmailAuthLink.Rejected -> error(link.message)
+            }
+            val value = JSONObject(response)
+            pending.checkSession(value)
+            saveSession(value)
+            DeviceTokenStorage.clear(appContext, EMAIL_AUTH_REQUEST_FILE, synchronous = true)
+        }
     }
 
     suspend fun verifyCode(email: String, code: String) = withContext(Dispatchers.IO) {
         sessionMutex.withLock {
-            saveSession(JSONObject(request("auth/v1/verify", "POST", JSONObject()
-                .put("email", email.trim()).put("token", code.trim()).put("type", "email"))))
+            val address = email.trim().lowercase(Locale.ROOT)
+            val value = JSONObject(authRequest("auth/v1/verify", JSONObject()
+                .put("email", address).put("token", code.trim()).put("type", "email")))
+            require(value.optJSONObject("user")?.optString("email")?.equals(address, ignoreCase = true) == true) {
+                "Die Anmeldung gehoert nicht zur angegebenen E-Mail-Adresse."
+            }
+            saveSession(value)
+            DeviceTokenStorage.clear(appContext, EMAIL_AUTH_REQUEST_FILE, synchronous = true)
         }
+    }
+
+    private fun authRequest(path: String, body: JSONObject): String {
+        authRequestOverride?.let { return it(path, body) }
+        return request(path, "POST", body)
     }
 
     suspend fun acceptProfileInvitations() = authenticated { token ->
@@ -267,7 +323,11 @@ internal class JagdkarteRepository(context: Context) {
                 }
             } finally {
                 session = null
-                DeviceTokenStorage.clear(appContext, SESSION_FILE)
+                try {
+                    DeviceTokenStorage.clear(appContext, SESSION_FILE, synchronous = true)
+                } finally {
+                    DeviceTokenStorage.clear(appContext, EMAIL_AUTH_REQUEST_FILE, synchronous = true)
+                }
             }
         }
     }
@@ -569,6 +629,23 @@ internal class JagdkarteRepository(context: Context) {
         Unit
     }
 
+    suspend fun dogDevicePairingStatus(dogId: String, deviceToken: String): DogDevicePairingStatus = authenticated { token ->
+        require(Regex("^[0-9a-f]{64}$").matches(deviceToken)) { "Ungueltiger Geraeteschluessel." }
+        dogDevicePairingStatus(request("rest/v1/rpc/get_hunting_dog_device_pairing_status", "POST", JSONObject()
+            .put("p_dog_id", uuid(dogId)).put("p_device_token", deviceToken), token))
+    }
+
+    suspend fun dogPairingStates(profileId: String): Map<String, DogPairingState> = authenticated { token ->
+        val result = mutableMapOf<String, DogPairingState>()
+        rows(request("rest/v1/rpc/get_hunting_dog_pairing_states", "POST", JSONObject()
+            .put("p_profile_id", uuid(profileId)), token)) { row ->
+            val dogId = uuid(row.getString("dog_id"))
+            check(dogId !in result) { "Doppelter Hund in der Kopplungsantwort." }
+            result[dogId] = DogPairingState(row.getBoolean("paired"), row.getBoolean("pending"))
+        }
+        result
+    }
+
     suspend fun shareLocation(profileId: String, latitude: Double, longitude: Double, accuracy: Float): Boolean = authenticated { token ->
         require(accuracy.isFinite() && accuracy >= 0)
         val profile = parseProfiles(JSONArray(request(
@@ -613,12 +690,13 @@ internal class JagdkarteRepository(context: Context) {
     private fun saveSession(value: JSONObject) {
         require(value.getString("access_token").isNotBlank() && value.getString("refresh_token").isNotBlank())
         if (!value.has("expires_at")) value.put("expires_at", Instant.now().epochSecond + value.getLong("expires_in"))
-        DeviceTokenStorage.write(appContext, value.toString(), SESSION_FILE)
+        DeviceTokenStorage.write(appContext, value.toString(), SESSION_FILE, synchronous = true)
         session = value
     }
 
     private fun request(path: String, method: String = "GET", body: Any? = null, bearer: String? = null,
         upsert: Boolean = false, returnRepresentation: Boolean = false): String {
+        requestOverride?.let { return it(path, method, body, bearer) }
         val connection = URL("$BASE_URL/$path").openConnection() as HttpsURLConnection
         return try {
             connection.requestMethod = method
@@ -642,7 +720,12 @@ internal class JagdkarteRepository(context: Context) {
                     400, 422 -> "Die Anfrage wurde abgelehnt. Eingaben und Berechtigungen pruefen."
                     401 -> "Sitzung oder Code ungueltig. Bitte erneut anmelden."
                     403 -> "Keine Berechtigung fuer diese Aktion."
-                    404 -> "Die Zwei-Phasen-Kopplung ist im Backend noch nicht verfuegbar. Der bisherige Schluessel bleibt aktiv."
+                    404 -> if (path == "rest/v1/rpc/get_hunting_dog_device_pairing_status" ||
+                        path == "rest/v1/rpc/get_hunting_dog_pairing_states") {
+                        "Die Kopplungspruefung ist auf dem Server noch nicht eingerichtet. Die SQL-Erweiterung muss zuerst eingespielt werden."
+                    } else {
+                        "Die Zwei-Phasen-Kopplung ist im Backend noch nicht verfuegbar. Der bisherige Schluessel bleibt aktiv."
+                    }
                     429 -> "Zu viele Anfragen. Bitte spaeter erneut versuchen."
                     else -> "Server derzeit nicht erreichbar."
                 }

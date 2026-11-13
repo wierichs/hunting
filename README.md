@@ -1,7 +1,7 @@
-# Jagdkarte fuer Android
+# Jagdbruder fuer Android
 
 Dieser Branch stellt die Funktionalitaet der Jagdkarte zusaetzlich als native
-Android-App mit Kotlin, Jetpack Compose und einer nativen osmdroid-Karte bereit,
+Android-App **Jagdbruder** mit Kotlin, Jetpack Compose und einer nativen osmdroid-Karte bereit,
 ohne WebView. Die Android-App ergaenzt die PWA und soll sie nicht abloesen.
 Die PWA bleibt als eigenstaendiges Angebot mit ihrem jetzigen Funktionsumfang
 bestehen; ihre Funktionen werden weder entfernt noch auf Android verlagert.
@@ -11,12 +11,56 @@ vorhandenen Supabase-Daten und Berechtigungen. Erweiterungen des gemeinsamen
 Backends muessen zu den bestehenden PWA-Funktionen und Schnittstellen
 rueckwaertskompatibel bleiben.
 
-Die Android-App hat die eigene App-ID `org.wierichs.jagdkarte`. Sie kann neben
+Die Android-App heisst Jagdbruder; ihre App-ID bleibt `org.wierichs.jagdkarte`.
+Der neue Name aendert weder vorhandene App-Daten und Kopplungen noch
+Anmeldelinks, Backend-Vertraege oder den Signaturschluessel.
+**Jagdkarte** und **DogTracker** bleiben die Namen der beiden App-Bereiche;
+die PWA heisst weiterhin Jagdkarte. Die Android-App kann neben
 `org.wierichs.dogtracker` installiert werden; dessen Einstellungen und
 Geraetekopplung werden nicht automatisch uebernommen. Mindestversion: Android 12.
-Beim ersten Start oeffnet DogTracker; danach stellt die App den zuletzt genutzten Bereich und das letzte Revier wieder her.
+Beim ersten Start oeffnet die Jagdkarte mit einer ueberspringbaren Erklaerung
+der Jagdberechtigungen; danach stellt die App den zuletzt genutzten Bereich und
+das letzte Revier wieder her.
 
 Nutzeranleitungen und Fehlerbehebung stehen in der [Hilfe fuer Android](docs/help/hilfe.md). Diese Markdown-Datei wird auch im nativen Hilfe-Dialog angezeigt.
+
+## App-Symbol
+
+Das native Symbol basiert auf der gelieferten [Logo.png](Logo.png): dunkelgruener
+Hintergrund, weiss gefaltete Karte mit gestrichelter Weglinie, goldfarbener
+Hirschkopf oben links und Vorstehhund unten rechts. Die Formen und Proportionen
+der Vorlage bleiben erhalten; die PWA selbst bleibt unveraendert.
+
+Das Skript trennt die weissen und goldfarbenen Bildanteile vom gruenen Hintergrund
+und den weissen aeusseren Bildecken und erzeugt einen transparenten Vordergrund.
+Dieser wird ohne Verzerrung innerhalb des sicheren 66-dp-Kreises des adaptiven
+Android-Icons platziert. Rastervarianten fuer alle fuenf Bildschirmdichten und
+der adaptive Vordergrund werden unter Windows ohne zusaetzliche Grafikpakete
+neu erzeugt:
+
+```powershell
+.\tools\generate-launcher-icons.ps1
+```
+
+Das [Erzeugungsskript](tools/generate-launcher-icons.ps1) prueft den sicheren
+Zuschnitt anhand aller nichttransparenten Pixel des erzeugten Vordergrunds.
+Das einfarbige Android-Themen-Icon verwendet dessen Transparenzmaske, ohne den
+gruenen Hintergrund mitzufaerben.
+Mit `-PreviewPath <PNG-Datei>` kann zusaetzlich eine Vorschau mit runden,
+abgerundeten, kleinen und einfarbigen Varianten gespeichert werden.
+
+## QR-Scanner
+
+Die QR-Kamera wird ueber den Google Code Scanner der Google Play-Dienste
+geoeffnet. Jagdbruder benoetigt dafuer keine eigene Kameraberechtigung.
+Das Scanner-Modul muss auf dem Geraet verfuegbar sein; Google Play-Dienste
+koennen es beim ersten Aufruf nachladen.
+
+Die [Release-Regeln](app/proguard-rules.pro) erhalten gezielt die reflektiv
+aufgerufenen Konstruktoren der ML-Kit-Komponentenregistrierung.
+Ohne diese Regel entfernt die Release-Optimierung benoetigte Konstruktoren,
+sodass die Scanner-Erstellung vor dem Oeffnen der Kamera abstuerzt.
+Die restliche Release-Optimierung bleibt aktiviert.
 
 ## Stand der Portierung
 
@@ -25,12 +69,18 @@ Android-Funktionsumfang ist kleiner als der der PWA; deren bestehendes Angebot
 bleibt davon unberuehrt.
 
 - Native OpenStreetMap-Karte mit Zoom, Verschieben und Quellenangabe.
-- Anmeldung und Registrierung mit E-Mail-Code gegen das bestehende Supabase-Auth.
+- Anmeldung und Registrierung per E-Mail-Link mit Zahlencode als Alternative
+	gegen das bestehende Supabase-Auth.
 	Benutzer- und Tracker-Geheimnisse liegen getrennt, Keystore-verschluesselt im
 	privaten App-Speicher. Benutzersitzungen werden erneuert; Abmelden entfernt die
 	lokale Sitzung auch bei einem Serverfehler.
 - Auswahl eigener und geteilter, bereits vorhandener Revierprofile. Die
 	serverseitigen RLS-Regeln bestimmen den Zugriff.
+	Ausstehende E-Mail-Einladungen werden vor dem Laden der Revierauswahl bei
+	Start, Rueckkehr zur Kartenansicht und Aktualisierung fuer das bestehende
+	Konto angenommen, nicht nur nach einer neuen Anmeldung. PWA-Einladungslinks
+	ohne lokale Mailanforderung wechseln ein angemeldetes Konto nicht automatisch;
+	die serverseitig bestaetigte Konto-E-Mail bestimmt den Revierzugang.
 - Gespeicherte Polygon-/MultiPolygon-Grenzen einschliesslich Aussparungen,
 	Markierungen und deren Ablaufzeiten.
 - Native Markeranlage mit Kartenpositionswahl, Markerart, Bezeichnung und Notiz.
@@ -43,12 +93,21 @@ bleibt davon unberuehrt.
 	ausreichend genauen Bewegungsfixes zeigt ein kleiner Kartenpfeil den aus zwei
 	Positionen abgeleiteten Kurs ueber Grund samt Himmelsrichtung; er zeigt nicht
 	die Blick- oder Geraeteausrichtung.
-- Explizite Teilnehmer-Standortfreigabe pro ausgewaehltem Revier. Ein frischer
-	GPS-Fix und die Grenzpruefung mit JTS sind erforderlich. Freigabe und
-	Berechtigung werden nicht aus einer frueheren Android-Zustimmung abgeleitet.
-	Beim Wechsel, Abmelden, Ausschalten des Jagdmodus oder Pausieren der Ansicht
-	endet die Uebertragung. Beim Fortsetzen derselben Ansicht kann eine noch
-	aktivierte Freigabe wieder anlaufen. Nach einem Neustart ist sie aus.
+- Geraetebezogene Einrichtung unter **Benutzerkonto -> Berechtigungen und
+	Freigaben einrichten**. Genauer Standort, Nearby-Bluetooth/-WLAN, lokales
+	Netzwerk und Benachrichtigungen werden je nach Android-Version gemeinsam
+	erklaert und angefordert. Ohne vollstaendige Berechtigungen und ausdrueckliche
+	App-Freigabe bleiben Jagdmodus-Steuerung, Livepositionen und Tracking-Start
+	ausgeblendet; Karten- und Verwaltungsfunktionen bleiben nutzbar.
+- **Jagdteilnahme freigeben** unter **Revier und Verwaltung** bestaetigt eigene
+	Standortfreigabe und Relais gemeinsam fuer das ausgewaehlte Konto/Revier auf
+	diesem Geraet. Ein frischer GPS-Fix und die Grenzpruefung mit JTS sind
+	erforderlich. Beim Start und nach Rueckkehr aus Android-Einstellungen werden
+	Berechtigungen erneut geprueft; die gemerkte Zustimmung aktiviert die Teilnahme
+	erst nach frischer Onlinepruefung und bei aktivem Jagdmodus. Eine fruehere
+	reine Standort- oder Android-Zustimmung wird nicht als gemeinsame Freigabe
+	uebernommen. Wechsel, Abmelden, Jagdmodus aus und Pausieren der Karte beenden
+	die eigene Uebertragung; **Teilnahme beenden** widerruft die gemerkte Zustimmung.
 - Jagdmodus-Steuerung durch Owner und Bearbeiter sowie Hunderegistrierung und
 	Smartphone-Kopplung ueber die vorhandenen, serverseitig geschuetzten RPCs.
 	Einmalige Schluessel erscheinen als QR-Code in einem gegen Screenshots
@@ -56,7 +115,7 @@ bleibt davon unberuehrt.
 - Vorhandener DogTracker mit Foreground Service, persistenter Outbox und
 	experimentellem Ein-Hop-Relay. Der Nearby-Sicherheitsdialog ist auch auf der
 	Kartenansicht erreichbar.
-- Gemeinsame Kommunikationsbasis mit optionaler Revier-Relaisfreigabe ohne
+- Gemeinsame Kommunikationsbasis mit ausdruecklicher Revier-Relaisfreigabe ohne
 	Hundekopplung, kurzer Teilnehmer-Outbox und signierten Serverbestaetigungen.
 	Die neue Serverstufe wurde manuell im Supabase-Testprojekt deployed und
 	abgenommen; sie ist nicht in Produktion deployed. Einrichtung:
@@ -347,8 +406,9 @@ die normale Jagdkarte nutzbar, die neue Relaisfreigabe kann dort jedoch nicht
 erfolgreich eingerichtet werden.
 
 Benutzer-JWTs und Hundeschluessel bleiben auf ihrem jeweiligen Geraet und
-werden nie an ein Relais gegeben. Gateway und eigener Standort sind getrennte
-Einwilligungen. Die Gateway-Benachrichtigung kann im Hintergrund weiterlaufen,
+werden nie an ein Relais gegeben. Die Revierzustimmung erklaert und erlaubt
+Gateway und eigene Standortfreigabe gemeinsam; die Android-Berechtigung allein
+ist keine Einwilligung zum Teilen. Die Gateway-Benachrichtigung kann im Hintergrund weiterlaufen,
 waehrend eigene Teilnehmerfixes weiterhin nur bei aktiver Karte erfasst werden.
 Alte DogTracker-Nachrichten koennen weitergeleitet werden; alte APKs
 unterstuetzen die neuen Rueckbestaetigungen noch nicht. Grenzen,
@@ -359,7 +419,31 @@ Schluesselverwaltung und Bereitstellung: [Anleitung zur Relay-Serverstufe](https
 Die App verwendet die oeffentliche Supabase-Projektkonfiguration der Web-App.
 Voraussetzung ist das dort dokumentierte aktuelle Datenbankschema samt Auth-
 E-Mail-Vorlagen und `dog-location`/`dog-location-relay`. Die native Anmeldung
-verwendet eingegebene E-Mail-Codes; Web-Magic-Links bleiben Web-Links.
+fordert eine E-Mail mit Rueckkehradresse `https://wierichs.github.io/Jagdkarte/`
+an. Den Link aus der neuesten Nachricht auf demselben Handy oeffnen;
+alternativ bleibt die Eingabe des Zahlencodes moeglich.
+
+Die bestehenden Vorlagen fuer **Confirm sign up** und **Magic link or OTP**
+koennen ihren PWA-kompatiblen Link beibehalten:
+
+```html
+<a href="{{ .RedirectTo }}?token_hash={{ .TokenHash }}&amp;type=email">Anmelden</a>
+<p>Alternativ in der App diesen Zahlencode eingeben: <strong>{{ .Token }}</strong></p>
+```
+
+Die Rueckkehradresse muss im Supabase-Projekt freigegeben sein. Laut Rueckmeldung
+wurde `{{ .Token }}` in beiden Vorlagen ergaenzt; eine echte Mail-/Serverabnahme
+steht noch aus. Die PWA und der gemeinsame Serververtrag bleiben unveraendert.
+
+Android verifiziert `token_hash` mit `type=email` direkt beim Auth-Server;
+auch Standard-PKCE-Rueckgaben mit `code` werden unterstuetzt. Die App speichert
+vor der Mailanforderung E-Mail-Adresse und PKCE-Pruefwert verschluesselt und
+dauerhaft. Ein Link braucht eine auf diesem Handy gestartete, hoechstens eine
+Stunde alte Anmeldeanforderung; die serverseitig bestaetigte E-Mail-Adresse muss
+dazu passen. Nur der PKCE-Codeaustausch prueft den lokalen Pruefwert auch
+serverseitig, nicht die direkte Token-Hash-Verifikation. URL-Zugangstoken werden
+nicht als Sitzung uebernommen. Erfolgreiche Link- oder Codeanmeldung und
+Abmelden entfernen die lokale Anmeldeanforderung.
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug
@@ -368,7 +452,9 @@ verwendet eingegebene E-Mail-Codes; Web-Magic-Links bleiben Web-Links.
 
 Ein JDK und das Android SDK muessen eingerichtet sein. Die zweite Pruefung
 benoetigt einen laufenden Emulator oder ein angeschlossenes Geraet. Die APK liegt
-unter `app/build/outputs/apk/debug/app-debug.apk`.
+unter `app/build/outputs/apk/debug/Jagdbruder-debug.apk`.
+Die Debug-Variante verwendet weiterhin die Android-Debug-Signatur und kann
+eine mit dem Release-Schluessel signierte Installation nicht aktualisieren.
 
 Verifiziert: Die vollstaendige Debug-Suite umfasst 80 JVM- und 61
 Android-Instrumentierungstests. Abgedeckt sind unter anderem Nachrichten,
@@ -376,13 +462,53 @@ Relay-Kryptografie, Grenzpruefung, Positionsalter, Teilnehmer-RPC,
 Marker-Schreib-/Bearbeitungsvertraege, App-Start und Navigation,
 Login-Dialog, SQLite-Migration, atomare Relay-Bestaetigungen, Keystore,
 Kartenpositionswahl, Hunde-/Hilfedialoge, Markerbearbeitung,
-Loeschbestaetigung und ausdrueckliche Relaiszustimmung.
+Loeschbestaetigung und ausdrueckliche Revierzustimmung.
 Die Marker-Dialoge werden mit lokalen Testdaten, ohne Produktionsschreibzugriff
 und auch bei 320 dp geprueft. Eine Anmeldung gegen Produktionsdaten, echte Rollen-/RLS-Schreibtests,
 reale GPS-Erfassung und Nearby-Transfers zwischen mehreren physischen Geraeten
 sind noch nicht abgenommen. Fuer die neue Serverstufe gibt es zusaetzlich
 20 lokale Deno-/PostgreSQL-Fixture-Tests; sie ersetzen keine echte
 Supabase-/PostGIS-Abnahme und keinen physischen Nearby-Transfer.
+
+Die neue Berechtigungsbedienung wurde separat mit 20 Android-Tests auf API 37
+und 15 JVM-Tests fuer Berechtigungsgrenzen und Standortvertraege geprueft;
+Debug- und Release-Build bestehen. Dabei wurden die drei Android-Testklassen
+direkt gemeinsam ueber den Instrumentierungstestlaeufer ausgefuehrt, da der
+Gradle-Aufruf mit kommasepariertem Klassenparameter nur die erste Klasse
+ausfuehrte. Reale Geraete-/Funk- und Live-Serverpruefungen bleiben offen.
+
+## Signierte Android-Release-APK
+
+Der vorhandene Release-Keystore bleibt ausserhalb des Repositorys. Fuer Updates
+muss derselbe Signaturschluessel wie bei der bisherigen APK verwendet werden.
+Die vier Gradle-Properties `jagdkarteReleaseStoreFile`,
+`jagdkarteReleaseStorePassword`, `jagdkarteReleaseKeyAlias` und
+`jagdkarteReleaseKeyPassword` werden ausschliesslich lokal in der
+Gradle-Benutzerkonfiguration `%USERPROFILE%\.gradle\gradle.properties` gesetzt.
+Diese Datei enthaelt die Passwoerter im Klartext: nicht teilen, nicht ins
+Repository kopieren und nur fuer den eigenen Benutzer zugaenglich halten.
+Backslashes in dieser Properties-Datei muessen verdoppelt werden, auch in
+Passwoertern, falls dort Backslashes vorkommen.
+
+```powershell
+.\gradlew.bat :app:assembleRelease -PreleaseSigning=true --no-configuration-cache --no-daemon --console=plain
+```
+
+Die signierte APK liegt unter `app/build/outputs/apk/release/Jagdbruder.apk`.
+Fehlen bei angeforderter Signierung Zugangsdaten oder Keystore, bricht der
+Build ab; er faellt nicht auf eine unsignierte APK zurueck. Ohne
+`-PreleaseSigning=true` bleibt der bisherige unsignierte Release-Build erhalten.
+Keine Build-Scans oder Debug-Logs mit den Signierzugangsdaten weitergeben.
+Nach dem Build die APK mit dem `apksigner` aus den Android-SDK-Build-Tools
+pruefen und den SHA-256-Zertifikatsfingerabdruck mit der bisherigen signierten
+APK vergleichen.
+
+Die lokale Signiereinrichtung wurde am 2026-11-13 mit einem erfolgreichen
+Release-Build und `apksigner verify` geprueft; das Signaturzertifikat stimmt mit
+der bisherigen, ueber Android Studio erstellten Release-APK ueberein.
+Fuer die Umbenennung in Jagdbruder ist keine Aenderung der lokalen
+Signierkonfiguration erforderlich: Keystore, Alias und die bestehenden
+`jagdkarteRelease...`-Properties bleiben unveraendert.
 
 ## DogTracker
 
@@ -393,10 +519,54 @@ Der Hundetracker übermittelt den GPS-Standort eines Smartphones an ein Hund-Pro
 1. In der Jagdkarte anmelden, ein Revierprofil öffnen und den Jagdmodus einschalten.
 2. Unter **Hunde im Revier** einen Hund registrieren und **Smartphone koppeln** auswählen.
 3. Entweder den von Jagdkarte angezeigten QR-Code im DogTracker scannen (oder den Schlüssel manuell eingeben), oder im DogTracker **QR-Code fuer Jagdkarte anzeigen** wählen und beim passenden Hund in Jagdkarte **DogTracker-QR scannen**.
-4. Bei einem DogTracker-QR kehrt man nach dem Scan zum Tracker zurück und tippt **Kopplung bestaetigen**. Bis dahin bleibt der bisherige Schlüssel aktiv. Wird abgebrochen, bleibt der bisherige Schlüssel aktiv; nach einem unklaren Timeout kann die Bestätigung wiederholt werden.
-5. Den QR-Schlüssel geheim halten und nur mit dem gewünschten Revier koppeln. Das Standortintervall festlegen und **Tracking starten** wählen. Beim ersten Start benötigt die App Zugriff auf den genauen Standort und, ab Android 13, auf Benachrichtigungen.
+4. Bei einem DogTracker-QR bleibt Jagdkarte nach dem Scan im Dialog **Warten auf Bestaetigung** und nennt Hund und Revier. Auf dem anderen Smartphone im DogTracker **Kopplung bestaetigen** tippen; Fortschritt und Fehler stehen direkt beim Knopf, der Erfolg erscheint in einem eigenen Dialog. Jagdkarte zeigt **Kopplung erfolgreich** erst nach Serverbestaetigung fuer genau den gescannten QR-Code. Bis dahin bleibt der bisherige Schlüssel aktiv. Wird abgebrochen, bleibt der bisherige Schlüssel aktiv; nach einem unklaren Timeout kann die Bestätigung wiederholt werden.
+5. Den QR-Schlüssel geheim halten und nur mit dem gewünschten Revier koppeln. Die Jagdberechtigungen und Relaisfreigabe im Benutzerkonto oder im DogTracker einrichten. Das Standortintervall festlegen und **Tracking starten** wählen; diese Aktion erscheint erst mit vollständigen Berechtigungen.
 
 Der DogTracker-QR-Gegenweg benötigt die additiven RPC-Migrationen [`202611110001_register_hunting_dog_device_token.sql`](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/migrations/202611110001_register_hunting_dog_device_token.sql) und [`202611110002_two_phase_dog_device_pairing.sql`](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/migrations/202611110002_two_phase_dog_device_pairing.sql) im gemeinsamen Supabase-Projekt. Laut Rückmeldung wurden beide Migrationen ausgeführt und das PWA-Repository aktualisiert; Zielprojekt und Laufzeitverhalten sind hier nicht unabhängig verifiziert. Jagdkarte-QR und manuelle Schlüsseleingabe bleiben ebenfalls verfügbar.
+
+Fuer die neue serverbestaetigte Rueckmeldung zusaetzlich
+[`202611130001_dog_device_pairing_status.sql`](supabase/migrations/202611130001_dog_device_pairing_status.sql)
+im SQL Editor **desselben Supabase-Projekts** ausfuehren und die Migration auch
+in die Migrationen des PWA-Repositories uebernehmen, bevor dessen Datenbankschema
+erneut ausgerollt wird. Die Erweiterung fuegt nur die lesende RPC
+`get_hunting_dog_device_pairing_status` hinzu: Owner und Bearbeiter koennen fuer
+Hund und gescannten QR-Code `pending`, `active` oder `not_found` abfragen.
+Tabellen, bestehende Kopplungen und PWA-Verhalten bleiben unveraendert; Gaeste
+und nicht angemeldete Benutzer erhalten keinen Zugriff. Keine Signier-
+oder App-Konfigurationsaenderung ist erforderlich.
+
+Der Wartedialog prueft alle zwei Sekunden, solange er offen und die App sichtbar
+ist. Bei einem Fehler bleibt der Hinweis sichtbar und **Kopplung erneut pruefen**
+erlaubt einen erneuten Versuch ohne erneuten Scan. Fehlt die SQL-Erweiterung,
+wird das ausdruecklich gemeldet, niemals als Kopplungserfolg behandelt.
+Nach Schliessen des Dialogs endet diese Statuspruefung; Tracking startet weiterhin
+nur durch deine ausdrueckliche Auswahl im DogTracker.
+
+Der Hundedialog bleibt beim Wechsel zum Google-Scanner erhalten, auch wenn
+die Karte im Hintergrund ihre Live-Daten entfernt. Das Scanner-Ergebnis und
+der anschliessende Kopplungsauftrag werden dadurch nicht mehr zusammen mit
+dem Dialog verworfen.
+
+In **Hunde im Revier** sehen Owner und Bearbeiter je Hund einen **gruenen Haken**
+fuer eine aktive Kopplung oder ein **rotes X** fuer einen Hund ohne aktive
+Kopplung. **Bestaetigung ausstehend** kennzeichnet ein vorgemerktes Smartphone;
+bei einem Ersatz bleibt ein alter aktiver Tracker gruen und die neue Kopplung
+wird getrennt als ausstehend angezeigt. **Zur Hundeliste** fuehrt aus dem
+Wartedialog zurueck. Die Liste aktualisiert sich alle fuenf Sekunden, solange
+sie sichtbar ist, und ueber **Kopplungsstatus aktualisieren**. Fehler zeigen
+**Status unbekannt**, nicht einen erfundenen Haken oder ein falsches X.
+Der Haken sagt nichts ueber laufendes Tracking, Internet oder aktuelle GPS-Daten.
+
+Dafuer zusaetzlich
+[`202611130002_dog_pairing_states.sql`](supabase/migrations/202611130002_dog_pairing_states.sql)
+im selben Supabase-Projekt ausfuehren und in die gemeinsamen PWA-Migrationen
+uebernehmen. Die neue lesende RPC `get_hunting_dog_pairing_states` liefert nur
+Hundekennung, aktive Kopplung und ausstehende Bestaetigung; keine Schluessel oder
+Token-Hashes. Bestehende Tabellenrechte und Kopplungsfunktionen bleiben unveraendert.
+
+Die SQL-Vertraege lassen sich ohne Produktionszugriff mit
+`deno test --allow-read .\supabase\tests\dog_device_pairing_status_test.ts` pruefen
+(isoliertes PostgreSQL/PGlite mit Testrollen und synthetischen QR-Daten).
 
 Die App ist für Android ab Version 12 vorgesehen. Pro Hund kann derzeit ein Smartphone gleichzeitig gekoppelt sein. Wenn ein Smartphone ersetzt wird oder der Schlüssel verloren geht, muss es in der Jagdkarte erneut gekoppelt werden.
 
@@ -410,7 +580,7 @@ Owner und Bearbeiter können einen registrierten Hund in **Hunde im Revier** nac
 - Position, GPS-Genauigkeit und Messzeitpunkt über eine verschlüsselte HTTPS-Verbindung übertragen.
 - Bei fehlender Internetverbindung nur die neueste GPS-Position lokal puffern; sie wird nach 24 Stunden verworfen. Bei verfügbarer Verbindung folgt der Upload automatisch.
 - GPS-Nutzdaten lokal mit AES-GCM und einem Android-Keystore-Schlüssel verschlüsseln; die Zeit-/Queue-Metadaten in SQLite bleiben lesbar. `location_outbox.db` ist von Cloud-Backup und Geräteübertragung ausgeschlossen.
-- Optional als Tracker-Relais teilnehmen: verschlüsselte und signierte Positionsmeldungen werden nach einer bestätigten Nearby-Verbindung per Bluetooth/WLAN an einen anderen Tracker übergeben. Relay läuft nur während des aktiven Trackings und benötigt eine vorherige Online-Kopplung.
+- Während einer gestarteten Tracking-Sitzung auch als Relais teilnehmen: verschlüsselte und signierte Positionsmeldungen werden nach einer bestätigten Nearby-Verbindung per Bluetooth/WLAN an einen anderen Tracker übergeben. Die ausdrückliche Freigabe erfolgt gemeinsam mit der Berechtigungseinrichtung; ein separater Relaisschalter entfällt. Relay benötigt eine vorherige Online-Kopplung.
 - Der Status unterscheidet lokal gespeicherte, noch ausstehende Meldungen von einer vom Server bestätigten Übertragung und zeigt weitere Wartemeldungen an.
 - Den Geräteschlüssel geschützt im Android Keystore speichern.
 
@@ -420,6 +590,6 @@ Das Tracking beginnt erst nach **Tracking starten** und lässt sich in der App o
 
 Für die Erfassung sind aktivierter Standort und die erforderlichen Android-Berechtigungen nötig. Die Übertragung benötigt eine Internetverbindung; ohne Verbindung bleibt nur die neueste Position höchstens 24 Stunden auf dem Smartphone gespeichert. Relay-Nachrichten verwenden weiterhin ihre eigene Ablauf- und Bestätigungssemantik. Android-Energiesparfunktionen, Empfang und GPS-Bedingungen können Aktualisierungen verzögern. Der Tracker ist keine garantierte Echtzeitortung und kein Notrufsystem.
 
-Die experimentelle Relaisfunktion ist standardmäßig ausgeschaltet. Beim Verbinden muss der Sicherheitscode auf beiden Geräten verglichen und bestätigt werden. Unterstützt wird derzeit ein einzelner Relay-Hop; die Ende-zu-Ende-Strecke ist noch nicht auf mehreren realen Geräten validiert.
+Die experimentelle Relaisfunktion bleibt ohne ausdrückliche App-Freigabe ausgeschaltet. **Jagdfunktionen deaktivieren** beendet aktive Teilnahme beziehungsweise Tracking, ohne Android-Standortzugriff für die reine Kartenanzeige zu entziehen. Beim Verbinden muss der Sicherheitscode auf beiden Geräten verglichen und bestätigt werden. Unterstützt wird derzeit ein einzelner Relay-Hop; die Ende-zu-Ende-Strecke ist noch nicht auf mehreren realen Geräten validiert.
 
 Die Jagdkarte zeigt Hundepositionen im gekoppelten Revierprofil an, auch außerhalb der Reviergrenze. Die [Android-Hilfe](docs/help/hilfe.md) und Fehlerbehebung öffnest du auch über das Info-Symbol in der Kartenleiste. Die [PWA-Hilfe](https://wierichs.github.io/Jagdkarte/hilfe.html#hunde) bleibt zusätzlich für die Web-App verfügbar.

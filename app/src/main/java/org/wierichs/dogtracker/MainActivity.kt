@@ -1,17 +1,13 @@
 package org.wierichs.dogtracker
 
-import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,11 +21,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -68,22 +64,35 @@ import org.wierichs.dogtracker.ui.theme.DogTrackerTheme
 import org.wierichs.dogtracker.communication.RelayPairingPrompts
 import org.wierichs.dogtracker.jagdkarte.JagdkarteScreen
 import org.wierichs.dogtracker.jagdkarte.guestLinkTokenFromUrl
+import org.wierichs.dogtracker.jagdkarte.EmailAuthLink
+import org.wierichs.dogtracker.jagdkarte.emailAuthLinkFromUrl
 import org.wierichs.dogtracker.communication.RelayGateway
-import org.wierichs.dogtracker.communication.RelayGatewayService
 import org.wierichs.dogtracker.DogTrackerPairingQrCode
 
 private const val PENDING_PAIRING_FILE = "pending_dog_pairing"
 
 class MainActivity : ComponentActivity() {
     private val pendingGuestLinkToken = mutableStateOf<String?>(null)
+    private val pendingEmailAuthLink = mutableStateOf<EmailAuthLink?>(null)
+
+    private fun receiveLinks(intent: Intent?) {
+        val authLink = emailAuthLinkFromUrl(intent?.data?.toString())
+        pendingEmailAuthLink.value = authLink
+        pendingGuestLinkToken.value = if (authLink == null) guestLinkTokenFromUrl(intent?.data?.toString()) else null
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        pendingGuestLinkToken.value = guestLinkTokenFromUrl(intent?.data?.toString())
+        receiveLinks(intent)
         enableEdgeToEdge()
         setContent {
             DogTrackerTheme {
-                JagdkarteApp(pendingGuestLinkToken.value, onGuestLinkReceived = { pendingGuestLinkToken.value = null })
+                JagdkarteApp(pendingGuestLinkToken.value, pendingEmailAuthLink.value,
+                    onGuestLinkReceived = { pendingGuestLinkToken.value = null },
+                    onEmailAuthLinkReceived = {
+                        pendingEmailAuthLink.value = null
+                        intent?.data = null
+                    })
             }
         }
     }
@@ -91,15 +100,54 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingGuestLinkToken.value = guestLinkTokenFromUrl(intent.data?.toString())
+        receiveLinks(intent)
     }
 }
 
 @Composable
-private fun JagdkarteApp(pendingGuestLinkToken: String?, onGuestLinkReceived: () -> Unit) {
+private fun JagdkarteApp(
+    pendingGuestLinkToken: String?,
+    incomingEmailAuthLink: EmailAuthLink?,
+    onGuestLinkReceived: () -> Unit,
+    onEmailAuthLinkReceived: () -> Unit
+) {
     val context = LocalContext.current
+    val huntingPermissionState = rememberHuntingPermissionState()
+    val huntingAccess by huntingPermissionState
+    var permissionSetupOpen by rememberSaveable {
+        mutableStateOf(pendingGuestLinkToken == null && incomingEmailAuthLink == null &&
+            !TrackerPreferences.permissionIntroductionCompleted(context))
+    }
+    fun closePermissionSetup() {
+        if (TrackerPreferences.requiresAutomaticHuntingConsent(context)) {
+            TrackerPreferences.setHuntingFunctionsConsent(context, false)
+        }
+        TrackerPreferences.completePermissionIntroduction(context)
+        permissionSetupOpen = false
+    }
+    fun disableHuntingFunctions() {
+        TrackerPreferences.setHuntingFunctionsConsent(context, false)
+        huntingPermissionState.value = readHuntingPermissions(context)
+    }
+    LaunchedEffect(huntingAccess) {
+        if (TrackerPreferences.requiresAutomaticHuntingConsent(context) &&
+            pendingGuestLinkToken == null && incomingEmailAuthLink == null) {
+            permissionSetupOpen = true
+        }
+        if (!huntingAccess.ready) {
+            if (RelayGateway.state.value.active || RelayGateway.state.value.starting) RelayGateway.stop(context)
+            if (TrackerPreferences.isTracking(context)) {
+                context.startService(Intent(context, LocationTrackingService::class.java)
+                    .setAction(LocationTrackingService.ACTION_STOP))
+            }
+        } else if (TrackerPreferences.isTracking(context)) {
+            context.startService(Intent(context, LocationTrackingService::class.java)
+                .setAction(LocationTrackingService.ACTION_RELAY_READY))
+        }
+    }
     var trackerSelected by rememberSaveable {
-        mutableStateOf(pendingGuestLinkToken == null && TrackerPreferences.lastTabIsTracker(context))
+        mutableStateOf(pendingGuestLinkToken == null && incomingEmailAuthLink == null &&
+            TrackerPreferences.lastTabIsTracker(context))
     }
     var mapFullScreen by rememberSaveable { mutableStateOf(TrackerPreferences.mapFullScreen(context)) }
     fun selectTab(tracker: Boolean) {
@@ -110,8 +158,8 @@ private fun JagdkarteApp(pendingGuestLinkToken: String?, onGuestLinkReceived: ()
             TrackerPreferences.setMapFullScreen(context, false)
         }
     }
-    LaunchedEffect(pendingGuestLinkToken) {
-        if (pendingGuestLinkToken != null) {
+    LaunchedEffect(pendingGuestLinkToken, incomingEmailAuthLink) {
+        if (pendingGuestLinkToken != null || incomingEmailAuthLink != null) {
             selectTab(false)
             mapFullScreen = false
             TrackerPreferences.setMapFullScreen(context, false)
@@ -132,7 +180,8 @@ private fun JagdkarteApp(pendingGuestLinkToken: String?, onGuestLinkReceived: ()
         }
     }) { padding ->
         Surface(Modifier.fillMaxSize().padding(padding)) {
-            if (trackerSelected) TrackerScreen() else JagdkarteScreen(
+            if (trackerSelected) TrackerScreen(huntingAccess, onConfigurePermissions = { permissionSetupOpen = true },
+                onDisableHuntingFunctions = { disableHuntingFunctions() }) else JagdkarteScreen(
                 onUseDeviceToken = { token ->
                 if (TrackerPreferences.isTracking(context)) {
                     false
@@ -144,29 +193,40 @@ private fun JagdkarteApp(pendingGuestLinkToken: String?, onGuestLinkReceived: ()
             },
                 incomingGuestLinkToken = pendingGuestLinkToken,
                 onGuestLinkReceived = onGuestLinkReceived,
+                incomingEmailAuthLink = incomingEmailAuthLink,
+                onEmailAuthLinkReceived = onEmailAuthLinkReceived,
                 isFullScreen = mapFullScreen,
                 onFullScreenChanged = {
                     mapFullScreen = it
                     TrackerPreferences.setMapFullScreen(context, it)
-                }
+                },
+                huntingAccess = huntingAccess,
+                onConfigurePermissions = { permissionSetupOpen = true },
+                onDisableHuntingFunctions = { disableHuntingFunctions() }
             )
+        }
+        if (permissionSetupOpen) {
+            HuntingPermissionSetupDialog(huntingAccess,
+                onRefresh = { huntingPermissionState.value = readHuntingPermissions(context) },
+                onDismiss = { closePermissionSetup() })
         }
     }
     pairingPrompt?.let { prompt ->
         AlertDialog(
             onDismissRequest = { RelayPairingPrompts.respond(prompt.endpointId, accept = false) },
-            title = { Text("Tracker-Verbindung prüfen") },
+            title = { Text("Handys verbinden") },
             text = {
-                Text("Vergleiche diesen Sicherheitscode mit dem anderen Tracker: ${prompt.authenticationDigits}. Nur fortfahren, wenn beide Codes übereinstimmen.")
+                Text("Zahl auf diesem Handy: ${prompt.authenticationDigits}\n\n" +
+                    "Vergleiche sie mit der Zahl auf dem anderen Handy. Bestätige auf beiden Handys nur, wenn die Zahlen gleich sind.")
             },
             confirmButton = {
                 TextButton(onClick = { RelayPairingPrompts.respond(prompt.endpointId, accept = true) }) {
-                    Text("Code stimmt")
+                    Text("Zahlen sind gleich")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { RelayPairingPrompts.respond(prompt.endpointId, accept = false) }) {
-                    Text("Ablehnen")
+                    Text("Nicht verbinden")
                 }
             }
         )
@@ -174,20 +234,33 @@ private fun JagdkarteApp(pendingGuestLinkToken: String?, onGuestLinkReceived: ()
 }
 
 @Composable
-private fun TrackerScreen() {
+internal fun TrackerScreen(
+    huntingAccess: HuntingPermissionState,
+    onConfigurePermissions: () -> Unit,
+    onDisableHuntingFunctions: () -> Unit,
+    completePairing: suspend (String, Boolean) -> String = { token, confirm ->
+        DogTrackerPairingApi.complete(token, confirm)
+    },
+    stopRelayGateway: suspend (Context) -> Unit = { RelayGateway.stopAndAwait(it) },
+    startTrackingService: (Context, Intent) -> Unit = { context, intent ->
+        ContextCompat.startForegroundService(context, intent)
+    }
+) {
     val context = LocalContext.current
     var deviceToken by remember { mutableStateOf(TrackerPreferences.deviceToken(context).orEmpty()) }
     var pendingPairingToken by remember {
         mutableStateOf(DeviceTokenStorage.read(context, PENDING_PAIRING_FILE))
     }
     var pairingBusy by remember { mutableStateOf(false) }
+    var pairingMessage by remember { mutableStateOf("") }
+    var pairingResult by remember { mutableStateOf<String?>(null) }
+    var trackingStarting by remember { mutableStateOf(false) }
     val pairingScope = rememberCoroutineScope()
     var showToken by remember { mutableStateOf(false) }
     var intervalSeconds by rememberSaveable {
         mutableStateOf(TrackerPreferences.intervalSeconds(context).toString())
     }
     var isTracking by rememberSaveable { mutableStateOf(TrackerPreferences.isTracking(context)) }
-    var relayEnabled by rememberSaveable { mutableStateOf(TrackerPreferences.relayEnabled(context)) }
     var status by remember { mutableStateOf(TrackerPreferences.status(context)) }
     var validationMessage by remember { mutableStateOf("") }
     val hostActivity = context as? Activity
@@ -200,12 +273,13 @@ private fun TrackerScreen() {
     }
 
     fun startTracking() {
-        if (pendingPairingToken != null) {
-            validationMessage = "Bitte die QR-Kopplung erst in der Jagdkarte bestaetigen oder abbrechen."
+        if (trackingStarting) return
+        if (!readHuntingPermissions(context).ready) {
+            validationMessage = "Bitte die Jagdfunktionen und erforderlichen Berechtigungen zuerst einrichten."
             return
         }
-        if (RelayGateway.state.value.active || RelayGateway.state.value.starting) {
-            validationMessage = "Zuerst die Revier-Relaisfreigabe in der Jagdkarte beenden."
+        if (pendingPairingToken != null) {
+            validationMessage = "Bitte die QR-Kopplung erst hier im DogTracker bestaetigen oder abbrechen."
             return
         }
         val normalizedToken = deviceToken.filterNot(Char::isWhitespace)
@@ -220,23 +294,42 @@ private fun TrackerScreen() {
         }
 
         validationMessage = ""
-    TrackerPreferences.saveDeviceToken(context, normalizedToken.lowercase())
-    TrackerPreferences.saveConfiguration(context, interval)
-        TrackerPreferences.setTracking(context, true)
-        ContextCompat.startForegroundService(
-            context,
-            Intent(context, LocationTrackingService::class.java).apply {
-                action = LocationTrackingService.ACTION_START
-                putExtra(LocationTrackingService.EXTRA_INTERVAL_SECONDS, interval)
+        trackingStarting = true
+        pairingScope.launch {
+            var started = false
+            try {
+                TrackerPreferences.saveDeviceToken(context, normalizedToken.lowercase())
+                TrackerPreferences.saveConfiguration(context, interval)
+                TrackerPreferences.setTracking(context, true)
+                stopRelayGateway(context)
+                check(readHuntingPermissions(context).ready) {
+                    "Jagdfreigabe oder erforderliche Berechtigung wurde entzogen."
+                }
+                startTrackingService(context, Intent(context, LocationTrackingService::class.java).apply {
+                    action = LocationTrackingService.ACTION_START
+                    putExtra(LocationTrackingService.EXTRA_INTERVAL_SECONDS, interval)
+                })
+                started = true
+                isTracking = true
+                status = "Standortdienst wird gestartet."
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                validationMessage = failure.message ?: "Tracking konnte nicht gestartet werden."
+            } finally {
+                if (!started) {
+                    TrackerPreferences.setTracking(context, false)
+                    isTracking = false
+                }
+                trackingStarting = false
             }
-        )
-        isTracking = true
-        status = "Standortdienst wird gestartet."
+        }
     }
 
     fun setPairingStatus(message: String) {
         TrackerPreferences.setStatus(context, message)
         status = message
+        pairingResult = message
     }
 
     fun resolvePendingPairing(confirm: Boolean) {
@@ -244,14 +337,13 @@ private fun TrackerScreen() {
         if (pairingBusy) return
         pairingBusy = true
         validationMessage = ""
+        pairingMessage = if (confirm) "Kopplung wird bestaetigt. Bitte warten." else "Kopplung wird abgebrochen. Bitte warten."
         pairingScope.launch {
             try {
                 val resolution = settleDogTrackerPairing(
                     token = token,
                     confirm = confirm,
-                    completeOnServer = { deviceToken, accepted ->
-                        DogTrackerPairingApi.complete(deviceToken, accepted)
-                    },
+                    completeOnServer = completePairing,
                     saveActiveToken = { TrackerPreferences.saveDeviceToken(context, it) },
                     clearPendingToken = { DeviceTokenStorage.clear(context, PENDING_PAIRING_FILE) }
                 )
@@ -259,13 +351,13 @@ private fun TrackerScreen() {
                     DogTrackerPairingResolution.ACTIVATED -> {
                         deviceToken = token
                         pendingPairingToken = null
-                        setPairingStatus("Kopplung bestaetigt. Jetzt Tracking starten.")
+                        setPairingStatus("Kopplung erfolgreich. Dieses Smartphone ist jetzt mit dem Hund verbunden. Jetzt Tracking starten.")
                     }
                     DogTrackerPairingResolution.ALREADY_ACTIVE -> {
                         deviceToken = token
                         pendingPairingToken = null
                         setPairingStatus(if (confirm) {
-                            "Kopplung war bereits bestaetigt. Jetzt Tracking starten."
+                            "Kopplung erfolgreich. Sie war bereits bestaetigt. Jetzt Tracking starten."
                         } else {
                             "Die Kopplung war schon abgeschlossen; der Schluessel wurde uebernommen."
                         })
@@ -276,7 +368,7 @@ private fun TrackerScreen() {
                     }
                     DogTrackerPairingResolution.NOT_FOUND -> {
                         if (confirm) {
-                            validationMessage = "Die Kopplung ist nicht mehr vorgemerkt. Bitte den QR-Code erneut scannen."
+                            pairingMessage = "Noch keine Kopplung vorgemerkt. Scanne diesen QR-Code zuerst in der Jagdkarte beim passenden Hund und tippe danach hier erneut auf Kopplung bestaetigen."
                         } else {
                             pendingPairingToken = null
                             setPairingStatus("Kopplung abgebrochen. Der bisherige Schluessel bleibt aktiv.")
@@ -286,79 +378,10 @@ private fun TrackerScreen() {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                validationMessage = failure.message ?: "DogTracker-Kopplung konnte nicht abgeschlossen werden."
+                pairingMessage = "Kopplung konnte nicht abgeschlossen werden: ${failure.message ?: "Unbekannter Fehler."} Bitte die Internetverbindung pruefen und erneut versuchen. Der QR-Code bleibt fuer einen erneuten Versuch erhalten."
             } finally {
                 pairingBusy = false
             }
-        }
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { grants ->
-        val preciseLocationGranted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        val notificationsGranted = Build.VERSION.SDK_INT < 33 ||
-            grants[Manifest.permission.POST_NOTIFICATIONS] == true ||
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-
-        if (preciseLocationGranted && notificationsGranted) {
-            startTracking()
-        } else {
-            validationMessage = "Für das Tracking sind genauer Standort und Benachrichtigungen erforderlich."
-        }
-    }
-
-    val nearbyPermissions = RelayGatewayService.requiredRelayPermissions()
-
-    val nearbyPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { grants ->
-        val allGranted = nearbyPermissions.all { permission ->
-            grants[permission] == true || ContextCompat.checkSelfPermission(context, permission) ==
-                PackageManager.PERMISSION_GRANTED
-        }
-        if (allGranted) {
-            TrackerPreferences.setRelayEnabled(context, true)
-            relayEnabled = true
-            status = "Relaisfreigabe aktiv. Tracker-Verbindungen werden per Sicherheitscode bestätigt."
-            if (isTracking) {
-                context.startService(
-                    Intent(context, LocationTrackingService::class.java).apply {
-                        action = LocationTrackingService.ACTION_RELAY_READY
-                    }
-                )
-            }
-        } else {
-            TrackerPreferences.setRelayEnabled(context, false)
-            relayEnabled = false
-            status = "Relaisfreigabe benötigt die Berechtigungen für Geräte in der Nähe."
-        }
-    }
-
-    fun enableNearbyRelay() {
-        if (nearbyPermissions.all {
-                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-            }
-        ) {
-            TrackerPreferences.setRelayEnabled(context, true)
-            relayEnabled = true
-            status = "Relaisfreigabe aktiv. Tracker-Verbindungen werden per Sicherheitscode bestätigt."
-            if (isTracking) {
-                context.startService(
-                    Intent(context, LocationTrackingService::class.java).apply {
-                        action = LocationTrackingService.ACTION_RELAY_READY
-                    }
-                )
-            }
-        } else {
-            nearbyPermissionLauncher.launch(nearbyPermissions.toTypedArray())
         }
     }
 
@@ -399,12 +422,12 @@ private fun TrackerScreen() {
                         Text(if (showToken) "Verbergen" else "Anzeigen")
                     }
                 },
-                enabled = !isTracking && pendingPairingToken == null
+                enabled = !isTracking && !trackingStarting && pendingPairingToken == null
             )
 
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !isTracking && pendingPairingToken == null,
+                enabled = !isTracking && !trackingStarting && pendingPairingToken == null,
                 onClick = {
                     val options = GmsBarcodeScannerOptions.Builder()
                         .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
@@ -429,24 +452,30 @@ private fun TrackerScreen() {
             }
 
             if (pendingPairingToken == null) {
-                OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !isTracking, onClick = {
+                OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !isTracking && !trackingStarting, onClick = {
                     val token = createDogTrackerDeviceToken()
                     DeviceTokenStorage.write(context, token, PENDING_PAIRING_FILE)
                     pendingPairingToken = token
                     validationMessage = ""
+                    pairingMessage = ""
                 }) { Text("QR-Code fuer Jagdkarte anzeigen") }
             } else {
                 Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = MaterialTheme.shapes.medium) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Mit Jagdkarte koppeln", style = MaterialTheme.typography.titleSmall)
-                        Text("In Jagdkarte unter Hunde den Hund auswaehlen und diesen QR-Code scannen. Danach hier die erfolgreiche Kopplung bestaetigen.",
+                        Text("In Jagdkarte unter Hunde den Hund auswaehlen und diesen QR-Code scannen. Danach hier auf Kopplung bestaetigen tippen.",
                             style = MaterialTheme.typography.bodySmall)
                         Text("Der bisherige Schluessel bleibt bis zur Bestaetigung aktiv. Zum Bestaetigen oder Abbrechen ist eine Internetverbindung erforderlich.",
                             style = MaterialTheme.typography.bodySmall)
                         DogTrackerPairingQrCode(dogTrackerPairingQr(pendingPairingToken!!),
                             "Einmaliger DogTracker-Kopplungscode",
                             Modifier.fillMaxWidth().height(220.dp))
+                        if (pairingMessage.isNotBlank()) {
+                            Text(pairingMessage, color = if (pairingBusy) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.error)
+                        }
+                        if (pairingBusy) CircularProgressIndicator()
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(enabled = !pairingBusy, onClick = {
                                 resolvePendingPairing(confirm = false)
@@ -465,34 +494,7 @@ private fun TrackerScreen() {
 
             Text("Ziel: Jagdkarte Hundestandort", style = MaterialTheme.typography.bodyMedium)
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Als Tracker-Relais teilnehmen", style = MaterialTheme.typography.titleSmall)
-                    Text("Verschlüsselte Meldungen anderer Geräte über dieses Smartphone weiterleiten.", style = MaterialTheme.typography.bodySmall)
-                }
-                Checkbox(
-                    checked = relayEnabled,
-                    onCheckedChange = { enabled ->
-                        if (enabled) {
-                            enableNearbyRelay()
-                        } else {
-                            TrackerPreferences.setRelayEnabled(context, false)
-                            relayEnabled = false
-                            status = "Relaisfreigabe ausgeschaltet."
-                            if (isTracking) {
-                                context.startService(
-                                    Intent(context, LocationTrackingService::class.java).apply {
-                                        action = LocationTrackingService.ACTION_RELAY_STOP
-                                    }
-                                )
-                            }
-                        }
-                    }
-                )
-            }
+            HuntingPermissionSettings(huntingAccess, onConfigurePermissions, onDisableHuntingFunctions)
 
             OutlinedTextField(
                 value = intervalSeconds,
@@ -501,7 +503,7 @@ private fun TrackerScreen() {
                 label = { Text("Intervall in Sekunden") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                enabled = !isTracking
+                enabled = !isTracking && !trackingStarting
             )
 
             Surface(
@@ -525,7 +527,10 @@ private fun TrackerScreen() {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (isTracking) {
+                if (trackingStarting) {
+                    CircularProgressIndicator()
+                    Text("Tracking wird vorbereitet; der DogTracker uebernimmt das Relais.")
+                } else if (isTracking) {
                     Button(
                         modifier = Modifier.fillMaxWidth(),
                         enabled = pendingPairingToken == null,
@@ -539,27 +544,10 @@ private fun TrackerScreen() {
                     ) {
                         Text("Tracking stoppen")
                     }
-                } else {
+                } else if (huntingAccess.ready) {
                     Button(
                         modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            val permissions = buildList {
-                                add(Manifest.permission.ACCESS_COARSE_LOCATION)
-                                add(Manifest.permission.ACCESS_FINE_LOCATION)
-                                if (Build.VERSION.SDK_INT >= 33) {
-                                    add(Manifest.permission.POST_NOTIFICATIONS)
-                                }
-                            }
-                            val allGranted = permissions.all {
-                                ContextCompat.checkSelfPermission(context, it) ==
-                                    PackageManager.PERMISSION_GRANTED
-                            }
-                            if (allGranted) {
-                                startTracking()
-                            } else {
-                                permissionLauncher.launch(permissions.toTypedArray())
-                            }
-                        }
+                        onClick = { startTracking() }
                     ) {
                         Text("Tracking starten")
                     }
@@ -574,4 +562,12 @@ private fun TrackerScreen() {
         }
     }
 
+    pairingResult?.let { message ->
+        AlertDialog(
+            onDismissRequest = { pairingResult = null },
+            title = { Text("DogTracker-Kopplung") },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = { pairingResult = null }) { Text("Verstanden") } }
+        )
+    }
 }

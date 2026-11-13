@@ -6,13 +6,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.wierichs.dogtracker.MainActivity
 import org.wierichs.dogtracker.TrackerPreferences
+import org.wierichs.dogtracker.readHuntingPermissions
 import org.wierichs.dogtracker.jagdkarte.JagdkarteApiException
 import org.wierichs.dogtracker.jagdkarte.JagdkarteRepository
 
@@ -33,19 +32,18 @@ class RelayGatewayService : Service() {
     private var gateway: RelayGatewayEngine? = null
     private var started = false
     private var terminalStatus: String? = null
+    private var requestedProfileId: String? = null
     private val incoming = Channel<ByteArray>(64)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
         if (started) return START_NOT_STICKY
         val profileId = intent?.getStringExtra(EXTRA_PROFILE_ID)
-        if (profileId == null || TrackerPreferences.isTracking(this) || requiredRelayPermissions().any {
-                ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-            }) {
-            terminalStatus = "Relais nicht gestartet: Berechtigung fehlt oder DogTracker ist aktiv."
-            RelayGateway.state.value = RelayGatewayStatus(status = terminalStatus!!)
+        requestedProfileId = profileId
+        if (profileId == null || TrackerPreferences.isTracking(this) || !readHuntingPermissions(this).ready) {
+            terminalStatus = "Relais nicht gestartet: Freigabe/Berechtigung fehlt oder DogTracker ist aktiv."
+            RelayGateway.state.value = RelayGatewayStatus(profileId = profileId, status = terminalStatus!!)
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -53,7 +51,7 @@ class RelayGatewayService : Service() {
         try { startNotification() }
         catch (_: Exception) {
             terminalStatus = "Relaisdienst kann ohne sichtbare Benachrichtigung nicht gestartet werden."
-            RelayGateway.state.value = RelayGatewayStatus(status = terminalStatus!!)
+            RelayGateway.state.value = RelayGatewayStatus(profileId = profileId, status = terminalStatus!!)
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -80,7 +78,17 @@ class RelayGatewayService : Service() {
                         }
                     }
                 }
-                while (true) { engine.synchronize(); delay(10_000) }
+                while (true) {
+                    if (!readHuntingPermissions(this@RelayGatewayService).ready || TrackerPreferences.isTracking(this@RelayGatewayService)) {
+                        terminalStatus = if (TrackerPreferences.isTracking(this@RelayGatewayService)) {
+                            "Der DogTracker uebernimmt den Relaisbetrieb."
+                        } else "Jagdteilnahme beendet: Jagdfreigabe oder erforderliche Berechtigung fehlt."
+                        stopSelf()
+                        break
+                    }
+                    engine.synchronize()
+                    delay(10_000)
+                }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 val status = when {
@@ -99,13 +107,11 @@ class RelayGatewayService : Service() {
     private fun startNotification() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Revier-Relais", NotificationManager.IMPORTANCE_LOW))
-        val stop = PendingIntent.getService(this, 21, Intent(this, RelayGatewayService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val open = PendingIntent.getActivity(this, 22, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = NotificationCompat.Builder(this, CHANNEL_ID).setSmallIcon(android.R.drawable.ic_menu_share)
-            .setContentTitle("Jagdkarte-Relais aktiv").setContentText("Verschluesselte Reviermeldungen weiterleiten")
-            .setOngoing(true).setContentIntent(open).addAction(0, "Relais stoppen", stop).build()
+            .setContentTitle("Jagdbruder-Relais aktiv").setContentText("Verschluesselte Reviermeldungen weiterleiten")
+            .setOngoing(true).setContentIntent(open).build()
         ServiceCompat.startForeground(this, 2101, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
     }
 
@@ -118,7 +124,8 @@ class RelayGatewayService : Service() {
             withContext(NonCancellable) {
                 runCatching { engine?.cancelOwn() }
                 runCatching { engine?.close() }
-                RelayGateway.state.value = RelayGatewayStatus(status = terminalStatus ?: "Relaisfreigabe beendet.")
+                RelayGateway.state.value = RelayGatewayStatus(profileId = requestedProfileId,
+                    status = terminalStatus ?: "Relaisfreigabe beendet.")
             }
         }
         super.onDestroy()
@@ -126,7 +133,6 @@ class RelayGatewayService : Service() {
 
     companion object {
         const val ACTION_START = "org.wierichs.jagdkarte.RELAY_START"
-        const val ACTION_STOP = "org.wierichs.jagdkarte.RELAY_STOP"
         const val EXTRA_PROFILE_ID = "profile_id"
         private const val CHANNEL_ID = "jagdkarte_relay"
 
