@@ -12,12 +12,41 @@ import javax.crypto.spec.PSource
 import javax.crypto.spec.GCMParameterSpec
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RelayEnvelopeEncoderTest {
+    @Test
+    fun legacyRelayClassificationOnlyMatchesThisDevice() {
+        fun encoded(size: Int) = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(size))
+        val deviceId = "a16cb2bc-6dca-40bb-8e10-fc33b4d9272e"
+        val envelope = RelayEnvelope(
+            originDeviceId = deviceId,
+            messageId = "b16cb2bc-6dca-40bb-8e10-fc33b4d9272e",
+            expiresAt = java.time.format.DateTimeFormatterBuilder().appendInstant(3).toFormatter()
+                .format(Instant.ofEpochMilli(System.currentTimeMillis() + 60_000)),
+            keyId = "key-1",
+            encryptedKey = encoded(256),
+            nonce = encoded(12),
+            ciphertext = encoded(17),
+            signature = encoded(256)
+        )
+        val message = CommunicationMessage.create(
+            RelayEnvelope.MESSAGE_TYPE, "https://example.test/relay", envelope.toByteArray()
+        )
+
+        assertTrue(isLegacyOwnRelayEnvelope(message, deviceId.uppercase()))
+        assertFalse(isLegacyOwnRelayEnvelope(message, "c16cb2bc-6dca-40bb-8e10-fc33b4d9272e"))
+        assertFalse(isLegacyOwnRelayEnvelope(message, null))
+        assertFalse(isLegacyOwnRelayEnvelope(
+            CommunicationMessage.create("location.fix", "https://example.test", envelope.toByteArray()),
+            deviceId
+        ))
+    }
+
     @Test
     fun envelopeCanBeVerifiedAndDecryptedByServerCompatibleAlgorithms() {
         val signingPair = KeyPairGenerator.getInstance("RSA").apply { initialize(3072) }.generateKeyPair()

@@ -24,6 +24,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.wierichs.dogtracker.communication.RelayGatewayStatus
 import org.wierichs.dogtracker.communication.RelayGateway
+import org.wierichs.dogtracker.communication.RelayGatewayService
 import org.wierichs.dogtracker.HuntingPermissionSettings
 import org.wierichs.dogtracker.HuntingPermissionState
 import org.wierichs.dogtracker.TrackerPreferences
@@ -85,6 +86,26 @@ class RelayGatewayInstrumentedTest {
             RelayGateway.state.value = RelayGatewayStatus()
             handover.await()
         } finally {
+            RelayGateway.state.value = originalState
+        }
+    }
+
+    @Test fun relayStopWaitsForServiceCleanupEvenBeforeEngineInitialization() {
+        val originalState = RelayGateway.state.value
+        val service = RelayGatewayService()
+        val context = object : ContextWrapper(InstrumentationRegistry.getInstrumentation().targetContext) {
+            override fun stopService(name: Intent): Boolean = false
+        }
+        RelayGateway.serviceCreated(service)
+        RelayGateway.state.value = RelayGatewayStatus(starting = true)
+        try {
+            RelayGateway.stop(context)
+            assertTrue(RelayGateway.state.value.starting)
+            RelayGateway.serviceDestroyed(service, null, RelayGatewayStatus(status = "cleanup completed"))
+            assertFalse(RelayGateway.state.value.starting)
+            assertEquals("cleanup completed", RelayGateway.state.value.status)
+        } finally {
+            RelayGateway.serviceDestroyed(service, null, originalState)
             RelayGateway.state.value = originalState
         }
     }

@@ -8,10 +8,13 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.wierichs.dogtracker.communication.RelayApiClient
+import org.wierichs.dogtracker.communication.DogRelayAuthorization
 import org.wierichs.dogtracker.communication.RelaySigningIdentity
 import org.wierichs.dogtracker.communication.HttpsLocationTransport
 import org.wierichs.dogtracker.communication.LocationPayloadCryptoException
 import org.wierichs.dogtracker.communication.MessageTransportResponse
+import org.wierichs.dogtracker.communication.RelayEnvelope
+import org.wierichs.dogtracker.communication.isLegacyOwnRelayEnvelope
 import org.wierichs.dogtracker.communication.SqliteMessageStore
 import org.wierichs.dogtracker.communication.UnreadableLocationPayloadException
 
@@ -24,7 +27,7 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
             val pending = try {
                 SqliteMessageStore(applicationContext).use { store ->
                     store.removeExpired()
-                    store.oldestPending()
+                    store.oldestPendingForUpload()
                 }
             } catch (error: UnreadableLocationPayloadException) {
                 SqliteMessageStore(applicationContext).use { store -> store.acknowledge(error.messageId) }
@@ -42,6 +45,12 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
             } ?: return@withContext Result.success()
 
             try {
+                if (isLegacyOwnRelayEnvelope(pending.message, TrackerPreferences.relayDeviceId(applicationContext))) {
+                    SqliteMessageStore(applicationContext).use { store ->
+                        store.markRelayForNearby(pending.message.messageId)
+                    }
+                    continue
+                }
                 if (pending.message.type == LOCATION_MESSAGE_TYPE) {
                     val retryAfterAt = TrackerPreferences.locationUploadRetryAfter(applicationContext)
                     if (retryAfterAt != null && retryAfterAt > System.currentTimeMillis()) {
@@ -63,9 +72,15 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
                     }
                 if (!relayIsProvisioned(deviceToken)) relaySetupPending = true
                 val response = if (pending.message.type == RELAY_ENVELOPE_MESSAGE_TYPE) {
+                    val deviceId = TrackerPreferences.relayDeviceId(applicationContext)
+                        ?: throw IllegalStateException("Relay-Gerätekennung fehlt.")
+                    val authorization = DogRelayAuthorization.authorization(applicationContext, deviceId)
+                        ?: throw IllegalStateException("Relay-Berechtigung fehlt oder ist abgelaufen.")
+                    val envelope = RelayEnvelope.parse(pending.message.payload)
+                        ?: throw IllegalStateException("Gespeicherte Relay-Meldung ist ungültig oder abgelaufen.")
                     MessageTransportResponse(
                         statusCode = RelayApiClient(TrackerPreferences.RELAY_ENDPOINT, deviceToken)
-                            .submitRelayEnvelope(pending.message.payload),
+                            .submitRelayEnvelope(envelope, authorization),
                         retryAfter = null
                     )
                 } else {
@@ -75,7 +90,7 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
                     LocationUploadDisposition.ACCEPTED -> {
                         val remainingCount = SqliteMessageStore(applicationContext).use { store ->
                             store.acknowledge(pending.message.messageId)
-                            store.pendingCount()
+                            store.pendingUploadCount()
                         }
                         TrackerPreferences.setStatus(
                             applicationContext,
@@ -104,7 +119,9 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
                         }
                         TrackerPreferences.setStatus(
                             applicationContext,
-                            "Positionsdaten abgelehnt (HTTP ${response.statusCode}); bitte Einstellungen prüfen."
+                            if (pending.message.type == RELAY_ENVELOPE_MESSAGE_TYPE)
+                                "Relaismeldung abgelehnt (HTTP ${response.statusCode}); nicht zugestellt."
+                            else "Positionsdaten abgelehnt (HTTP ${response.statusCode}); bitte Einstellungen prüfen."
                         )
                         continue
                     }
@@ -180,6 +197,14 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
             } catch (_: Exception) {
                 return false
             }
+        }
+
+        try {
+            val deviceId = TrackerPreferences.relayDeviceId(applicationContext) ?: return false
+            DogRelayAuthorization.refresh(applicationContext, deviceId, deviceToken)
+        } catch (_: Exception) {
+            TrackerPreferences.setStatus(applicationContext, "Relay-Berechtigung konnte nicht online erneuert werden.")
+            return false
         }
 
         return true

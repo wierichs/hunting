@@ -1,222 +1,262 @@
-# Kommunikationskonzept: Tracker als Relais
+# Kommunikationskonzept
 
-## Ziel
+## Zweck und Geltungsbereich
 
-Standortmeldungen von Hunden **und Revierteilnehmern** sollen die berechtigten
-Reviermitglieder auch bei eingeschränkter Internetverbindung möglichst gut
-erreichen. Ist ein berechtigtes Gerät per Bluetooth oder lokalem WLAN erreichbar
-und online, kann es Nachrichten zwischenspeichern und an den Server weiterleiten.
-Die Darstellung unterstützt die Lageeinschätzung; sie garantiert weder
-Echtzeitdaten noch eine lückenlose Erkennung von Gefahren.
+Jagdbruder überträgt Hunde- und Teilnehmerpositionen an das gemeinsame
+Jagdkarte-Backend. Ein erreichbares, berechtigtes Gerät kann verschlüsselte
+Meldungen als Relais übernehmen und bei Internetverbindung weiterleiten.
+Das verbessert die Zustellchance bei Funklöchern, garantiert aber weder
+Echtzeit noch Reichweite oder Zustellung. Die PWA und der bisherige
+Hundetracker-Vertrag bleiben eigenständig und müssen kompatibel bleiben.
 
-Geräte können eigene Positionsmeldungen erzeugen und, sofern unterstützt und
-freigegeben, als Relais für berechtigte andere Geräte dienen. Die Funkverbindung
-allein begründet keine Berechtigung. Teilnehmer- und Hundepositionen bleiben
-unterschiedlichen Identitäten zugeordnet; eine Hundekopplung ist für die
-Standortfreigabe eines Teilnehmers nicht erforderlich.
+Dieses Dokument unterscheidet den vorhandenen Stand vom Zielbild und den
+erforderlichen Umsetzungsschritten. Bereitstellung und Serververtrag sind in der
+[Relay-Serveranleitung](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md)
+beschrieben; offene Abnahmen stehen im [Portierungsstatus](PORTIERUNGSSTATUS.md).
 
-## Ausgangslage
+## Zielbild: Kommunikation im Funkloch
 
-Ausgangspunkt des ursprünglichen Hunde-Relay-Ausbaus war die Erfassung während
-einer gestarteten DogTracker-Sitzung mit lokaler SQLite-Warteschlange und
-HTTPS-Upload per Hundegeräteschlüssel. Der heutige Implementierungsstand für
-Hunde und Teilnehmer ist in den folgenden Abschnitten beschrieben.
+- Teilnehmer und Hundegeräte sollen nach vorheriger Online-Einrichtung
+  desselben Reviers und regelmäßiger Erneuerung der Berechtigung auch ohne
+  Mobilfunk automatisch lokale Verbindungen herstellen. Für jede Begegnung
+  darf kein Kopplungsdialog nötig sein.
+  Android-Berechtigungen und die ausdrückliche Zustimmung zur Standortfreigabe
+  und zum Relaisbetrieb bleiben erforderlich. Die Hundegerät-Einrichtung für
+  einen konkreten Hund bleibt von der automatischen Relaisverbindung getrennt.
+- Teilnehmer sollen aktuelle freigegebene Teilnehmer- und Hundepositionen auch
+  dann auf ihrer Karte sehen können, wenn weder Sender noch Empfänger Internet
+  haben. Dies ist ein Ziel, noch keine vorhandene Funktion. Kartenpakete und
+  benötigte Revierdaten müssen vorher offline verfügbar sein.
+- Ein Gerät mit Internet soll geeignete Meldungen zusätzlich an das Backend
+  weiterleiten, damit sie auch über Jagdkarte und PWA verfügbar werden.
+  Offline-Nachbarn sind nicht selbst mit der PWA oder dem Server verbunden.
+- Übliche Abstände von 100 bis 300 Metern sind eine Anforderung für die
+  Erprobung, keine zugesicherte Funkreichweite. Gelände, Bewuchs, Position des
+  Smartphones und Gerätehardware beeinflussen die Verbindung erheblich.
 
-Die Relaisfunktion benötigt daher Änderungen an der Android-App **und** an der Server-Schnittstelle der Jagdkarte. Eine App-seitige Änderung allein kann die Nachrichten nicht sicher im Namen eines anderen Trackers annehmen.
+Als lokaler Transport bleibt zunächst Google Nearby Connections vorgesehen.
+Nearby kombiniert Bluetooth, BLE und WLAN selbst und wählt den Funkweg; die
+App kann keine bestimmte Kombination oder Reichweite zusagen. Ein eigener
+Wi-Fi-Aware-Transport und eine separate BLE-Erkennung werden vorerst nicht
+verfolgt. Reichweite, Entdeckungszeit, Zuverlässigkeit und Akkuverbrauch
+müssen auf tatsächlichen Geräten im Revier gemessen werden.
 
-### App-seitiger Implementierungsstand
+## Vorhandener Stand und Grenzen
 
-Der vorherige Abschnitt beschreibt den bestehenden Hundetracker-Vertrag im
-separaten Web-Repository. Er bleibt unveraendert und ist nicht die neue native
-`location-relay`-Serverstufe, die in diesem Dokument weiter unten beschrieben wird.
+Die App besitzt einen transportneutralen Nachrichtenkern mit SQLite-Outbox,
+HTTPS-Transport, Android-Keystore-Signaturidentität und Relay-Umschlägen.
+Google Nearby Connections mit P2P-Cluster-Strategie stellt die lokalen
+Verbindungen her. Die gemeinsame Dienstkennung lautet
+`org.wierichs.dogtracker`. Die automatische gegenseitige Authentifizierung
+mit signiertem Revierverzeichnis und verbindungsbezogenem Nearby-Token ist
+implementiert und in einem Geräteszenario geprüft, aber noch nicht umfassend
+abgenommen. Es ist keine manuelle Verbindungsbestätigung erforderlich. Ältere
+Versionen ohne das neue Verfahren sollen nicht verbunden werden.
+Ein einzelner Relay-Hop ist vorgesehen; Mehrhop-Weitergabe ist nicht aktiviert.
 
-Die Android-App hat nun eine transportneutrale Nachrichtenhülle, eine SQLite-Outbox, einen HTTPS-Transport, eine Android-Keystore-Signaturidentität und eine Relay-Envelope-Implementierung. Die App registriert den öffentlichen RSA-Schlüssel mit dem bestehenden Tracker-Token, lädt den öffentlichen Supabase-Verschlüsselungsschlüssel und verpackt Positionsmeldungen mit AES-256-GCM sowie RSA-OAEP/SHA-256. Der Ursprung signiert die unveränderlichen Relay-Metadaten mit RSASSA-PKCS1-v1_5/SHA-256.
+Eigene Nachrichten werden direkt per HTTPS oder über ein zugelassenes Relais
+an den Server übertragen. Das Relais speichert übernommene Umschläge und lädt
+sie mit seiner eigenen Berechtigung hoch. Lokale Funkübergabe bedeutet nicht,
+dass der Server die Nachricht bereits angenommen hat. Teilnehmer- und
+Hundepositionen haben getrennte Identitäten; ein Benutzergerät ist kein
+Hundegerät und benötigt für Teilnehmer-Relay keine Hundekopplung.
 
-Die App nutzt Google Nearby Connections mit P2P-Cluster-Strategie. Relay ist opt-in und nur während des aktiven Trackings verfügbar. Vor jeder lokalen Verbindung müssen Nutzer den Nearby-Sicherheitscode auf beiden Geräten vergleichen. Der Ursprung sendet eigene Relay-Umschläge; der Empfänger legt sie lokal ab und lädt sie mit seinem eigenen Geräteschlüssel hoch. Mehrhop-Weitergabe ist nicht aktiviert.
+Der Ursprung verschlüsselt Relay-Nutzdaten mit AES-256-GCM und RSA-OAEP/SHA-256
+für den Server und signiert unveränderliche Metadaten mit
+RSASSA-PKCS1-v1_5/SHA-256. Der private Signaturschlüssel bleibt im Android
+Keystore. Benutzer-JWTs und Hundegeräte-Bearer-Token werden nicht an Relais
+weitergegeben. Die Funkverbindung allein begründet keine Revierberechtigung.
+Da die Umschläge für den Server verschlüsselt sind, können empfangende
+Smartphones die Position daraus nicht lokal anzeigen. Die bisherige
+Offline-Revieransicht ist ein lesbarer Snapshot ohne Livepositionen.
 
-Im korrespondierenden `wierichs.github.io/Jagdkarte`-Repository liegt die separate Supabase-Funktion `dog-location-relay`; die bestehende `dog-location`-Funktion bleibt unverändert. Der Server prüft Ursprungssignatur, Revierzugehörigkeit, Ablauf und Positionswerte und übergibt die Position an die vorhandene RPC. Die RPC speichert nur den letzten Stand und verhindert, dass gleiche oder ältere Zeitstempel ihn überschreiben; ein separates Nachrichten-ID-Ledger gibt es nicht. Deploy- und API-Details stehen dort in `hundestandort-api.md` und [supabase/README.md](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/README.md).
+### Hundetracker
 
-Der Kotlin-Build, die Envelope-Krypto-Unit-Tests und die Instrumentierungstest-Kompilierung sind erfolgreich. Es war kein Android-Gerät oder Emulator angeschlossen, daher sind Nearby-Pairing, Berechtigungsdialoge und realer Funktransfer noch nicht auf Hardware validiert.
+Die bestehende direkte `dog-location`-Schnittstelle bleibt erhalten; für
+weitergeleitete Hundeumschläge gibt es weiterhin `dog-location-relay`. Dessen
+Serverpfad prüft unter anderem Signatur, Revierzugehörigkeit, Ablauf und
+Positionswerte. Der aktuelle DogTracker-Arbeitsstand lädt empfangene Hunde-
+und Teilnehmerumschläge über die gemeinsame `location-relay`-Serverstufe
+hoch und prüft deren signierte, meldungsgebundene Bestätigung.
+Die vorhandene RPC speichert den letzten Stand und verhindert, dass gleiche
+oder ältere Zeitstempel ihn überschreiben. Für diesen bisherigen Pfad gibt es
+kein separates Nachrichten-ID-Ledger. Eigene Hundeumschläge bleiben bis zum
+Ablauf oder bis zu einer geprüften, exakt passenden Serverbestätigung für
+Nearby verfügbar; das Ursprungsgerät lädt seine Position direkt über
+`dog-location` hoch, nicht über den Relay-Endpunkt.
 
-## Native App Jagdbruder im Branch AndroidPort
+Neue Umschläge werden bei einer authentifizierten Verbindung sofort angeboten.
+Unbestätigte Pakete werden pro Nachbar frühestens nach 30 Sekunden erneut
+versucht; bei einer neuen Verbindung beginnt die Übertragung erneut. Pro
+Durchlauf werden höchstens 50 Pakete angeboten, wobei noch nicht gesendete
+Pakete Vorrang erhalten. Die temporäre Empfangsbestätigung einer signierten
+Serverquittung unterdrückt nur deren erneute Funkübertragung an denselben
+Nachbarn während der aktuellen Sitzung. Sie ist keine Serverbestätigung und
+löscht keine Nachrichten oder gespeicherten Quittungen. Geht sie verloren,
+wird die Quittung erneut angeboten. Auch bei einer neuen Verbindung werden
+gespeicherte Quittungen zunächst erneut angeboten.
 
-Die native Android-App Jagdbruder ist ein zusaetzliches Angebot neben der PWA Jagdkarte,
-keine Abloesung. Die PWA bleibt in ihrem jetzigen Funktionsumfang bestehen.
-Gemeinsame Kommunikations- und Servererweiterungen muessen ihre vorhandenen
-Funktionen und Schnittstellen rueckwaertskompatibel erhalten.
+Der DogTracker erfasst Positionen nur nach ausdrücklich gestartetem Tracking
+über einen sichtbaren Vordergrunddienst. Bei fehlender Verbindung bleibt für
+den direkten Upload nur der neueste GPS-Fix bis zu 24 Stunden in der lokalen
+Outbox; Relay-Nachrichten haben eigene Ablauf- und Bestätigungsregeln.
+GPS-Nutzdaten sind lokal verschlüsselt, Zeit- und Warteschlangenmetadaten
+bleiben lesbar. Die Outbox ist vom Android-Backup ausgeschlossen.
 
-Jagdbruder verwendet den vorhandenen Hundetracker innerhalb derselben
-App weiter. Die App-ID bleibt `org.wierichs.jagdkarte`; die Nearby-
-Dienstkennung bleibt fuer den Austausch mit dem bestehenden DogTracker
-`org.wierichs.dogtracker`. Der Sicherheitscode wird unabhaengig von der gerade
-geoeffneten Ansicht angezeigt. Anmeldung, Revierdarstellung und
-Teilnehmer-Standortfreigabe sind native Implementierungen, keine WebView.
+### Teilnehmer und gemeinsame Relay-Serverstufe
 
-Der bisherige DogTracker-Serververtrag bleibt unveraendert. Eine neue, separate
-Stufe `location-relay` liegt nun im Supabase-Verzeichnis des PWA-Repositories:
-Benutzergeraete
-werden mit verifiziertem Benutzerkonto pro Revier registriert und widerrufen.
-Ein Benutzerkonto wird nicht als Hundegeraet ausgegeben. Die Registrierung und
-Erneuerung benoetigen Internet; signierte Verzeichnisse erlauben anschliessend
-eine auf zwei Minuten begrenzte Offline-Pruefung der zugelassenen Urspruenge.
+Die additive `location-relay`-Serverstufe registriert und widerruft
+Benutzergeräte pro Revier. Registrierung und Erneuerung benötigen Internet.
+Die Offline-Erweiterung stellt signierte Verzeichnisse für höchstens
+24 Stunden bereit; die App erneuert sie bei Internetzugang. Widerrufe
+können offline bis zum Ablauf verzögert wirken, und der Server prüft beim
+Upload erneut. Die Serverstufe ergänzt Nachrichten-ID-Ledger, monotone
+Sequenzen, Mitgliedschafts- und Widerrufsprüfung sowie signierte
+Serverbestätigungen. Standortentscheidung und Annahme der Nachrichten-ID
+werden atomar gespeichert. Die App prüft die Bestätigung, bevor sie den
+betreffenden Outbox-Eintrag atomar ersetzt.
 
-Die Android-App erklaert die geraetebezogenen Berechtigungen beim ersten Start
-auf der Jagdkarte und bietet die Einrichtung spaeter im Benutzerkonto an.
-Ohne vollstaendige Android-Berechtigungen und App-Freigabe sind Jagdmodus-
-Steuerung, Livepositionen und Tracking-Start ausgeblendet; Verwaltung bleibt
-nutzbar. Die Persona sind Nutzungskontexte, keine auswaehlbaren Rollen.
+Die gerätebezogene Einrichtung erklärt und erlaubt eigene Standortfreigabe und
+Relaisbetrieb gemeinsam. Android-Berechtigungen allein sind keine Zustimmung.
+Im aktiven Jagdmodus des ausgewählten Reviers sind vollständige Berechtigungen
+und eine gültige, zuvor online eingerichtete Autorisierung erforderlich.
+Teilnehmerpositionen werden nur bei aktiver Karte erfasst und spätestens 90 Sekunden nach der Messung
+verworfen. Beim Pausieren der Karte kann das sichtbare Relay-Gateway im
+Hintergrund weiterarbeiten; Hintergrund-GPS für Teilnehmer ist nicht
+implementiert. Beim Start des DogTrackers wird der Relaisbetrieb übergeben;
+die Teilnehmerposition wird dabei nicht parallel geteilt.
 
-Eine zusaetzliche Zustimmung pro Konto/Revier erlaubt Relaisbetrieb mit
-sichtbarem Foreground-Service und eigene Standortfreigabe gemeinsam. Separate
-Schalter entfallen; die beiden Zwecke werden ausdruecklich erklaert. Vorhandene
-Android-Berechtigungen allein gelten nicht als Zustimmung zum Teilen.
-Die Teilnahme wird nach Neustart nur mit gemerkter Revierzustimmung,
-vollstaendigen Berechtigungen und frischer Onlinepruefung bei aktivem Jagdmodus
-wieder aufgenommen. Die Stoppaktion widerruft die Revierzustimmung. Im
-DogTracker wird Relais mit der Berechtigungseinrichtung freigegeben und arbeitet
-nur waehrend einer ausdruecklich gestarteten Tracking-Sitzung. Eigene
-Teilnehmerpositionen werden nur bei aktiver Karte erfasst, als
-`participant.location` verschluesselt eingereiht und nach spaetestens
-90 Sekunden ab Messzeit verworfen. Ein aktiviertes Gateway kann waehrend
-pausierter eigener Standortuebertragung im Hintergrund weiterarbeiten. Hintergrund-GPS fuer
-Teilnehmer und automatische Wiederaufnahme nach Prozessende sind noch nicht
-implementiert.
+Bei einem unerwarteten Dienstende bleiben Gerätekennung und gespeicherte
+Fremdmeldungen erhalten. Nach einem Prozessende kann das Gateway mit einem
+verschlüsselt gespeicherten, konto- und reviergebundenen Revierstand und
+Verzeichnis auch ohne Internet wieder anlaufen. Die Berechtigung ist an den
+Android-Bootzähler und die seit Beginn der Online-Abfrage vergangene monotone
+Zeit gebunden; eine zurückgestellte Systemzeit verlängert sie nicht. Nach einem
+Geräteneustart oder bei fehlendem Bootzähler pausiert das Relais bis zur
+Online-Erneuerung. Bereits gespeicherte Berechtigungen älterer App-Versionen
+werden nicht übernommen; die neue Version muss zunächst online eingerichtet
+werden. Neue eigene Teilnehmerpositionen werden derzeit nur bei
+Internetzugang erstellt; die Aktivierung der Standortfreigabe benötigt einen
+Serveraufruf.
 
-Die additive Migration umfasst ein Nachrichten-ID-Ledger, monotone Sequenzen,
-Mitgliedschafts-/Widerrufspruefung und Freigabekennungen. Standortentscheidung
-und Annahme der Nachrichten-ID werden atomar gespeichert. Signierte
-Serverbestaetigungen binden Revier, Ursprung, ID und Umschlag-Digest; die lokale
-Outbox ersetzt Nachrichten erst nach deren Pruefung atomar durch die
-Bestaetigung. Funkuebergabe allein wird nicht als Zustellung dargestellt.
-Abschalten von Standortfreigabe oder Jagdmodus entwertet die alte Kennung, damit
-verspaetete Teilnehmermeldungen nach einer erneuten Freigabe nicht wieder
-erscheinen.
+Bei ausdrücklichem Beenden oder Verlust der
+Berechtigung wird die Registrierung weiterhin widerrufen. Nach einem Widerruf
+kann eine neue Gerätekennung entstehen, die offline befindliche Nachbarn erst
+nach einer Verzeichniserneuerung kennen. Fehlgeschlagene Nearby-Starts werden
+automatisch erneut versucht. Im Gerätetest nahm das nach einem Prozessende
+offline wieder geöffnete Gateway neue Hundemeldungen an; nach Wiederherstellung
+des Internetzugangs wurden die ausstehenden Meldungen serverbestätigt.
+Nach vollständigem Offline-Geräteneustart pausierten Gateway und DogTracker
+jeweils bis zur Online-Erneuerung. Weitere Unterbrechungs- und
+Wiederverbindungstests stehen aus.
 
-Die vorhandene Verschluesselung und das DogTracker-Wire-Format werden
-weiterverwendet. Alte DogTracker-APKs verstehen neue Rueckbestaetigungen noch
-nicht. Neue Signaturschluessel fuer Verzeichnisse/Bestaetigungen sind getrennt
-von den bestehenden Verschluesselungsschluesseln zu verwalten. Bereitstellung,
-Warteschlangenlimits und offene Abnahmen stehen in der
-[Anleitung zur Relay-Serverstufe](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md).
+Die Offline-Erweiterung wurde laut Nutzer im gemeinsamen Entwicklungsprojekt
+bereitgestellt. Ein Gerätetest bestätigte die Weiterleitung vom offline
+befindlichen DogTracker über ein online befindliches Teilnehmergerät zum Server.
+Weitere Geräte- und Unterbrechungstests stehen aus. Der Stand
+anderer Zielprojekte muss gesondert geprüft werden. Ältere DogTracker-APKs
+unterstützen die neueren Rückbestätigungen nicht.
 
-Die Serverstufe ist gegen Kryptografie-, HTTP- und PostgreSQL-Fixtures
-getestet und wurde laut Projektstatus im Supabase-Testprojekt bereitgestellt
-und abgenommen, aber nicht in Produktion deployed. Die PWA-Web-App und die
-produktive Supabase-Installation wurden nicht veraendert. Die unten genannten
-Abnahmekriterien sind insbesondere fuer reale Funkabbrueche, mehrere physische
-Geraete und echte Supabase-/PostGIS-Rechte noch nicht vollstaendig abgenommen.
+## Erforderliche Umsetzung
 
-## Grundprinzip
+Der zuletzt vereinbarte nächste Schritt 4 umfasst die nachstehenden Punkte 3
+und 4: ein sicheres lokales Positionsformat und dessen Kartenintegration.
 
-Die App erhält eine allgemeine Kommunikationsschicht, die nicht an GPS oder die Jagdkarte gebunden ist. Fachmodule übergeben ihr Nachrichten; die Schicht speichert, transportiert und bestätigt diese. Für den Hundetracker ist die Nachricht zunächst eine Positionsmeldung.
+1. **Authentifizierung weiter prüfen.** Der Android-Debug-Build und gezielte
+   Protokolltests bestehen; umfassende Integrations- und Gerätetests stehen noch aus.
+   Beide Seiten müssen ihre
+   Revierzugehörigkeit und den Besitz ihres Geräteschlüssels nachweisen; der
+   Nachweis muss an die konkrete Verbindung gebunden und gegen Replay und
+   fremde Geräte geschützt sein. Vor erfolgreicher Prüfung keine Nutzdaten
+   annehmen oder versenden. Bei Ablauf und Revierwechsel bestehende Sitzungen
+   beenden. Kein manueller Fallback für ältere App-Versionen.
+2. **Offline-Autorisierung und Lebenszyklus prüfen.** Geräte und
+   Schlüssel müssen vorab online registriert und die signierten Verzeichnisse
+   beider Geräte aktuell genug sein, um einander zu kennen. Der
+   Teilnehmerdienst kann innerhalb desselben Gerätebetriebs mit geschütztem
+   lokalem Zustand wieder anlaufen; neue eigene Teilnehmerpositionen erfordern
+   derzeit Internet. Die Höchstdauer beträgt 24 Stunden und wird zusätzlich
+   zur signierten Ablaufzeit monoton begrenzt. Nach Geräteneustart ist eine
+   Online-Erneuerung erforderlich. Prozesswiederanlauf und Offline-Geräteneustart
+   wurden auf zwei Geräten geprüft; Schlüsselwechsel und verzögerter Widerruf
+   bleiben gesondert zu prüfen.
+3. **Lokale Positionsnachrichten entwerfen.** Neben dem bestehenden
+   serververschlüsselten Umschlag wird ein versioniertes Format für berechtigte
+   Offline-Empfänger benötigt. Es muss Vertraulichkeit, unveränderliche
+   Absenderidentität, Revierbindung, Aktualität und Replay-Schutz gewährleisten.
+   Schlüsselverteilung und -rotation für Teilnehmer und Hundegeräte, der
+   Schutz lokaler Schlüssel sowie die Begrenzung auf berechtigte Empfänger
+   sind vor der Implementierung festzulegen. Ein sichtbarer Gerätename,
+   Reviername oder BLE-Werbung ist kein Berechtigungsnachweis. Der
+   Serververtrag und die PWA dürfen dadurch nicht stillschweigend brechen.
+4. **Offline-Karte anbinden.** Verifizierte lokale Positionen müssen in
+   einen reviergebundenen, begrenzten lokalen Positionsbestand und von dort
+   in die Kartenanzeige gelangen. Backend- und Funkdaten müssen anhand von
+   Herkunft, Messzeit und Sequenz zusammengeführt werden, sodass ältere
+   Positionen neuere nicht überschreiben. Alter und Quelle sind sichtbar zu
+   machen; abgelaufene Positionen dürfen nicht als aktuell erscheinen.
+   Offline-Kartenpaket, Reviersnapshot, Neustart und Revierwechsel sind dabei
+   gesondert zu prüfen.
+5. **Weiterleitung stufenweise ausbauen.** Die erste Ausbaustufe unterstützt
+   den direkten Austausch erreichbarer Nachbarn und die vorhandene
+   Ein-Hop-Weitergabe zum Internet-Gateway. Das Nachrichtenformat soll spätere
+   Mehrhop-Weiterleitung berücksichtigen. Für eine Verbindung A → B → C ohne
+   direkte Funkverbindung von A zu C ist echte Mehrhop-Weiterleitung nötig;
+   Nearby-Cluster allein bietet sie nicht. Diese folgt in einer späteren
+   Ausbaustufe. Dafür müssen Hop-Limit, Ablauf, Deduplizierung,
+   Speichergrenzen, Wiederholung, Weitergabe bei wiederkehrenden Kontakten und
+   Schleifenvermeidung definiert und getestet werden. Lokale Übernahme und
+   Serverbestätigung bleiben getrennt.
+6. **Backend und Kompatibilität.** Nötige Supabase-Änderungen ausschließlich
+   im PWA-Projekt `D:\NoScan\wierichs.github.io\Jagdkarte\` entwickeln und
+   mit bestehenden Hunde- und PWA-Verträgen prüfen. Eine Testbereitstellung
+   und ein späteres Deployment erfolgen separat nach ausdrücklicher Freigabe;
+   Auswirkungen auf gemeinsam genutzte Projekte sind vorher abzustimmen. Die
+   neue Android-Version erst gegen ein passend bereitgestelltes Backend testen;
+   vorhandene Geräteinstallationen nicht ungefragt ersetzen.
+7. **Feldabnahme.** Nach automatisierten Protokoll-, Ablauf-, Rechte- und
+   Persistenztests mindestens zwei Geräte ohne Mobilfunk und ein Gerät mit
+   Internet einsetzen; bei Mehrhop mindestens drei offline verbundene Geräte
+   und zusätzlich ein Internet-Gateway. Verbindung ohne Dialog, gegenseitige
+   Offline-Anzeige, Hund → Teilnehmer, Unterbrechung und Wiederverbindung,
+   Ablauf, fremdes Revier, alte App-Version und spätere Server-/PWA-Anzeige
+   prüfen. Auf 100, 200 und 300 Metern sowie dazwischen Entdeckung, erfolgreiche
+   Übertragung, Verzögerung und Akkuverbrauch bei Sichtkontakt und im Wald
+   messen. Auch Bildschirm aus, Hintergrundbetrieb und Neustart einbeziehen.
+   Für Flugmodus-Tests WLAN und Bluetooth ausdrücklich wieder aktivieren.
+   Mindestwerte für Erfolgsquote, Verzögerung und Betriebsdauer sind vor der
+   Abnahme gemeinsam festzulegen; die Tests begründen keine allgemeine
+   Reichweiten- oder Zustellgarantie.
 
-```text
-Standortmessung
-    -> Kommunikationskern: dauerhaft speichern
-    -> direkter HTTPS-Versand, falls online
-    -> sonst geeigneten Tracker in Funkreichweite suchen
-    -> Relais speichert Nachricht dauerhaft
-    -> Relais lädt Nachricht per HTTPS hoch, sobald es online ist
-    -> Server bestätigt Annahme bis zum Ursprungsgerät zurück
-```
+### Noch festzulegen
 
-Das ist **Store-and-forward**: Geräte müssen nicht gleichzeitig online sein. Für den ersten Ausbau genügt ein einzelner Relais-Hop. Mehrhop-Routing kann später auf derselben Nachrichten- und Speicherbasis ergänzt werden.
+- Wie lange dürfen Teilnehmer- und Hundepositionen offline sichtbar bleiben?
+  Insbesondere sind Freigabeende, Jagdmodusänderung, ungültige GPS-Daten und
+  Aktualitätsanzeige für Teilnehmer und Hunde festzulegen.
+- Welche konkreten Abnahmewerte für Funkzuverlässigkeit, Verzögerung und
+  Akkulaufzeit sind für den Einsatz akzeptabel?
 
-## Bausteine
+Android 12 / API 31 bleibt vorerst Mindestversion. Eine Unterstützung von
+Android 9 ist eine separate Kompatibilitätsprüfung und nicht Voraussetzung
+dieses Konzepts.
 
-### Wiederverwendbarer Kommunikationskern
+## Grenzen und offene Abnahme
 
-Als eigenständige Kotlin-Bibliothek oder klar abgegrenztes Modul bietet der Kern eine stabile API für andere Apps. Er enthält keine Revier-, Karten- oder GPS-Logik.
+- Funktransfer setzt laufende, berechtigte Geräte in Reichweite voraus.
+  Android-Berechtigungen, Energiesparregeln, Akkustand und Empfang beeinflussen
+  die Verfügbarkeit.
+- Widerruf und Jagdmodusänderungen sind für vollständig getrennte Geräte nicht
+  sofort erkennbar. Begrenzte Gültigkeit und Serverprüfung reduzieren dieses
+  Zeitfenster.
+- Ein verspäteter älterer Standort darf keinen neueren Stand überschreiben.
+  Unterschiedliche Serverpfade haben jedoch unterschiedliche
+  Deduplizierungs- und Bestätigungsregeln; ein generelles
+  Exactly-once-Versprechen besteht nicht.
+- Reale Nearby-Verbindungen, Unterbrechungen, Wiederholungen und
+  Serverbestätigungen müssen mit mehreren physischen Geräten und einem
+  isolierten Backend geprüft werden.
 
-- `MessageStore`: persistente Warteschlange für ausgehende und weitergeleitete Nachrichten.
-- `RelayCore`: Deduplizierung, Ablauf, Weiterleitungsregeln, Wiederholungen und Zustände.
-- `MessageTransport`: gemeinsamer Vertrag für lokale Funktransporte.
-- `InternetGateway`: Übergabe an einen HTTPS-Server und Verarbeitung von Serverbestätigungen.
-- `RelayPolicy`: Einwilligung, erlaubte Absendergruppen, Speicherlimit und Gültigkeitsdauer.
-
-Fach-Apps liefern einen Nachrichtentyp und dessen Nutzdaten. Bluetooth-, WLAN- und Servertransporte implementieren getrennte Adapter. So kann später ein weiterer Transport ergänzt werden, ohne Standorterfassung oder Jagdkarte umzubauen.
-
-### Funktransporte
-
-**Erster Schritt: Bluetooth Low Energy (BLE).** Tracker können einander in der Nähe entdecken und kleine Nachrichten oder Nachrichtenbündel austauschen. BLE eignet sich für Positionsmeldungen mit geringem Datenvolumen und benötigt keinen gemeinsamen WLAN-Router. Die Übertragung ist langsamer als WLAN; größere Dateien oder umfangreiche Warteschlangen sind nicht das Ziel des ersten Schritts.
-
-**Später: WLAN-Transport.** Wi-Fi Direct, Wi-Fi Aware oder ein gemeinsames lokales WLAN können für größere Datenmengen oder schnellere Synchronisierung ergänzt werden. Die konkrete Variante sollte erst nach einem Geräte- und Android-Kompatibilitätstest festgelegt werden; Verfügbarkeit und Verhalten unterscheiden sich je nach Android-Version und Hersteller.
-
-Direkter Internetversand hat immer Vorrang. Ein Tracker mit Internetzugang wird als Gateway verwendet; ein Tracker ohne Internet speichert weiter, bis ein Gateway erreichbar ist. Ein lokales WLAN mit Internet ermöglicht weiterhin den normalen direkten HTTPS-Versand und braucht kein Relais.
-
-### Serverseitiger Relay-Eingang
-
-Der Server benötigt einen eigenen Eingang für weitergeleitete Nachrichten. Er muss Ursprung und Relais unterscheiden können: Das Relais transportiert eine Nachricht, erhält aber nicht die Identität des Ursprungsgeräts.
-
-Der Server prüft insbesondere, ob der Ursprung noch registriert und freigegeben ist, die Nachricht gültig und nicht abgelaufen ist und ihre ID noch nicht angenommen wurde. Eine erfolgreiche Antwort bedeutet, dass die Nachricht dauerhaft angenommen wurde. Erst dann darf die letzte lokale Kopie gelöscht werden.
-
-## Nachrichtenformat und Zustellung
-
-Jede Nachricht erhält mindestens:
-
-- eine eindeutige `message_id` zur Erkennung von Wiederholungen,
-- eine pseudonyme Kennung des Ursprungsgeräts und eine fortlaufende Sequenznummer,
-- Nachrichtentyp, Erstellungszeit und Ablaufzeit,
-- verschlüsselte Nutzdaten,
-- eine Signatur des Ursprungsgeräts.
-
-Die Positionsdaten bleiben während lokaler Weitergabe für Relais unlesbar. Die Signatur schützt sie vor unbemerkter Veränderung. Funk- und HTTPS-Verbindungen werden zusätzlich verschlüsselt. Relaisinformationen wie Hop-Anzahl oder nächster Versuch werden getrennt von den signierten Ursprungsdaten geführt.
-
-Eine Nachricht wird erst gelöscht, wenn der nächste Knoten ihre dauerhafte Speicherung bestätigt hat. Ein Gateway löscht sie erst nach Serverbestätigung. Geht eine Bestätigung verloren, darf erneut gesendet werden: Der Server verarbeitet jede `message_id` höchstens einmal. So entsteht eine robuste **At-least-once-Übertragung mit serverseitiger Deduplizierung**, keine Behauptung von exakt einmaliger Funkübertragung.
-
-Bei verspäteten Meldungen darf eine alte Position keine neuere Position auf der Karte überschreiben. Der Server vergleicht Messzeitpunkt und Sequenznummer. Abgelaufene Nachrichten werden abgewiesen; bereits angenommene Meldungen bleiben anhand ihrer ID idempotent.
-
-## Identität und Sicherheit
-
-Der aktuell verwendete Geräteschlüssel ist ein Bearer-Token für den direkten HTTPS-Upload. Er darf **niemals** an ein Relais übertragen oder in einer lokalen Funknachricht offengelegt werden. Eine Weiterleitung mit dem Token des Ursprungs wäre ein Zugriffsschlüssel-Leak und würde dem Relais erlauben, sich als dieses Gerät auszugeben.
-
-Für Relaisbetrieb wird deshalb eine gerätegebundene Identität benötigt:
-
-1. Beim Koppeln erzeugt das Gerät ein Schlüsselpaar; der private Schlüssel bleibt im Android Keystore.
-2. Die Jagdkarte registriert den öffentlichen Schlüssel und ordnet ihn dem Hund beziehungsweise der erlaubten Tracker-Gruppe zu.
-3. Das Gerät signiert Nachrichten am Ursprung. Ein Relais kann sie weder ändern noch neue Meldungen für diesen Ursprung erzeugen.
-4. Das Relais meldet sich beim Server mit seiner **eigenen** Berechtigung an und darf nur unveränderte, gültige Nachrichten einreichen.
-5. Widerruf, erneutes Koppeln oder ein deaktivierter Jagdmodus werden serverseitig geprüft. Für Verschlüsselung und Signaturen wird eine etablierte, geprüfte Bibliothek und ein festgelegtes Protokoll verwendet; keine selbst entworfene Kryptografie.
-
-Die lokale Funkentdeckung überträgt keine GPS-Koordinaten und möglichst keine dauerhafte Gerätekennung. Vor dem Austausch authentifizieren sich die Geräte gegenseitig und handeln eine verschlüsselte Sitzung aus. Im Zweifel wird eine Nachricht nicht weitergeleitet.
-
-## Einwilligung und Datenschutz
-
-- Relaisbetrieb ist standardmäßig ausgeschaltet und muss auf jedem Gerät ausdrücklich freigegeben werden. Die native App verbindet die Revierzustimmung für Relais und eigene Position in einer gemeinsamen, beide Zwecke erklärenden Freigabe.
-- Nutzer sehen, ob das Gerät eigene Meldungen sendet, Nachrichten anderer Geräte weiterleitet oder als Internet-Gateway arbeitet.
-- Weitergeleitet werden nur Nachrichten der in der Jagdkarte freigegebenen Gruppe; fremde, unbekannte oder nicht prüfbare Daten werden verworfen.
-- Lokale Nachrichten erhalten eine begrenzte Gültigkeitsdauer und ein Speicherlimit. Der Nutzer kann die Warteschlange löschen und Relaisbetrieb jederzeit beenden.
-- Ein deaktivierter Jagdmodus wird beim nächsten Serverkontakt berücksichtigt. Ein vollständig getrenntes Gerät kann eine serverseitige Änderung nicht sofort erfahren; kurze Gültigkeitszeiten und erneute Prüfung beim Upload begrenzen dieses unvermeidbare Zeitfenster.
-- Die Oberfläche zeigt „gespeichert“, „an Relais übergeben“ und „vom Server bestätigt“ als verschiedene Zustände. Eine lokal weitergereichte Meldung wird nicht als bereits zugestellt dargestellt.
-
-## Android-Betrieb und Grenzen
-
-BLE-Scanning und -Verbindungen benötigen je nach Android-Version zusätzliche Berechtigungen für Geräte in der Nähe. Dauerhafte Suche im Hintergrund ist durch Android und herstellerspezifische Energiesparfunktionen eingeschränkt und kann Akku verbrauchen. Die App muss Relaisbetrieb sichtbar machen, möglichst gebündelt synchronisieren und eine Pause bei niedrigem Akkustand anbieten.
-
-Ein Relais funktioniert nur, wenn beide Geräte gleichzeitig in Funkreichweite sind, Bluetooth beziehungsweise der gewählte Transport verfügbar ist und das Relais laufen darf. Ein einzelner Tracker als Gateway deckt nur seine lokale Funkreichweite ab. Funklöcher, abgeschaltete Geräte, Berechtigungsentzug und leere Akkus bleiben mögliche Unterbrechungen. Das System verbessert die Zustellchance, garantiert aber weder Echtzeit noch eine bestimmte Reichweite oder Zustellung.
-
-## Einführung in Stufen
-
-1. **Nachrichtenbasis:** Bestehende Outbox um Nachrichten-ID, Ablauf, Sequenz und explizite Zustellzustände erweitern. Serverseitige Deduplizierung und Bestätigung für den direkten Upload einführen.
-2. **Identität und Server-API:** Geräteschlüssel nicht mehr als Relais-Credential verwenden. Gerätesignaturen, öffentliche Schlüssel, Relay-Berechtigung, Widerruf und einen deduplizierenden Relay-Eingang einführen.
-3. **BLE-Ein-Hop-Relais:** Opt-in, Geräteentdeckung, authentifizierte Sitzung, dauerhafte Übergabe und Gateway-Upload implementieren. Direkter HTTPS-Versand bleibt unverändert verfügbar.
-4. **WLAN-Adapter und Optimierung:** Erst nach Messungen auf realen Geräten ergänzen; Bündelung, Akkuverbrauch und größere Warteschlangen berücksichtigen.
-5. **Mehrhop optional:** Nur bei nachgewiesenem Bedarf ergänzen. Hop-Limit, Ablaufzeit, Deduplizierung und Weiterleitungsbudget verhindern Schleifen und unkontrolliertes Nachrichtenwachstum.
-
-## Abnahmekriterien für den ersten Relais-Ausbau
-
-- Eine Position erreicht den Server ohne Mobilfunk am Ursprungsgerät, wenn ein zugelassenes Online-Relais per BLE erreichbar ist.
-- Prozessabbruch oder verlorene Bestätigungen führen weder zu stillen Datenverlusten noch zu mehrfach sichtbaren Positionen.
-- Relais können den Geräte-Bearer-Token und die Position im Klartext nicht auslesen.
-- Widerrufene, manipulierte, doppelte und abgelaufene Nachrichten werden serverseitig verworfen.
-- Eine ältere verspätete Meldung überschreibt keine neuere Position.
-- Nutzer können Relaisbetrieb erkennen und beenden; bei fehlender Verbindung wird der Zustand als ausstehend und nicht als zugestellt angezeigt.
-- Tests decken Verbindungsabbrüche während Entdeckung, Übergabe und Serverantwort sowie Android-Hintergrund- und Energiesparverhalten ab.
-
-## Offene Produktentscheidungen
-
-- Gilt die Relaisfreigabe für alle Tracker eines Reviers oder nur für einzelne, explizit gekoppelte Geräte?
-- Wie lange dürfen offline gepufferte Positionen nach der Erfassung noch zugestellt werden?
-- Soll der Tracker ältere Punkte als Verlauf übertragen oder nur die jeweils neueste Position priorisieren?
-- Welche Android-Geräte und Betriebssystemversionen müssen BLE-Relaisbetrieb zuverlässig unterstützen?
-- Welche Status- und Datenschutzinformationen sollen Reviermitglieder in der Jagdkarte sehen?
+Weitere Transportadapter oder Mehrhop-Routing sind mögliche spätere
+Erweiterungen, keine zugesagten Funktionen. Dafür wären insbesondere
+Hop-Limits, Ablauf, Deduplizierung, Datenschutz und Gerätekompatibilität
+gesondert festzulegen und abzunehmen.

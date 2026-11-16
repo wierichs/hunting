@@ -3,6 +3,7 @@ package org.wierichs.dogtracker
 import android.content.Context
 import androidx.core.content.edit
 import org.json.JSONObject
+import org.wierichs.dogtracker.communication.DogRelayAuthorization
 import org.wierichs.dogtracker.jagdkarte.JWD_EXPORT_MARKER_TYPE_LABELS
 import org.wierichs.dogtracker.jagdkarte.defaultJwdMarkerTypeMapping
 
@@ -111,6 +112,7 @@ internal object TrackerPreferences {
     fun saveDeviceToken(context: Context, token: String) {
         if (deviceToken(context) != token) {
             preferences(context).edit { remove(KEY_RELAY_DEVICE_ID) }
+            DogRelayAuthorization.clear(context)
         }
         DeviceTokenStorage.write(context, token)
     }

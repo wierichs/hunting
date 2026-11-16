@@ -39,7 +39,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,7 +60,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.wierichs.dogtracker.ui.theme.DogTrackerTheme
-import org.wierichs.dogtracker.communication.RelayPairingPrompts
 import org.wierichs.dogtracker.jagdkarte.JagdkarteScreen
 import org.wierichs.dogtracker.jagdkarte.guestLinkTokenFromUrl
 import org.wierichs.dogtracker.jagdkarte.EmailAuthLink
@@ -165,7 +163,6 @@ private fun JagdkarteApp(
             TrackerPreferences.setMapFullScreen(context, false)
         }
     }
-    val pairingPrompt by RelayPairingPrompts.current.collectAsState()
     Scaffold(bottomBar = {
         if (!mapFullScreen || trackerSelected) {
             NavigationBar {
@@ -210,26 +207,6 @@ private fun JagdkarteApp(
                 onRefresh = { huntingPermissionState.value = readHuntingPermissions(context) },
                 onDismiss = { closePermissionSetup() })
         }
-    }
-    pairingPrompt?.let { prompt ->
-        AlertDialog(
-            onDismissRequest = { RelayPairingPrompts.respond(prompt.endpointId, accept = false) },
-            title = { Text("Handys verbinden") },
-            text = {
-                Text("Zahl auf diesem Handy: ${prompt.authenticationDigits}\n\n" +
-                    "Vergleiche sie mit der Zahl auf dem anderen Handy. Bestätige auf beiden Handys nur, wenn die Zahlen gleich sind.")
-            },
-            confirmButton = {
-                TextButton(onClick = { RelayPairingPrompts.respond(prompt.endpointId, accept = true) }) {
-                    Text("Zahlen sind gleich")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { RelayPairingPrompts.respond(prompt.endpointId, accept = false) }) {
-                    Text("Nicht verbinden")
-                }
-            }
-        )
     }
 }
 

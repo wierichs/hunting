@@ -455,7 +455,7 @@ internal fun JagdkarteScreen(
             gatewayState.profileId != profileId || profile?.huntingMode == false) &&
             (gatewayState.active || gatewayState.starting)) {
             RelayGateway.stop(context)
-        } else if (profileId != null && eligible && snapshot?.isStale == false &&
+        } else if (profileId != null && eligible &&
             lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
             android.os.SystemClock.elapsedRealtime() >= nextRelayAttemptAt &&
             !gatewayState.active && !gatewayState.starting) {
@@ -619,7 +619,9 @@ internal fun JagdkarteScreen(
                         val cached = withContext(Dispatchers.IO) { offlineCache.load(repository.userId, profileId) }
                         if (cached != null) {
                             snapshot = cached.snapshot
-                            status = "Offline-Stand vom ${cached.savedAt}. Live-Positionen fehlen."
+                            val reason = if (error is JagdkarteApiException) "HTTP ${error.status}"
+                            else error.javaClass.simpleName
+                            status = "Offline-Stand vom ${cached.savedAt}. Live-Positionen fehlen. Aktualisierung fehlgeschlagen ($reason)."
                         } else {
                             snapshot = null
                             status = error.message ?: "Aktualisierung fehlgeschlagen."
@@ -677,7 +679,7 @@ internal fun JagdkarteScreen(
                     Icon(Icons.Default.Refresh, "Aktualisieren")
                 }
                 IconButton(onClick = { helpOpen = true }) {
-                    Icon(Icons.Default.Info, "Hilfe und Fehlerbehebung")
+                    Icon(Icons.Default.Info, "Hilfe")
                 }
                 IconButton(onClick = { managementOpen = true }, enabled = signedIn) {
                     Icon(Icons.Default.MoreVert, "Revier und Verwaltung")

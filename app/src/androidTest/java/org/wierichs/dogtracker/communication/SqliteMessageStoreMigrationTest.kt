@@ -20,6 +20,64 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SqliteMessageStoreMigrationTest {
     @Test
+    fun nearbyOnlyRelaysRemainAvailableWithoutBlockingUploads() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "relay-routing-${UUID.randomUUID()}.db"
+        val legacyOwn = CommunicationMessage.create(
+            RelayEnvelope.MESSAGE_TYPE, "https://example.test/relay", "legacy own".toByteArray()
+        )
+        val outgoing = CommunicationMessage.create(
+            RelayEnvelope.OUTGOING_MESSAGE_TYPE, "https://example.test/relay", "own".toByteArray()
+        )
+        val incoming = CommunicationMessage.create(
+            RelayEnvelope.MESSAGE_TYPE, "https://example.test/relay", "incoming".toByteArray()
+        )
+        try {
+            SqliteMessageStore(context, name).use { store ->
+                store.enqueue(legacyOwn)
+                store.enqueue(outgoing)
+                store.enqueue(incoming)
+                assertEquals(legacyOwn.messageId, store.oldestPendingForUpload()?.message?.messageId)
+                store.markRelayForNearby(legacyOwn.messageId)
+                assertEquals(incoming.messageId, store.oldestPendingForUpload()?.message?.messageId)
+                assertEquals(1, store.pendingUploadCount())
+                assertEquals(
+                    listOf(outgoing.messageId, legacyOwn.messageId),
+                    store.newestPendingOfType(RelayEnvelope.OUTGOING_MESSAGE_TYPE, 2).map { it.message.messageId }
+                )
+                store.acknowledge(incoming.messageId)
+                assertNull(store.oldestPendingForUpload())
+                assertEquals(2, store.pendingCount())
+            }
+        } finally {
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
+    fun databaseCanBeOpenedAndReopenedWithSecureDeleteEnabled() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val name = "secure-delete-${UUID.randomUUID()}.db"
+        val message = CommunicationMessage.create(
+            "relay.receipt", "https://example.test/relay", "receipt".toByteArray()
+        )
+        try {
+            SqliteMessageStore(context, name).use { store ->
+                store.enqueue(message)
+            }
+            SqliteMessageStore(context, name).use { store ->
+                assertArrayEquals(message.payload, requireNotNull(store.oldestPending()).message.payload)
+                store.writableDatabase.rawQuery("PRAGMA secure_delete", null).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1, cursor.getInt(0))
+                }
+            }
+        } finally {
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
     fun locationFixOutboxKeepsNewestFor24HoursWithoutChangingRelayExpiry() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val name = "location-retention-${UUID.randomUUID()}.db"

@@ -19,6 +19,7 @@ import org.json.JSONObject
 import org.json.JSONTokener
 import org.wierichs.dogtracker.DeviceTokenStorage
 import org.wierichs.dogtracker.BackendConfiguration
+import org.wierichs.dogtracker.communication.RelayGatewayEngine
 
 internal data class HuntingProfile(
     val id: String,
@@ -324,9 +325,13 @@ internal class JagdkarteRepository(
             } finally {
                 session = null
                 try {
-                    DeviceTokenStorage.clear(appContext, SESSION_FILE, synchronous = true)
+                    RelayGatewayEngine.clearAuthorization(appContext)
                 } finally {
-                    DeviceTokenStorage.clear(appContext, EMAIL_AUTH_REQUEST_FILE, synchronous = true)
+                    try {
+                        DeviceTokenStorage.clear(appContext, SESSION_FILE, synchronous = true)
+                    } finally {
+                        DeviceTokenStorage.clear(appContext, EMAIL_AUTH_REQUEST_FILE, synchronous = true)
+                    }
                 }
             }
         }

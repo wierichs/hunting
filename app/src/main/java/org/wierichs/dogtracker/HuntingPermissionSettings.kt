@@ -128,8 +128,8 @@ internal fun HuntingPermissionSetupDialog(
                     "Im Jagdmodus wird dein Standort bei aktiver Jagdkarte automatisch mit den berechtigten Mitgliedern des ausgewaehlten Reviers geteilt.")
                 Text("Geraete in der Naehe und lokales Netzwerk", style = MaterialTheme.typography.titleSmall)
                 Text("Bluetooth und, je nach Android-Version, WLAN und lokales Netzwerk erlauben den verschluesselten " +
-                    "Relaisaustausch mit berechtigten Geraeten. Bevor sich zwei Handys verbinden, erscheint auf beiden eine Zahl. " +
-                    "Vergleiche die Zahlen und bestaetige nur, wenn sie gleich sind.")
+                    "Relaisaustausch mit berechtigten Geraeten. Die Verbindung wird automatisch anhand der " +
+                    "Revierberechtigung und der Geraeteschluessel geprueft.")
                 Text("Benachrichtigungen", style = MaterialTheme.typography.titleSmall)
                 Text("Machen aktives Tracking und den Relaisdienst sichtbar. Tracking kannst du dort beenden; das Relais gehoert zum Jagdmodus und hat keinen eigenen Stoppschalter. " +
                     "Der Revier-Relaisdienst kann im Hintergrund weiterlaufen; eigene Teilnehmerpositionen werden nur bei aktiver Karte erfasst.")

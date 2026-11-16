@@ -30,6 +30,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -39,6 +40,7 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 import org.wierichs.dogtracker.communication.CommunicationMessage
+import org.wierichs.dogtracker.communication.DogRelayAuthorization
 import org.wierichs.dogtracker.communication.LocationPayloadCryptoException
 import org.wierichs.dogtracker.communication.NearbyRelayTransport
 import org.wierichs.dogtracker.communication.RelayEnvelope
@@ -46,6 +48,8 @@ import org.wierichs.dogtracker.communication.RelayEnvelopeEncoder
 import org.wierichs.dogtracker.communication.RelayServerEncryptionKey
 import org.wierichs.dogtracker.communication.RelaySigningIdentity
 import org.wierichs.dogtracker.communication.SqliteMessageStore
+import org.wierichs.dogtracker.communication.VerifiedRelayReceipt
+import org.wierichs.dogtracker.communication.acknowledgeDogRelayReceipt
 import org.wierichs.dogtracker.communication.RelayGateway
 import org.wierichs.dogtracker.communication.RelayGatewayService
 
@@ -73,11 +77,15 @@ class LocationTrackingService : Service() {
             return START_NOT_STICKY
         }
         if (intent?.action == ACTION_RELAY_READY) {
-            if (TrackerPreferences.isTracking(this) && hasNearbyPermissions()) {
-                updateForegroundServiceTypes(includeNearbyRelay = true)
+            if (!TrackerPreferences.isTracking(this)) {
+                stopSelf(startId)
+                return START_NOT_STICKY
             }
-            startNearbyRelayIfEligible()
-            return START_STICKY
+            if (locationCallback != null) {
+                if (hasNearbyPermissions()) updateForegroundServiceTypes(includeNearbyRelay = true)
+                startNearbyRelayIfEligible()
+                return START_STICKY
+            }
         }
 
         val endpoint = TrackerPreferences.endpoint(this)
@@ -124,6 +132,7 @@ class LocationTrackingService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun requestLocationUpdates(intervalSeconds: Long) {
+        locationCallback?.let { fusedLocationClient.removeLocationUpdates(it) }
         val intervalMillis = TimeUnit.SECONDS.toMillis(intervalSeconds)
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMillis)
             .setMinUpdateIntervalMillis(intervalMillis / 2)
@@ -175,7 +184,7 @@ class LocationTrackingService : Service() {
                         )
                     )
                     createRelayEnvelopeIfReady(payload)?.let(store::enqueue)
-                    store.pendingCount()
+                    store.pendingUploadCount()
                 }
             } catch (_: LocationPayloadCryptoException) {
                 TrackerPreferences.setStatus(
@@ -208,7 +217,7 @@ class LocationTrackingService : Service() {
             )
             CommunicationMessage(
                 messageId = envelope.messageId,
-                type = RelayEnvelope.MESSAGE_TYPE,
+                type = RelayEnvelope.OUTGOING_MESSAGE_TYPE,
                 destination = TrackerPreferences.RELAY_ENDPOINT,
                 createdAtEpochMillis = System.currentTimeMillis(),
                 expiresAtEpochMillis = envelope.expiresAtEpochMillis,
@@ -228,14 +237,45 @@ class LocationTrackingService : Service() {
             TrackerPreferences.setStatus(this, "Relay wird nach erfolgreicher Geräteschlüssel-Registrierung gestartet.")
             return
         }
+        if (DogRelayAuthorization.current(this, deviceId) == null) {
+            TrackerPreferences.setStatus(this, "Relay pausiert: Revierberechtigung muss online eingerichtet werden.")
+            return
+        }
         if (nearbyRelayTransport != null) return
 
         nearbyRelayTransport = NearbyRelayTransport(
             context = this,
             localDeviceId = deviceId,
+            authorization = { DogRelayAuthorization.current(this, deviceId) },
             onIncomingEnvelope = { envelope -> storeIncomingRelayEnvelope(envelope) },
-            onTransportStatus = { status -> TrackerPreferences.setStatus(this, status) }
+            onTransportStatus = { status -> TrackerPreferences.setStatus(this, status) },
+            onIncomingDocument = { bytes, acknowledge -> acceptRelayReceipt(deviceId, bytes, acknowledge) }
         ).also(NearbyRelayTransport::start)
+    }
+
+    private fun acceptRelayReceipt(deviceId: String, bytes: ByteArray, acknowledge: () -> Unit) {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val authorization = checkNotNull(DogRelayAuthorization.authorization(this@LocationTrackingService, deviceId)) {
+                    "Relay-Berechtigung fehlt oder ist abgelaufen."
+                }
+                val receipt = VerifiedRelayReceipt.verify(
+                    JSONObject(String(bytes, Charsets.UTF_8)), authorization.capabilities, authorization.directory.profileId
+                )
+                SqliteMessageStore(this@LocationTrackingService).use { store ->
+                    val cleared = acknowledgeDogRelayReceipt(store, receipt, deviceId)
+                    if (receipt.originDeviceId != deviceId || store.findPending(receipt.messageId) == null || cleared) {
+                        acknowledge()
+                    } else TrackerPreferences.setStatus(
+                        this@LocationTrackingService, "Relay-Bestätigung passt nicht zum gespeicherten Umschlag."
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                TrackerPreferences.setStatus(this@LocationTrackingService, "Relay-Bestätigung konnte nicht geprüft oder gespeichert werden.")
+            }
+        }
     }
 
     private fun storeIncomingRelayEnvelope(envelope: RelayEnvelope) {

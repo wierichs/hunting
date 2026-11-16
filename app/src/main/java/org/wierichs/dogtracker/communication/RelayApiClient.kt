@@ -4,6 +4,7 @@ import java.net.URL
 import java.util.Base64
 import javax.net.ssl.HttpsURLConnection
 import org.json.JSONObject
+import org.wierichs.dogtracker.BackendConfiguration
 
 internal data class RelayServerEncryptionKey(
     val keyId: String,
@@ -42,27 +43,27 @@ internal class RelayApiClient(
         return RelayServerEncryptionKey(keyId, publicKey)
     }
 
-    fun submitRelayEnvelope(envelope: ByteArray): Int {
-        val connection = URL(endpoint).openConnection() as? HttpsURLConnection
-            ?: throw IllegalArgumentException("Only HTTPS relay endpoints are supported")
-        return try {
-            connection.requestMethod = "POST"
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 15_000
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("Authorization", "Bearer $deviceToken")
-            connection.setFixedLengthStreamingMode(envelope.size)
-            connection.outputStream.use { it.write(envelope) }
-            connection.responseCode
-        } finally {
-            connection.disconnect()
+    fun fetchOfflineCapabilities(): RelayCapabilities =
+        RelayCapabilities.parse(post(JSONObject().put("action", "capabilities"), false, BackendConfiguration.relayEndpoint))
+
+    fun fetchOfflineDirectory(deviceId: String): JSONObject =
+        post(JSONObject().put("action", "offline_directory").put("device_id", deviceId), true, BackendConfiguration.relayEndpoint)
+
+    fun submitRelayEnvelope(envelope: RelayEnvelope, authorization: DogRelayAuthorization.Authorization): Int {
+        val directory = authorization.directory
+        check(directory.accepts(envelope)) { "Relay-Ursprung ist nicht aktuell für dieses Revier autorisiert." }
+        val response = try {
+            post(JSONObject().put("action", "relay").put("device_id", directory.localDeviceId)
+                .put("envelope", envelope.toJson()), true, BackendConfiguration.relayEndpoint)
+        } catch (failure: RelayApiException) {
+            return failure.statusCode
         }
+        verifyRelayUploadReceipt(response, authorization.capabilities, directory.profileId, envelope)
+        return 200
     }
 
-    private fun post(body: JSONObject, authenticated: Boolean): JSONObject {
-        val connection = URL(endpoint).openConnection() as? HttpsURLConnection
+    private fun post(body: JSONObject, authenticated: Boolean, url: String = endpoint): JSONObject {
+        val connection = URL(url).openConnection() as? HttpsURLConnection
             ?: throw IllegalArgumentException("Only HTTPS relay endpoints are supported")
         return try {
             val requestBody = body.toString().toByteArray(Charsets.UTF_8)
@@ -106,6 +107,16 @@ internal class RelayApiClient(
         private const val MIN_RSA_SPKI_BYTES = 256
         private const val MAX_RSA_SPKI_BYTES = 1024
     }
+}
+
+internal fun verifyRelayUploadReceipt(
+    response: JSONObject,
+    capabilities: RelayCapabilities,
+    profileId: String,
+    envelope: RelayEnvelope
+) {
+    val receipt = VerifiedRelayReceipt.verify(response, capabilities, profileId)
+    check(receipt.matches(envelope)) { "Relay-Serverbestätigung passt nicht zur übertragenen Meldung." }
 }
 
 internal class RelayApiException(

@@ -47,7 +47,7 @@ internal fun HelpDialog(onDismiss: () -> Unit) {
             Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row {
                     Column(Modifier.weight(1f)) {
-                        Text("Hilfe und Fehlerbehebung", style = MaterialTheme.typography.titleLarge)
+                        Text("Hilfe", style = MaterialTheme.typography.titleLarge)
                         Text("Jagdbruder fuer Android", style = MaterialTheme.typography.bodySmall)
                     }
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Hilfe schliessen") }

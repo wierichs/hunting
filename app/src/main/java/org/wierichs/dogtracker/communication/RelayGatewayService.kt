@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import java.io.IOException
+import javax.net.ssl.SSLException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +27,7 @@ import org.wierichs.dogtracker.MainActivity
 import org.wierichs.dogtracker.TrackerPreferences
 import org.wierichs.dogtracker.readHuntingPermissions
 import org.wierichs.dogtracker.jagdkarte.JagdkarteApiException
+import org.wierichs.dogtracker.jagdkarte.JagdkarteOfflineCache
 import org.wierichs.dogtracker.jagdkarte.JagdkarteRepository
 
 class RelayGatewayService : Service() {
@@ -33,12 +36,18 @@ class RelayGatewayService : Service() {
     private var started = false
     private var terminalStatus: String? = null
     private var requestedProfileId: String? = null
-    private val incoming = Channel<ByteArray>(64)
+    private var revokeOnDestroy = false
+    private val incoming = Channel<Pair<ByteArray, () -> Unit>>(64)
+
+    override fun onCreate() {
+        super.onCreate()
+        RelayGateway.serviceCreated(this)
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (started) return START_NOT_STICKY
+        if (started) return START_REDELIVER_INTENT
         val profileId = intent?.getStringExtra(EXTRA_PROFILE_ID)
         requestedProfileId = profileId
         if (profileId == null || TrackerPreferences.isTracking(this) || !readHuntingPermissions(this).ready) {
@@ -58,20 +67,31 @@ class RelayGatewayService : Service() {
         scope.launch {
             try {
                 val repository = JagdkarteRepository(applicationContext)
-                val profile = repository.profiles().singleOrNull { it.id == profileId }
-                    ?: error("Kein Zugriff auf dieses Revier.")
-                check(profile.huntingMode) { "Relaisfreigabe benoetigt aktiven Jagdmodus." }
+                check(repository.signedIn && repository.userId.isNotBlank()) { "Bitte erneut anmelden." }
+                val profile = try {
+                    if (!hasValidatedRelayInternet(applicationContext)) throw IOException("Keine Internetverbindung.")
+                    repository.profiles().singleOrNull { it.id == profileId }
+                        ?: throw JagdkarteApiException(403, "profile_unavailable", "Kein Zugriff auf dieses Revier.")
+                } catch (failure: IOException) {
+                    if (failure is SSLException) throw failure
+                    JagdkarteOfflineCache(applicationContext).load(repository.userId, profileId)?.snapshot?.profile
+                        ?: throw IOException("Gespeicherter Offline-Revierstand fehlt oder ist abgelaufen.", failure)
+                }
+                if (!profile.huntingMode) {
+                    throw JagdkarteApiException(409, "hunting_mode_inactive", "Relaisfreigabe benoetigt aktiven Jagdmodus.")
+                }
                 val engine = RelayGatewayEngine(applicationContext, repository, profile,
-                    onIncoming = { envelope -> incoming.trySend(envelope.toByteArray()) },
-                    onDocument = { bytes -> incoming.trySend(bytes) })
+                    onIncoming = { envelope -> incoming.trySend(envelope.toByteArray() to {}) },
+                    onDocument = { bytes, acknowledge -> incoming.trySend(bytes to acknowledge) })
                 gateway = engine
-                engine.initialize()
                 RelayGateway.engine = engine
+                engine.initialize()
                 scope.launch {
-                    for (bytes in incoming) {
+                    for ((bytes, acknowledge) in incoming) {
                         try {
                             val envelope = RelayEnvelope.parse(bytes)
-                            if (envelope != null) engine.acceptEnvelope(envelope) else engine.acceptDocument(bytes)
+                            if (envelope != null) engine.acceptEnvelope(envelope)
+                            else if (engine.acceptDocument(bytes)) acknowledge()
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (_: Exception) {
                             RelayGateway.state.value = RelayGateway.state.value.copy(status = "Funkmeldung konnte nicht dauerhaft gespeichert werden; nicht bestaetigt.")
@@ -80,6 +100,7 @@ class RelayGatewayService : Service() {
                 }
                 while (true) {
                     if (!readHuntingPermissions(this@RelayGatewayService).ready || TrackerPreferences.isTracking(this@RelayGatewayService)) {
+                        revokeOnDestroy = true
                         terminalStatus = if (TrackerPreferences.isTracking(this@RelayGatewayService)) {
                             "Der DogTracker uebernimmt den Relaisbetrieb."
                         } else "Jagdteilnahme beendet: Jagdfreigabe oder erforderliche Berechtigung fehlt."
@@ -91,9 +112,12 @@ class RelayGatewayService : Service() {
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
+                revokeOnDestroy = failure is JagdkarteApiException && failure.status in setOf(401, 403, 409)
                 val status = when {
                     failure is JagdkarteApiException && failure.status == 409 -> "Jagdmodus aus; Relaisfreigabe beendet."
                     failure is JagdkarteApiException && failure.status in setOf(401, 403) -> "Relaisberechtigung widerrufen oder Sitzung ungueltig."
+                    failure is IOException && failure !is SSLException ->
+                        "Offline-Relais nicht verfügbar: Revierstand oder Berechtigung fehlt. Bitte online erneuern."
                     else -> "Relais konnte nicht eingerichtet werden. Verbindung und Serverbereitstellung pruefen."
                 }
                 terminalStatus = status
@@ -101,7 +125,7 @@ class RelayGatewayService : Service() {
                 stopSelf()
             }
         }
-        return START_NOT_STICKY
+        return START_REDELIVER_INTENT
     }
 
     private fun startNotification() {
@@ -116,16 +140,23 @@ class RelayGatewayService : Service() {
     }
 
     override fun onDestroy() {
-        RelayGateway.engine = null
         incoming.close()
         val engine = gateway
+        val revoke = RelayGateway.shutdown.shouldRevoke(
+            revokeOnDestroy || !readHuntingPermissions(this).ready || TrackerPreferences.isTracking(this)
+        )
         scope.cancel()
         CoroutineScope(Dispatchers.IO).launch {
             withContext(NonCancellable) {
-                runCatching { engine?.cancelOwn() }
-                runCatching { engine?.close() }
-                RelayGateway.state.value = RelayGatewayStatus(profileId = requestedProfileId,
-                    status = terminalStatus ?: "Relaisfreigabe beendet.")
+                var cleanupFailed = false
+                try { engine?.cancelOwn() } catch (_: Exception) { cleanupFailed = true }
+                if (engine == null && revoke) {
+                    try { RelayGatewayEngine.clearAuthorization(applicationContext) } catch (_: Exception) { cleanupFailed = true }
+                }
+                try { engine?.close(revoke) } catch (_: Exception) { cleanupFailed = true }
+                RelayGateway.serviceDestroyed(this@RelayGatewayService, engine, RelayGatewayStatus(profileId = requestedProfileId,
+                    status = (terminalStatus ?: "Relaisfreigabe beendet.") +
+                        if (cleanupFailed) " Aufraeumen oder Serverwiderruf nicht bestaetigt." else ""))
             }
         }
         super.onDestroy()

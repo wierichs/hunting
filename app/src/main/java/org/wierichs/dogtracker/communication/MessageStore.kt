@@ -17,6 +17,7 @@ interface MessageStore {
     fun enqueue(message: CommunicationMessage)
     fun oldestPending(): StoredMessage?
     fun pendingOfType(type: String, limit: Int = 50): List<StoredMessage>
+    fun findPending(messageId: String): StoredMessage?
     fun pendingCount(): Int
     fun acknowledge(messageId: String)
     fun removeExpired(nowEpochMillis: Long = System.currentTimeMillis())
@@ -31,7 +32,11 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
     }
 
     override fun onConfigure(database: SQLiteDatabase) {
-        database.execSQL("PRAGMA secure_delete = ON")
+        database.rawQuery("PRAGMA secure_delete = ON", null).use { cursor ->
+            check(cursor.moveToFirst() && cursor.getInt(0) == 1) {
+                "secure_delete konnte für den Nachrichtenspeicher nicht aktiviert werden."
+            }
+        }
     }
 
     override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -104,7 +109,37 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
         readStoredMessage(cursor, expiresAtIndex)
     }
 
-    override fun pendingOfType(type: String, limit: Int): List<StoredMessage> {
+    fun oldestPendingForUpload(): StoredMessage? = readableDatabase.query(
+        TABLE_NAME,
+        arrayOf("local_id", "message_id", "message_type", "destination", "created_at", "expires_at", "payload"),
+        "message_type != ?",
+        arrayOf(RelayEnvelope.OUTGOING_MESSAGE_TYPE),
+        null,
+        null,
+        "local_id ASC",
+        "1"
+    ).use { cursor ->
+        if (!cursor.moveToFirst()) return@use null
+        readStoredMessage(cursor, cursor.getColumnIndexOrThrow("expires_at"))
+    }
+
+    fun markRelayForNearby(messageId: String) {
+        val values = ContentValues().apply { put("message_type", RelayEnvelope.OUTGOING_MESSAGE_TYPE) }
+        check(writableDatabase.update(
+            TABLE_NAME,
+            values,
+            "message_id = ? AND message_type = ?",
+            arrayOf(messageId, RelayEnvelope.MESSAGE_TYPE)
+        ) == 1) { "Eigene Relay-Nachricht konnte nicht für Nearby vorgemerkt werden." }
+    }
+
+    override fun pendingOfType(type: String, limit: Int): List<StoredMessage> =
+        pendingOfType(type, limit, newestFirst = false)
+
+    fun newestPendingOfType(type: String, limit: Int): List<StoredMessage> =
+        pendingOfType(type, limit, newestFirst = true)
+
+    private fun pendingOfType(type: String, limit: Int, newestFirst: Boolean): List<StoredMessage> {
         require(limit in 1..MAX_PENDING_MESSAGES)
         return readableDatabase.query(
             TABLE_NAME,
@@ -113,7 +148,7 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
             arrayOf(type),
             null,
             null,
-            "local_id ASC",
+            if (newestFirst) "local_id DESC" else "local_id ASC",
             limit.toString()
         ).use { cursor ->
             buildList {
@@ -129,7 +164,7 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
         writableDatabase.delete(TABLE_NAME, "message_id = ?", arrayOf(messageId))
     }
 
-    fun findPending(messageId: String): StoredMessage? = readableDatabase.query(
+    override fun findPending(messageId: String): StoredMessage? = readableDatabase.query(
         TABLE_NAME,
         arrayOf("local_id", "message_id", "message_type", "destination", "created_at", "expires_at", "payload"),
         "message_id = ?", arrayOf(messageId), null, null, null, "1"
@@ -156,6 +191,14 @@ class SqliteMessageStore internal constructor(context: Context, databaseName: St
         null
     ).use { cursor ->
         if (cursor.moveToFirst()) cursor.getInt(0) else 0
+    }
+
+    fun pendingUploadCount(): Int = readableDatabase.rawQuery(
+        "SELECT COUNT(*) FROM $TABLE_NAME WHERE message_type != ?",
+        arrayOf(RelayEnvelope.OUTGOING_MESSAGE_TYPE)
+    ).use { cursor ->
+        check(cursor.moveToFirst())
+        cursor.getInt(0)
     }
 
     override fun removeExpired(nowEpochMillis: Long) {

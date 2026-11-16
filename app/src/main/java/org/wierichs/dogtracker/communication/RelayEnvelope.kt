@@ -43,6 +43,7 @@ internal data class RelayEnvelope(
 
     companion object {
         const val MESSAGE_TYPE = "relay.envelope"
+        const val OUTGOING_MESSAGE_TYPE = "relay.outgoing"
         private const val MAX_BYTES = 8192
         private const val MAX_LOCATION_BYTES = 4096
         private const val MAX_RELAY_LIFETIME_MILLIS = 24 * 60 * 60 * 1000L
@@ -88,6 +89,10 @@ internal data class RelayEnvelope(
         }
     }
 }
+
+internal fun isLegacyOwnRelayEnvelope(message: CommunicationMessage, localDeviceId: String?): Boolean =
+    message.type == RelayEnvelope.MESSAGE_TYPE && localDeviceId != null &&
+        RelayEnvelope.parse(message.payload)?.originDeviceId?.equals(localDeviceId, ignoreCase = true) == true
 
 internal object RelayEnvelopeEncoder {
     private const val AES_KEY_SIZE_BITS = 256

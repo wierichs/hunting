@@ -1,173 +1,230 @@
-# Hilfe und Fehlerbehebung
+# Hilfe
 
-Jagdbruder vereint die Bereiche Jagdkarte und DogTracker. Die App erscheint
-unter Jagdbruder auf dem Startbildschirm und in den Android-Einstellungen;
-vorhandene Konten, Reviere und Tracker-Kopplungen bleiben bei einem Update erhalten.
+Jagdbruder vereint die Bereiche **Jagdkarte** und **DogTracker**. Mit der
+Jagdkarte kannst du Reviere ansehen und verwalten. Der DogTracker überträgt
+den Standort eines Smartphones, das ein Hund mitführt.
 
-Die Karte ist eine Orientierungshilfe. Sie ersetzt keine verbindliche Revierkarte und erteilt keine Jagderlaubnis. Im Notfall 112 waehlen; eine App-Markierung ist kein Notruf.
+Die Karte ist eine Orientierungshilfe. Sie ersetzt keine verbindliche
+Revierkarte und erteilt keine Jagderlaubnis. Standorte sind keine sichere
+Echtzeitortung. Im Notfall 112 wählen; eine App-Markierung ist kein Notruf.
+
+## Bedienung und erster Start
+
+Beim ersten Start öffnet sich die Jagdkarte mit einer Erklärung der
+Jagdberechtigungen. Mit **Später** kannst du Karten ansehen und Reviere
+verwalten, ohne die Jagdfunktionen einzurichten. Danach startet die App im
+zuletzt verwendeten Bereich und merkt sich unter anderem das letzte Revier,
+die Kartenposition und den Zoom.
+
+- Die **Lupe** öffnet die öffentliche Reviersuche.
+- Der **Aktualisieren-Pfeil** lädt Serverdaten neu.
+- Die **drei Punkte** öffnen Revier und Verwaltung, das **Personensymbol**
+  das Benutzerkonto und das **Informationssymbol** diese Hilfe.
+- Die **Zielscheibe** zeigt deinen eigenen Standort auf deinem Gerät. Sie
+  startet keine Standortfreigabe.
+- Über **Kartendarstellung** wählst du OpenStreetMap, Luftbild oder Offline.
 
 ## Ein Revier finden
 
-Oeffne die oeffentliche Reviersuche ueber das Lupensymbol. Waehle eine Datenquelle und suche nach Reviername, Nummer oder Gemeinde. Die Suche braucht eine Internetverbindung.
+Öffne über die Lupe die öffentliche Reviersuche, wähle eine Datenquelle und
+suche nach Reviername, Nummer oder Gemeinde. Die Suche benötigt Internet.
+Prüfe Quellenangabe, Lizenz und Datenstand. Eigene HTTPS-GeoJSON- und
+WFS-Quellen kannst du unter **Suchquellen verwalten** hinzufügen.
 
-Die App bevorzugt keine Quelle automatisch. Pruefe Quellenangabe, Lizenz und Datenstand. Eigene HTTPS-GeoJSON- und WFS-Quellen lassen sich unter Suchquellen verwalten hinzufuegen.
-
-Ein Treffer kann zuerst als Vorschau auf der Karte angezeigt werden. Das legt kein Profil an. Fuer ein eigenes Revierprofil musst du angemeldet sein; dabei werden die bestehenden Serverfunktionen verwendet.
-
-## Bildsymbole und Bedienung
-
-- Die Lupe oeffnet die oeffentliche Reviersuche, der Aktualisieren-Pfeil laedt Serverdaten neu, die drei Punkte oeffnen Revier und Verwaltung, und das Personensymbol oeffnet das Benutzerkonto.
-- Die Zielscheibe zeigt den eigenen Standort. Der Kartenmodus-Schalter waehlt OpenStreetMap, Luftbild oder Offline. Das Informationssymbol oeffnet diese Hilfe.
-- Im Markierungs-Popup verschiebt die Zielscheibe eine Markierung an den eigenen Standort; der Papierkorb loescht sie, wenn deine Rolle dazu berechtigt ist. Ein Kreuz schliesst einen Dialog oder entfernt eine aktuelle Auswahl, loescht aber kein gespeichertes Revier.
-
-## Jagdberechtigungen einrichten
-
-Beim ersten Start oeffnet sich die Jagdkarte mit einer Erklaerung der Berechtigungen. Mit Spaeter kannst du ohne Jagdfreigaben Karten ansehen und Reviere verwalten. Es gibt keine Persona-Auswahl.
-
-Unter Benutzerkonto -> Berechtigungen und Freigaben einrichten kannst du die Entscheidung jederzeit aendern, auch ohne Anmeldung. Standort wird fuer genaue Positionen, Reviergrenzpruefung und Nearby-Suche benoetigt. Bluetooth und je nach Android-Version WLAN beziehungsweise lokales Netzwerk ermoeglichen verschluesselte Relaisverbindungen. Benachrichtigungen machen aktive Dienste sichtbar; nur die ausdruecklich gestartete DogTracker-Sitzung hat eine Stoppaktion. Hintergrund-GPS fuer Teilnehmer wird nicht angefordert.
-
-Wenn sich zwei Handys verbinden, erscheint auf beiden eine Zahl im Dialog Handys verbinden. Vergleiche die Zahlen auf den beiden Handys. Nur wenn sie gleich sind, tippe auf beiden auf Zahlen sind gleich. Sind sie unterschiedlich oder kannst du die andere Zahl nicht pruefen, waehle Nicht verbinden.
-
-Freigeben und einrichten erlaubt automatische eigene Standortfreigabe und Relaisbetrieb im Jagdmodus des ausgewaehlten Reviers sowie Relais in einer gestarteten DogTracker-Sitzung und oeffnet bei Bedarf die Android-Berechtigungsdialoge. Bestehende Installationen muessen dieser erweiterten automatischen Teilnahme einmal neu zustimmen. Bei Ablehnung bleiben die Jagdfunktionen ausgeblendet; wiederholte Ablehnung kann eine Freigabe ueber Android-Einstellungen oeffnen erfordern. Der Berechtigungsstand wird beim Start und bei Rueckkehr in die App erneut geprueft.
-
-Jagdmodus-Steuerung, Teilnehmer-/Hund-Livepositionen und Tracking starten erscheinen erst bei vollstaendiger Einrichtung. Vorhandene Android-Berechtigungen allein teilen deinen Standort nicht. Jagdfunktionen deaktivieren beendet aktive Jagdteilnahme und DogTracker, ohne dir die reine Standortanzeige auf der Karte zu nehmen. Revierberechtigungen bleiben unveraendert: Die Einrichtung macht einen Gast nicht zum Bearbeiter.
+Ein Treffer lässt sich zunächst auf der Karte ansehen, ohne ein Profil
+anzulegen. Für ein eigenes Revierprofil musst du angemeldet sein. Einzelne
+Suchtreffer kannst du ausdrücklich für die spätere Offlineansicht speichern.
 
 ## Anmelden und registrieren
 
-Oeffne Benutzerkonto und waehle Anmelden oder Neues Konto. Wenn du bereits ein Konto angelegt hast, waehle Anmelden. Gib deine E-Mail-Adresse ein und tippe auf Anmelde-Mail anfordern. Oeffne den Link in der neuesten E-Mail auf demselben Handy; die App bestaetigt dann deine Anmeldung. Ein Passwort brauchst du nicht.
+Öffne **Benutzerkonto** und wähle **Anmelden** oder **Neues Konto**. Gib deine
+E-Mail-Adresse ein und fordere die Anmelde-Mail an. Öffne den Link in der
+neuesten E-Mail auf demselben Smartphone oder gib den Zahlencode aus der Mail
+unter **Zahlencode (alternativ)** ein. Ein Passwort wird nicht benötigt.
 
-Alternativ kannst du den Zahlencode aus derselben E-Mail unter Zahlencode (alternativ) eintragen und mit Code bestaetigen anmelden. Falls sich nur der Browser oeffnet, verwende diesen Weg oder pruefe die Android-Einstellung zum Oeffnen unterstuetzter Links fuer Jagdbruder.
-
-Die App merkt sich deine Mailanforderung auch beim Schliessen. Fordere nach einer Stunde, bei einem alten Link oder einer Fehlermeldung eine neue Mail auf diesem Handy an und verwende immer die neueste Nachricht. Pruefe bei ausbleibender Nachricht die Adresse und den Spam-Ordner. Links und Codes sind vertraulich und nur einmal verwendbar. Auf gemeinsam genutzten Geraeten nach der Nutzung abmelden.
+Links und Codes sind vertraulich und nur einmal verwendbar. Die
+Anmeldeanforderung bleibt beim Schließen der App erhalten und gilt auf diesem
+Gerät höchstens eine Stunde. Melde dich auf gemeinsam genutzten Geräten nach
+der Nutzung ab.
 
 ## Gespeicherte Reviere und Rollen
 
-Melde dich an und waehle ein Profil ueber die Revierauswahl. Eigene Profile verwaltest du selbst; geteilte Profile gehoeren einem anderen Verwalter.
+Nach der Anmeldung wählst du über die Revierauswahl ein eigenes oder geteiltes
+Profil. Owner (Verwalter) und Bearbeiter können Revierdaten verwalten. Gäste
+sehen gemeinsame Markierungen und können eigene zeitlich begrenzte Meldungen
+setzen. Nur der Owner kann das gesamte Profil löschen.
 
-Owner (Verwalter) und Bearbeiter koennen Revierdaten verwalten. Gaeste koennen gemeinsame Markierungen sehen und eigene zeitlich begrenzte Meldungen setzen. Nur der Owner kann das gesamte Profil loeschen.
+Ein geteiltes Revier kannst du aus der Auswahl ausblenden und später wieder
+einblenden; die Mitgliedschaft bleibt bestehen. Das Löschen eines eigenen
+Profils entfernt es samt Markierungen und Freigaben dauerhaft.
 
-Ein geteiltes Revier auszublenden entfernt nicht deine Mitgliedschaft. Du kannst es spaeter wieder einblenden. Ein eigenes Revierprofil zu loeschen entfernt das Profil mit seinen Markierungen und Freigaben dauerhaft.
+## Grenzen und Markierungen bearbeiten
 
-## Markierungen setzen und bearbeiten
+Owner und Bearbeiter können eine vorhandene Reviergrenze bearbeiten:
+Grenzpunkte verschieben, hinzufügen oder entfernen sowie Teilflächen und
+befriedete Bereiche anlegen. Änderungen lassen sich rückgängig machen und
+müssen ausdrücklich gespeichert werden. Vorhandene Markierungen bleiben beim
+Ändern der Grenze erhalten.
 
-Waehle ein Revier und tippe auf Markierung setzen. Waehle eine Stelle innerhalb der Reviergrenze, einen Objekttyp und bei Bedarf Titel und Notiz; speichere dann die Markierung.
+Wähle ein Revier und tippe auf **Markierung setzen**. Verschiebe die Karte
+unter der Positionsnadel und bestätige mit **Hier setzen**; alternativ kannst
+du einen Kartenpunkt lange berühren. Wähle einen Objekttyp und gib bei Bedarf
+Titel und Notiz ein. Die Markierung muss innerhalb der Reviergrenze liegen.
 
-Owner und Bearbeiter koennen dauerhafte Einrichtungen und Standplaetze setzen. Gaeste koennen Anschuss und Wildsichtung setzen, wenn ihr aktueller GPS-Standort innerhalb des Reviers liegt. Zeitlich begrenzte Meldungen laufen nach 48 Stunden ab.
+Owner und Bearbeiter können dauerhafte Einrichtungen und zeitlich begrenzte
+Standplätze setzen. Gäste können Anschuss und Wildsichtung setzen, wenn ihr
+aktueller GPS-Standort innerhalb des Reviers liegt. Anschuss, Wildsichtung und
+Standplatz laufen nach 48 Stunden ab.
 
-Tippe auf ein Kartensymbol, um Details zu sehen. Berechtigte Personen koennen Markierungen bearbeiten oder loeschen. Owner und Bearbeiter koennen Markierungen innerhalb der Reviergrenze verschieben.
+Tippe auf ein Kartensymbol, um Details zu sehen. Berechtigte Personen können
+Markierungen bearbeiten oder löschen; Owner und Bearbeiter können sie mit
+der Zielscheibe im Markierungsfenster an den eigenen Standort verschieben.
+Gäste können ihre eigenen zeitlich begrenzten Meldungen löschen.
 
 ## Andere einladen
 
-Owner und Bearbeiter koennen im ausgewaehlten Revier Personen per E-Mail als Gast oder Bearbeiter einladen. Die eingeladene Person muss sich mit genau dieser E-Mail-Adresse anmelden und das Revier danach neu laden.
+Owner und Bearbeiter können im ausgewählten Revier Personen per E-Mail als
+Gast oder Bearbeiter einladen. Die eingeladene Person muss mit genau dieser
+E-Mail-Adresse angemeldet sein. Ausstehende Einladungen werden beim Öffnen
+oder Wiederaufnehmen der Jagdkarte und beim Aktualisieren angenommen; das
+gilt auch für Einladungen aus der PWA.
 
-Wenn du bereits mit der eingeladenen E-Mail-Adresse angemeldet bist, musst du
-dich nicht erneut anmelden: Beim Oeffnen oder Zurueckkehren zur Jagdkarte und
-beim Aktualisieren nimmt die App ausstehende Einladungen an und laedt die
-Revierauswahl neu. Das gilt auch fuer Einladungen aus der PWA.
-Ein solcher E-Mail-Link wechselt nicht automatisch dein bereits angemeldetes
-Konto. Fehlt das Revier weiterhin, pruefe die E-Mail-Adresse im Benutzerkonto
-und Hinweise unter Revier und Verwaltung; ausgeblendete Reviere kannst du
-dort wieder einblenden.
+Positionsbezogene Gastlinks laufen nach sieben Tagen ab und können
+weitergegeben werden. Teile sie nur mit Personen, denen du den Revierzugang
+anvertrauen willst. Nach dem Annehmen öffnet sich das Zielrevier mit der
+zugehörigen Markierung. Je nach Android-App-Link-Einstellung kann auch die
+Jagdkarte-Startseite statt im Browser in der App geöffnet werden.
 
-Ein Gast darf gemeinsame Markierungen sehen sowie eigene Anschuss- und Wildsichtungsmeldungen setzen. Bearbeiter duerfen zusaetzlich dauerhafte Markierungen, Standplaetze und Einladungen verwalten. Das Profil loeschen darf nur der Owner.
+## Jagdberechtigungen und Standortfreigabe
 
-Positionsbezogene Gastlinks laufen nach sieben Tagen ab und koennen weitergegeben werden. Teile sie nur mit Personen, denen du den Revierzugang anvertrauen willst. Nach dem Annehmen wird die Zielmarkierung auf der Karte zentriert und ihr Infofenster geoeffnet.
-Bei aktivierter Android-App-Link-Zuordnung kann auch die normale Jagdkarte-Startseite ohne Gastlink die App statt des Browsers oeffnen. Andere Jagdkarte-Unterseiten bleiben Browser-Links. Die Zuordnung kann in den Android-App-Einstellungen verwaltet werden.
+Unter **Benutzerkonto → Berechtigungen und Freigaben einrichten** kannst du
+die Einrichtung auch ohne Anmeldung jederzeit ändern. Genauer Standort wird
+für die eigene Position und Grenzprüfung benötigt; Bluetooth und je nach
+Android-Version WLAN beziehungsweise lokales Netzwerk ermöglichen
+Relaisverbindungen. Benachrichtigungen machen aktive Dienste sichtbar.
 
-## Hunde und Tracker
+**Freigeben und einrichten** erlaubt die automatische eigene
+Standortfreigabe und den Relaisbetrieb im Jagdmodus des ausgewählten Reviers
+sowie Relais während einer ausdrücklich gestarteten DogTracker-Sitzung.
+Android-Berechtigungen allein teilen deinen Standort nicht.
+Jagdmodus-Steuerung, Livepositionen und **Tracking starten** erscheinen erst
+bei vollständiger Einrichtung. Deine Revierrolle bleibt unverändert.
 
-Die QR-Kamera verwendet die Google Play-Dienste; eine eigene Kamerafreigabe
-fuer Jagdbruder ist nicht erforderlich. Beim ersten Aufruf kann das
-Scanner-Modul mit Internetverbindung nachgeladen werden. Falls der Scanner
-nicht verfuegbar ist, pruefe die Google Play-Dienste und die systemweite
-Kamera-Freigabe des Smartphones.
+Berechtigte Geräte desselben Reviers verbinden sich für das Relais
+automatisch; ein Bestätigungsdialog für jede Verbindung ist nicht nötig.
+Dafür müssen beide Geräte zuvor online eingerichtet worden sein und aktuelle
+Revierberechtigungen besitzen, die das jeweils andere Gerät enthalten. Die
+Offline-Berechtigung gilt höchstens 24 Stunden. Nach einem vollständigen
+Neustart des Smartphones muss sie online erneuert werden. Eine gegenseitige
+Positionsanzeige ganz ohne Internet ist noch nicht verfügbar.
 
-Oeffne Revier und Verwaltung, aktiviere bei Bedarf den Jagdmodus und waehle Hunde. Owner und Bearbeiter koennen einen Hund registrieren und ein Smartphone koppeln. Mit Tracker-Kamera scannst du den von Jagdkarte angezeigten QR-Code im DogTracker oder gibst den Schluessel manuell ein.
+**Jagdfunktionen deaktivieren** beendet Jagdteilnahme und DogTracker. Die
+reine Anzeige des eigenen Standorts auf der Karte bleibt davon unabhängig.
 
-Alternativ kann der DogTracker selbst den Schluessel erstellen: **QR-Code fuer Jagdkarte anzeigen** waehlen und in Jagdkarte beim passenden Hund **DogTracker-QR scannen**. Jagdkarte zeigt danach **Warten auf Bestaetigung** mit Hund und Revier. Lass diesen Dialog offen und tippe auf dem anderen Smartphone im DogTracker **Kopplung bestaetigen**. Direkt beim Knopf siehst du den Fortschritt oder einen Fehler; bei Erfolg erscheint eine eigene Bestaetigung. Jagdkarte zeigt **Kopplung erfolgreich**, sobald der Server die neue Verbindung bestaetigt hat. Danach kannst du im DogTracker das Tracking starten.
+## Jagdmodus und Livepositionen
 
-Der bisherige Schluessel bleibt bis zur Bestaetigung aktiv. Ein Abbruch behaelt ihn; bei einem Fehler bleibt der QR-Code fuer einen erneuten Versuch erhalten. Falls du zu frueh bestaetigt hast, zeigt der DogTracker den fehlenden Schritt an: erst in Jagdkarte scannen, dann nochmals bestaetigen. Jagdkarte prueft automatisch, solange der Wartedialog offen und die App sichtbar ist; bei einem Fehler **Kopplung erneut pruefen** waehlen. Nach Schliessen des Dialogs endet die Pruefung.
+Owner und Bearbeiter können den Jagdmodus unter **Revier und Verwaltung**
+steuern. Bei aktivem Jagdmodus, vollständiger Einrichtung und gültiger
+Berechtigung werden verschlüsselte Reviermeldungen automatisch weitergeleitet.
+Neue eigene Teilnehmerpositionen können derzeit nur bei Internetzugang
+freigegeben werden. Deine Position wird nur bei aktiver Karte und innerhalb
+der Reviergrenze übermittelt.
 
-Fuer diesen Gegenweg muessen die Migrationen `202611110001_register_hunting_dog_device_token` und `202611110002_two_phase_dog_device_pairing` im gemeinsamen Backend ausgerollt sein. Fuer die Erfolgsanzeige in Jagdkarte ist zusaetzlich `202611130001_dog_device_pairing_status` erforderlich. Ist die Statuspruefung noch nicht eingerichtet, erscheint ein ausdruecklicher Hinweis statt einer Erfolgsmeldung; die bestehende Kopplung bleibt unveraendert.
+Bei Revierwechsel, Abmeldung oder ausgeschaltetem Jagdmodus endet die
+bisherige Teilnahme. Wird die Karte pausiert, endet die eigene
+Standortübertragung; das Relais kann sichtbar im Hintergrund weiterarbeiten.
+Startest du den DogTracker, übernimmt er den Relaisbetrieb; deine
+Teilnehmerposition wird dabei nicht parallel geteilt. Beim Ausschalten des
+Jagdmodus werden gespeicherte Gruppen- und Hundepositionen serverseitig
+entfernt.
 
-In **Hunde im Revier** sehen Owner und Bearbeiter direkt am Hund einen **gruenen Haken: Gekoppelt** oder ein **rotes X: Nicht gekoppelt**. **Bestaetigung ausstehend** bedeutet, dass der Scan vorgemerkt ist, aber noch am DogTracker bestaetigt werden muss. Ein vorhandener alter Tracker bleibt bei einer neuen, noch offenen Kopplung gruen; die neue Kopplung wird zusaetzlich als ausstehend angezeigt. Der Haken bestaetigt nicht, dass gerade Tracking laeuft oder eine aktuelle Hundeposition vorliegt.
+Bei frischen, ausreichend genauen Positionen kann ein Pfeil neben Person oder
+Hund die aus zwei GPS-Positionen abgeleitete Bewegungsrichtung anzeigen. Er
+zeigt nicht die Blickrichtung oder Ausrichtung des Smartphones. Hundepositionen
+können auch außerhalb der Reviergrenze angezeigt werden.
 
-Mit **Zur Hundeliste** kommst du aus dem Wartedialog zurueck. Die Liste prueft alle fuenf Sekunden, solange sie sichtbar ist; du kannst auch **Kopplungsstatus aktualisieren** waehlen. Bei fehlender Verbindung erscheint **Status unbekannt** statt eines falschen Haken oder X. Fuer diese Anzeige ist die zusaetzliche Server-Erweiterung `202611130002_dog_pairing_states` erforderlich.
+## Hunde und DogTracker
 
-Der Geraeteschluessel wird nur einmal angezeigt. Halte ihn geheim. Pro Hund kann ein Smartphone aktiv gekoppelt sein. Richte die Jagdberechtigungen und Relaisfreigabe ein und starte dann den DogTracker ausdruecklich mit Tracking starten. Relais arbeitet waehrend dieser Sitzung automatisch mit; Tracking stoppen beendet beides.
+Öffne **Revier und Verwaltung → Hunde**. Owner und Bearbeiter können einen
+Hund registrieren und ein Smartphone koppeln. Dafür gibt es zwei Wege:
 
-Mit Hund loeschen entfernst du den Hund dauerhaft aus dem Revier. Die Serverkopplung und die gespeicherte Hundeposition werden ebenfalls geloescht. Der Tracker kann danach keine neuen Positionen mehr mit diesem Schluessel uebermitteln.
+1. In Jagdkarte **Smartphone koppeln** wählen und den angezeigten QR-Code im
+   DogTracker mit **Tracker-Kamera** scannen oder den Schlüssel dort manuell
+   eingeben.
+2. Im DogTracker **QR-Code fuer Jagdkarte anzeigen** wählen. In Jagdkarte beim
+   passenden Hund **DogTracker-QR scannen** wählen und den Code scannen. Den
+   Wartedialog geöffnet lassen und im DogTracker **Kopplung bestaetigen**
+   wählen. Jagdkarte zeigt den Erfolg nach der Serverbestätigung.
 
-## Standort und Jagdmodus
+Der QR-Scanner verwendet die Google Play-Dienste und benötigt keine eigene
+Kamerafreigabe für Jagdbruder. Der Geräteschlüssel wird nur einmal angezeigt
+und muss geheim bleiben. Pro Hund kann ein Smartphone aktiv gekoppelt sein;
+bei einer neuen Kopplung bleibt der bisherige Schlüssel bis zur Bestätigung
+aktiv.
 
-Die Zielscheibe zeigt nur deinen eigenen Standort auf deinem Geraet; dieser Schalter startet keine Standortfreigabe. Nach Zustimmung zur geraetebezogenen Einrichtung werden dein Standort und verschluesselte Reviermeldungen im Jagdmodus des ausgewaehlten Reviers automatisch geteilt beziehungsweise weitergeleitet. Dafuer braucht es vollstaendige Berechtigungen und eine frische Onlineautorisierung. Unter Revier und Verwaltung siehst du den Teilnahme- und Relaisstatus; eine weitere Teilnahmefreigabe ist nicht erforderlich. Dein eigener Standort wird nur bei aktiver Karte und innerhalb der Reviergrenze uebermittelt.
+In **Hunde im Revier** kennzeichnen ein grüner Haken beziehungsweise ein
+rotes X den Kopplungsstatus. **Bestaetigung ausstehend** bezeichnet eine
+vorgemerkte neue Kopplung. Eine aktive Kopplung bedeutet nicht, dass Tracking
+läuft oder eine aktuelle Position vorliegt.
 
-Relais hat keinen separaten Ein-/Ausschalter und keine Stoppaktion in der Relaisbenachrichtigung. Fehlgeschlagene Starts werden automatisch erneut versucht. Beim Revierwechsel, Abmelden oder Ausschalten des Jagdmodus endet die bisherige Teilnahme. Beim Pausieren der Karte endet nur die eigene Standortuebertragung; das Relais kann sichtbar im Hintergrund weiterarbeiten. Jagdfunktionen deaktivieren im Benutzerkonto beendet weiterhin alle Jagddienste. Wenn du Tracking starten im DogTracker waehlst, wartet die App auf das Ende des Revier-Relais und uebergibt den Relaisbetrieb an den DogTracker; deine Teilnehmerposition wird dabei nicht parallel geteilt.
+Richte die Jagdberechtigungen ein, wähle im DogTracker ein Standortintervall
+zwischen 15 Sekunden und 60 Minuten und tippe auf **Tracking starten**. Eine
+dauerhafte Benachrichtigung zeigt die Sitzung und bietet eine Stoppaktion.
+**Tracking stoppen** beendet auch den Relaisbetrieb des DogTrackers. Ohne
+Internet bleibt für den direkten Upload nur die neueste GPS-Position
+höchstens 24 Stunden auf dem Smartphone gespeichert.
 
-Der Jagdmodus steuert, ob Gruppen- und Hundestandorte fuer das Revier uebermittelt werden duerfen. Owner und Bearbeiter koennen ihn verwalten. Beim Ausschalten werden gespeicherte Gruppen- und Hundepositionen serverseitig entfernt.
-
-Standorte sind keine sichere Echtzeitortung. Ohne Verbindung bleibt im DogTracker nur die neueste GPS-Position bis zu 24 Stunden auf dem Smartphone; aeltere Fixes werden ersetzt oder verworfen. GPS-Nutzdaten sind lokal mit AES-GCM und einem Schluessel aus dem Android Keystore verschluesselt; SQLite-Zeit- und Queue-Metadaten bleiben lesbar. Die Outbox wird nicht gesichert oder auf ein anderes Geraet uebertragen. Kann ein gespeicherter Fix nach Schluesselverlust nicht entschluesselt werden, wird er verworfen und der Tracker zeigt einen Statushinweis. Relay-Nachrichten haben eine eigene Ablauf- und Bestaetigungssemantik. Hundepositionen koennen auch ausserhalb der Reviergrenze angezeigt werden; die eigene Standortfreigabe und bestimmte Markierungen sind dagegen an die Reviergrenze gebunden.
-
-Bei frischen, ausreichend genauen Positionen zeigt ein kleiner Pfeil neben Person oder Hund die Bewegungsrichtung ueber Grund. Die Himmelsrichtung wird aus zwei GPS-Positionen abgeleitet; sie zeigt nicht, wohin eine Person schaut oder wie das Smartphone ausgerichtet ist. Bei Stillstand, ungenauem GPS oder alten Positionen wird kein Richtungspfeil angezeigt.
+Mit **Hund loeschen** entfernen Owner und Bearbeiter den Hund dauerhaft samt
+Serverkopplung und gespeicherter Hundeposition.
 
 ## Revierdateien
 
-Im Revierbereich kannst du eine Reviergrenze als JWD-Datei exportieren oder eine JWD-, JSON- oder GeoJSON-Datei importieren. Waehle Dateien ueber den Android-Dateiauswahldialog aus und pruefe die angezeigte Zusammenfassung vor dem Import.
+Im Revierbereich kannst du eine Reviergrenze als JWD-Datei exportieren oder
+eine JWD-, JSON- oder GeoJSON-Datei importieren. Wähle die Datei über den
+Android-Dateiauswahldialog und prüfe die Zusammenfassung vor dem Import.
 
-Ein neues Profil wird als eigenes Revier angelegt. Beim Zusammenfuehren bleiben die bestehende Grenze und vorhandene Markierungen erhalten; neue dauerhafte Einrichtungen werden ergaenzt. GeoJSON-Dateien koennen mehrere passende Features enthalten.
-
-Behandle Revierdateien mit vertraulichen Markierungen wie private Unterlagen. Teile sie nur mit berechtigten Personen. Ein Importfehler sollte keine Teilimporte hinterlassen; lies die Fehlermeldung und pruefe die Datei.
-
-## Name und Darstellung
-
-Im Benutzerkonto kannst du einen Anzeigenamen fuer Reviermitglieder speichern oder entfernen. Ohne Anzeigenamen kann deine E-Mail-Adresse in der Teilnehmerliste erscheinen.
-
-Die Groesse der Reviermarker und weitere Darstellungseinstellungen gelten nur auf diesem Geraet. Kartenmodus und lokale Offlinekarten bleiben ebenfalls geraetebezogen.
-
-## App installieren und aktualisieren
-
-Dies ist eine native Android-App. Browseraktionen wie Zum Startbildschirm hinzufuegen und PWA-Service-Worker-Updates gelten hier nicht. Installation und Aktualisierung erfolgen ueber den Android-Bezugsweg, ueber den diese App bereitgestellt wurde.
-
-Wenn du eine APK direkt erhaeltst, installiere nur Dateien aus einer vertrauenswuerdigen Quelle. Bei einer Aktualisierung vorher laufende Eingaben speichern.
+Du kannst ein neues eigenes Profil anlegen oder Daten mit einem bestehenden
+bearbeitbaren Profil zusammenführen. Beim Zusammenführen werden die Grenzen
+vereinigt, vorhandene Markierungen bleiben erhalten und neue dauerhafte
+Einrichtungen werden ergänzt. Behandle Revierdateien mit vertraulichen
+Markierungen wie private Unterlagen.
 
 ## Karten und Offline-Nutzung
 
-OpenStreetMap und Luftbilder benoetigen eine Internetverbindung. Die Luftbildabdeckung ist derzeit auf NRW begrenzt; an Landes- und Dienstraendern koennen Luecken auftreten.
+OpenStreetMap und Luftbilder benötigen Internet. Die Luftbildabdeckung ist
+derzeit auf NRW begrenzt; an Landes- und Diensträndern können Lücken auftreten.
 
-Fuer Offline-Karten importierst du ein Mapsforge-.map-Paket und die passende .poly- oder Polygon-GeoJSON-Abdeckung. Offline wird nur angeboten, wenn die lokale Abdeckung das ganze Revier einschliesst. Im Offline-Modus gibt es keinen stillen Wechsel auf Onlinekarten.
+Für Offlinekarten lade eine passende Mapsforge-`.map`-Datei und die
+zugehörige `.poly`-Extraktgrenze, beispielsweise von den
+[Mapsforge-Downloads](https://download.mapsforge.org/maps/v5/) und den
+[Extraktgrenzen](https://download.mapsforge.org/maps/poly/). Wähle unter
+**Revier und Verwaltung → Offlinekarten verwalten** die Aktion
+**MAP / Extraktgrenze importieren** und beide Dateien aus. Alternativ wird
+gleichnamiges Polygon-GeoJSON als Abdeckungsdatei unterstützt. Offline wird
+angeboten, wenn die lokalen Karten das gesamte Revier abdecken; ein
+ausgewählter Offline-Modus wechselt nicht automatisch auf Onlinekarten.
 
-Oeffentliche Reviergrenzen werden nicht automatisch geladen oder aktualisiert. Speichere einzelne Suchtreffer ausdruecklich ueber Offline speichern. Bei unklarer Lizenz musst du bestaetigen, dass du die Nutzungsbedingungen geprueft hast. Gespeicherte Grenzen findest und entfernst du unter Offline-Grenzen.
+Öffentliche Reviergrenzen werden nicht automatisch geladen oder aktualisiert.
+Speichere einzelne Suchtreffer ausdrücklich über **Offline speichern**. Bei
+unklarer Lizenz musst du bestätigen, dass du die Nutzungsbedingungen geprüft
+hast. Gespeicherte Grenzen findest und entfernst du unter **Offline-Grenzen**.
 
-Beim ersten Start oeffnet sich die Jagdkarte, beim naechsten Start der zuletzt verwendete Bereich. In der Jagdkarte werden letztes Revier, Kartenposition und Zoom wiederhergestellt.
+Der zuletzt online geladene Revierstand mit Grenze und Markierungen kann für
+höchstens sieben Tage offline angesehen werden. Diese Ansicht ist als
+veraltet markiert und nur lesbar; Teilnehmer- und Hund-Livepositionen fehlen.
+Änderungen, Einladungen und die Freigabe neuer eigener Teilnehmerpositionen
+benötigen weiterhin Internet. Das zuvor eingerichtete Relais
+kann Meldungen ohne Internet annehmen und später über ein Gerät mit
+Internetverbindung weiterleiten. Der Revierstand, öffentliche Grenzen und
+Kartenpakete werden nicht mit der PWA oder einem Konto synchronisiert.
 
-Der zuletzt online geladene Revierstand mit Grenze und Markierungen kann danach verschluesselt fuer hoechstens sieben Tage offline angesehen werden. Er liegt getrennt von Kartenpaketen im privaten, vom Android-Backup ausgeschlossenen Speicher; maximal 20 Reviere, 4 MiB je Revier und 32 MiB insgesamt. Die Offlineansicht ist als veraltet markiert und nur lesbar. Teilnehmer- und Hund-Livepositionen sind nicht enthalten. Aenderungen, Einladungen und Standortfreigaben brauchen weiterhin eine Verbindung. Der Cache synchronisiert nicht mit PWA oder Konto. Die oeffentliche Suche braucht Internet.
+## Name, Darstellung und Installation
 
-## Wenn etwas nicht klappt
+Im Benutzerkonto kannst du einen Anzeigenamen für Reviermitglieder speichern
+oder entfernen. Ohne Anzeigenamen kann deine E-Mail-Adresse in der
+Teilnehmerliste erscheinen. Markergröße, Kartenmodus und lokale Offlinekarten
+gelten nur auf diesem Gerät.
 
-### Keine Anmelde-E-Mail
-
-Adresse kontrollieren, Spam-Ordner pruefen, kurz warten und einen neuen Code anfordern. Verwende bei der Bestaetigung den neuesten Code.
-
-### Revier oder Einladung fehlt
-
-Das richtige Profil und die eingeladene E-Mail-Adresse pruefen und Serverdaten aktualisieren. Nicht jede Region oder Datenquelle ist immer erreichbar.
-
-### Standort fehlt oder ist ungenau
-
-GPS einschalten, genaue Standortberechtigung erteilen und das Geraet nach Moeglichkeit ins Freie bringen. Fuer das Teilen muss die Freigabe aktiv sein; einige Aktionen erfordern einen Standort innerhalb der Grenze.
-
-### Markierung kann nicht gespeichert werden
-
-Profil und Rolle pruefen. Anschuss und Wildsichtung brauchen einen aktuellen Standort im Revier; Owner- und Bearbeiteraktionen stehen Gaesten nicht zur Verfuegung.
-
-### Hundestandort fehlt
-
-Jagdmodus, aktive Kopplung, Tracker-Berechtigungen und Internetverbindung pruefen. Bei neuem oder verlorenem Schluessel das Smartphone erneut koppeln.
-
-### Karte oder Suche bleibt leer
-
-Internetverbindung und gewaehlte Quelle pruefen und erneut laden. Im Offline-Modus passende Mapsforge-Abdeckung installieren; unvollstaendige Pakete werden nicht automatisch durch Onlinekarten ergaenzt.
-
-### Datei wird abgelehnt
-
-Dateityp und Groesse pruefen, Importzusammenfassung lesen und sicherstellen, dass die Datei gueltiges GeoJSON oder eine unterstuetzte Revierdatei enthaelt.
+Jagdbruder ist eine native Android-App. Installation und Aktualisierung
+erfolgen über den Android-Bezugsweg, über den du die App erhalten hast.
+Installiere APK-Dateien nur aus einer vertrauenswürdigen Quelle.

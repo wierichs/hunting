@@ -3,6 +3,7 @@ package org.wierichs.dogtracker.communication
 import android.content.Context
 import android.content.Intent
 import android.location.Location
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -15,12 +16,14 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
 import java.io.IOException
+import javax.net.ssl.SSLException
 import org.json.JSONObject
 import org.wierichs.dogtracker.jagdkarte.HuntingProfile
 import org.wierichs.dogtracker.jagdkarte.JagdkarteApiException
 import org.wierichs.dogtracker.jagdkarte.JagdkarteRepository
 import org.wierichs.dogtracker.jagdkarte.locationInsideBoundary
 import org.wierichs.dogtracker.BackendConfiguration
+import org.wierichs.dogtracker.DeviceTokenStorage
 import org.wierichs.dogtracker.TrackerPreferences
 import org.wierichs.dogtracker.readHuntingPermissions
 
@@ -36,9 +39,16 @@ internal data class RelayGatewayStatus(
 internal object RelayGateway {
     val state = MutableStateFlow(RelayGatewayStatus())
     @Volatile internal var engine: RelayGatewayEngine? = null
+    @Volatile private var service: RelayGatewayService? = null
+    internal val shutdown = RelayGatewayShutdown()
 
+    @Synchronized
     fun start(context: Context, profileId: String) {
         require(UUID.fromString(profileId).toString() == profileId)
+        check(service == null && !state.value.active && !state.value.starting) {
+            "Relaisdienst ist bereits aktiv oder wird beendet."
+        }
+        shutdown.start()
         state.value = RelayGatewayStatus(starting = true, profileId = profileId, status = "Relaisfreigabe wird eingerichtet.")
         try {
             ContextCompat.startForegroundService(context, Intent(context, RelayGatewayService::class.java)
@@ -49,11 +59,24 @@ internal object RelayGateway {
         }
     }
 
+    @Synchronized
     fun stop(context: Context) {
+        shutdown.requestStop()
         state.value = state.value.copy(starting = true, status = "Relaisfreigabe wird beendet.")
-        if (!context.stopService(Intent(context, RelayGatewayService::class.java)) && engine == null) {
+        if (!context.stopService(Intent(context, RelayGatewayService::class.java)) && engine == null && service == null) {
             state.value = RelayGatewayStatus(profileId = state.value.profileId, status = "Relaisfreigabe beendet.")
         }
+    }
+
+    @Synchronized
+    internal fun serviceCreated(instance: RelayGatewayService) { service = instance }
+
+    @Synchronized
+    internal fun serviceDestroyed(instance: RelayGatewayService, current: RelayGatewayEngine?, status: RelayGatewayStatus) {
+        if (service !== instance) return
+        if (engine === current) engine = null
+        service = null
+        state.value = status
     }
 
     suspend fun stopAndAwait(context: Context) {
@@ -86,13 +109,13 @@ internal class RelayGatewayEngine(
     private val repository: JagdkarteRepository,
     private val profile: HuntingProfile,
     private val onIncoming: (RelayEnvelope) -> Unit,
-    private val onDocument: (ByteArray) -> Unit
+    private val onDocument: (ByteArray, () -> Unit) -> Unit
 ) {
     val profileId: String get() = profile.id
     private val appContext = context.applicationContext
     private val mutex = Mutex()
     private var capabilities: RelayCapabilities? = null
-    private var directory: VerifiedRelayDirectory? = null
+    @Volatile private var directory: VerifiedRelayDirectory? = null
     private var deviceId: String? = null
     private var store: SqliteMessageStore? = null
     private var transport: NearbyRelayTransport? = null
@@ -100,37 +123,58 @@ internal class RelayGatewayEngine(
     private var closed = false
     private var sharingEpoch: String? = null
     private var sharingStopPending = false
-    @Volatile private var outgoing = emptyList<ByteArray>()
+    @Volatile private var outgoing = emptyList<NearbyPacket>()
 
     suspend fun initialize() = withContext(Dispatchers.IO) {
         mutex.withLock {
-            refreshAuthorization()
+            val offline = try {
+                if (!hasValidatedRelayInternet(appContext)) throw IOException("Keine Internetverbindung.")
+                refreshAuthorization()
+                false
+            } catch (failure: IOException) {
+                if (failure is SSLException) throw failure
+                val saved = RelayOfflineAuthorization.load(appContext, AUTHORIZATION_FILE, repository.userId, null, profileId)
+                    ?: throw IOException("Offline-Relaisberechtigung fehlt oder ist abgelaufen; bitte online erneuern.", failure)
+                capabilities = saved.capabilities
+                directory = saved.directory
+                deviceId = saved.directory.localDeviceId
+                nextRefresh = SystemClock.elapsedRealtime() + 10_000
+                true
+            }
             val id = deviceId!!
             store = SqliteMessageStore(appContext, "relay_gateway_$id.db")
             store!!.removeExpired()
             purgeOwn()
-            transport = NearbyRelayTransport(appContext, id, onIncoming, { status -> update(status) },
+            transport = NearbyRelayTransport(appContext, id, { directory }, onIncoming, { status -> update(status) },
                 pendingPackets = { outgoing }, onIncomingDocument = onDocument)
             refreshOutgoing()
             transport!!.start()
             RelayGateway.state.value = RelayGatewayStatus(active = true, profileId = profileId,
-                status = "Relaisfreigabe aktiv; bereit fuer signierte Reviermeldungen.", pending = pendingCount())
+                status = if (offline) "Offline-Relaisfreigabe aktiv; Servererneuerung ausstehend."
+                    else "Relaisfreigabe aktiv; bereit fuer signierte Reviermeldungen.", pending = pendingCount())
         }
     }
 
     private suspend fun refreshAuthorization() {
         val capability = RelayCapabilities.parse(repository.relayPost(JSONObject().put("action", "capabilities")))
-        val registration = repository.relayPost(JSONObject().put("action", "register").put("profile_id", profileId)
+        val registration = repository.relayPost(JSONObject().put("action", "register_offline").put("profile_id", profileId)
             .put("public_key", RelaySigningIdentity.publicKeyBase64Url()))
         val id = registration.getString("device_id")
-        require(UUID.fromString(id).toString() == id && (deviceId == null || deviceId == id))
+        require(UUID.fromString(id).toString() == id)
+        if (deviceId != null && deviceId != id) {
+            throw JagdkarteApiException(403, "relay_identity_changed", "Relaisgeraet wurde erneut registriert.")
+        }
         if (deviceId == null) repository.relayPost(JSONObject().put("action", "set_sharing").put("device_id", id).put("enabled", false))
-        val response = repository.relayPost(JSONObject().put("action", "directory").put("device_id", id))
-        val verified = VerifiedRelayDirectory.verify(response, capability, profileId, id)
+        val (boot, requestElapsed) = RelayOfflineLease.requestStarted(appContext)
+        val response = repository.relayPost(JSONObject().put("action", "offline_directory").put("device_id", id))
+        val lease = RelayOfflineLease(boot, requestElapsed, System.currentTimeMillis())
+        val verified = RelayOfflineAuthorization.verify(appContext, capability, response, id, profileId, lease)
+        require(repository.userId.isNotBlank())
+        RelayOfflineAuthorization.save(appContext, AUTHORIZATION_FILE, repository.userId, id, capability, response, lease)
         capabilities = capability
-        directory = verified
+        directory = verified.directory
         deviceId = id
-        nextRefresh = System.currentTimeMillis() + 60_000
+        nextRefresh = SystemClock.elapsedRealtime() + 60_000
     }
 
     suspend fun enqueueLocation(location: Location) = withContext(Dispatchers.IO) {
@@ -139,6 +183,7 @@ internal class RelayGatewayEngine(
                 "Jagdfreigabe oder erforderliche Berechtigung wurde entzogen."
             }
             check(!closed && directory?.current() == true) { "Relaisberechtigung ist abgelaufen. Online-Verbindung erforderlich." }
+            check(hasValidatedRelayInternet(appContext)) { "Teilnehmerstandortfreigabe erfordert Internet." }
             require(locationInsideBoundary(profile.boundary, location.latitude, location.longitude)) { "Standort ausserhalb des Reviers." }
             val now = System.currentTimeMillis()
             require(now - location.time in -30_000L..30_000L)
@@ -178,12 +223,17 @@ internal class RelayGatewayEngine(
         }
     }
 
-    suspend fun acceptDocument(bytes: ByteArray) = withContext(Dispatchers.IO) {
+    suspend fun acceptDocument(bytes: ByteArray): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
-            if (closed) return@withLock
-            val receipt = runCatching { VerifiedRelayReceipt.verify(JSONObject(String(bytes, Charsets.UTF_8)), capabilities!!, profileId) }.getOrNull()
-                ?: return@withLock
+            if (closed) return@withLock false
+            val receipt = try {
+                VerifiedRelayReceipt.verify(JSONObject(String(bytes, Charsets.UTF_8)), capabilities!!, profileId)
+            } catch (_: Exception) {
+                update("Relay-Bestätigung konnte nicht geprüft werden.")
+                return@withLock false
+            }
             applyReceipt(receipt)
+            true
         }
     }
 
@@ -204,18 +254,35 @@ internal class RelayGatewayEngine(
         mutex.withLock {
             if (closed) return@withLock
             store!!.removeExpired()
-            if (System.currentTimeMillis() >= nextRefresh) {
+            if (!hasValidatedRelayInternet(appContext)) {
+                if (directory?.current() != true) {
+                    outgoing = emptyList()
+                    transport?.stop()
+                    update("Relais pausiert: Revierberechtigung muss online erneuert werden.")
+                } else {
+                    refreshOutgoing()
+                    transport?.sendPendingToAll()
+                }
+                return@withLock
+            }
+            if (SystemClock.elapsedRealtime() >= nextRefresh) {
                 try { refreshAuthorization(); transport?.start() }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) {
                     if (failure is JagdkarteApiException && failure.status in setOf(401, 403, 409)) throw failure
-                    nextRefresh = System.currentTimeMillis() + 10_000
+                    nextRefresh = SystemClock.elapsedRealtime() + 10_000
                     if (directory?.current() != true) {
                         outgoing = emptyList()
                         transport?.stop()
                         update("Relais pausiert: Revierberechtigung muss online erneuert werden.")
                         return@withLock
                     }
+                }
+                if (directory?.current() != true) {
+                    outgoing = emptyList()
+                    transport?.stop()
+                    update("Relais pausiert: Revierberechtigung muss online erneuert werden.")
+                    return@withLock
                 }
             }
             val id = deviceId!!
@@ -256,6 +323,10 @@ internal class RelayGatewayEngine(
             sharingStopPending = true
             purgeOwn()
             refreshOutgoing()
+            if (!hasValidatedRelayInternet(appContext)) {
+                update("Standortfreigabe lokal beendet; Serverwiderruf wartet auf Verbindung.")
+                return@withLock
+            }
             try { stopSharingOnServer() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { update("Standortfreigabe lokal beendet; Serverwiderruf wartet auf Verbindung.") }
@@ -274,7 +345,7 @@ internal class RelayGatewayEngine(
         sharingStopPending = false
     }
 
-    suspend fun close() = withContext(Dispatchers.IO) {
+    suspend fun close(revoke: Boolean = true) = withContext(Dispatchers.IO) {
         mutex.withLock {
             if (closed) return@withLock
             closed = true
@@ -282,11 +353,10 @@ internal class RelayGatewayEngine(
             transport?.stop()
             store?.close()
             store = null
-            val id = deviceId
-            if (id != null) {
-                runCatching { repository.relayPost(JSONObject().put("action", "revoke").put("device_id", id)) }
-                appContext.deleteDatabase("relay_gateway_$id.db")
-            }
+            if (revoke) clearAuthorization(appContext)
+            cleanupGatewayRegistration(deviceId, revoke,
+                revokeDevice = { id -> repository.relayPost(JSONObject().put("action", "revoke").put("device_id", id)) },
+                deleteDatabase = { id -> appContext.deleteDatabase("relay_gateway_$id.db") })
         }
     }
 
@@ -298,7 +368,10 @@ internal class RelayGatewayEngine(
         outgoing = if (directory?.current() == true) {
             val own = database.pendingOfType(RelayEnvelope.MESSAGE_TYPE, MAX_PENDING)
                 .filter { RelayEnvelope.parse(it.message.payload)?.originDeviceId == deviceId }.take(25).map { it.message.payload }
-            own + database.pendingOfType(RECEIPT_TYPE, MAX_PENDING).takeLast(25).map { it.message.payload }
+            own.map { NearbyPacket(nearbyPacketDigest(it), it) } +
+                database.newestPendingOfType(RECEIPT_TYPE, MAX_PENDING).map {
+                    NearbyPacket(nearbyPacketDigest(it.message.payload), it.message.payload, receipt = true)
+                }
         } else emptyList()
         RelayGateway.state.value = RelayGateway.state.value.copy(pending = pendingCount())
     }
@@ -314,8 +387,40 @@ internal class RelayGatewayEngine(
 
     companion object {
         private const val MAX_PENDING = 500
+        private const val AUTHORIZATION_FILE = "gateway_relay_authorization_v2"
         private const val RECEIPT_TYPE = "relay.receipt"
         private val ENDPOINT = BackendConfiguration.relayEndpoint
         private fun receiptId(origin: String, id: String) = "receipt.${relayStorageId(origin, id)}"
+        fun clearAuthorization(context: Context) =
+            DeviceTokenStorage.clear(context, AUTHORIZATION_FILE, synchronous = true)
     }
+}
+
+internal suspend fun cleanupGatewayRegistration(
+    deviceId: String?,
+    revoke: Boolean,
+    revokeDevice: suspend (String) -> Unit,
+    deleteDatabase: (String) -> Unit
+) {
+    if (deviceId == null || !revoke) return
+    var revocationFailure: Exception? = null
+    try {
+        revokeDevice(deviceId)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        revocationFailure = failure
+    }
+    deleteDatabase(deviceId)
+    if (revocationFailure != null) {
+        throw IOException("Relaisfreigabe lokal beendet; Serverwiderruf nicht bestaetigt.", revocationFailure)
+    }
+}
+
+internal class RelayGatewayShutdown {
+    private var requested = false
+
+    @Synchronized fun start() { requested = false }
+    @Synchronized fun requestStop() { requested = true }
+    @Synchronized fun shouldRevoke(ineligible: Boolean): Boolean = requested || ineligible
 }

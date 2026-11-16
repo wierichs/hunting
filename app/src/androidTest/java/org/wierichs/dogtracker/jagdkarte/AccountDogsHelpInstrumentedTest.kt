@@ -259,7 +259,7 @@ class AccountDogsHelpInstrumentedTest {
         }
     }
 
-    @Test fun nativeHelpCoversLoginDogsOfflineMapsAndTroubleshooting() {
+    @Test fun nativeHelpCoversLoginDogsAndOfflineMaps() {
         val markdown = context.assets.open("hilfe.md").bufferedReader(Charsets.UTF_8).use { it.readText() }
         val rendered = TextView(context)
         Markwon.create(context).setMarkdown(rendered, markdown)
@@ -269,7 +269,7 @@ class AccountDogsHelpInstrumentedTest {
 
         rule.setContent { MaterialTheme { HelpDialog(onDismiss = {}) } }
 
-        rule.onNodeWithText("Hilfe und Fehlerbehebung").assertIsDisplayed()
+        rule.onNodeWithText("Hilfe").assertIsDisplayed()
     }
 
     @Test fun dogListShowsServerConfirmedPairingAndPendingStateAlsoAfterReopening() {

@@ -14,6 +14,13 @@ internal data class RelayCapabilities(
     val receiptKeyId: String,
     val receiptPublicKey: String
 ) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("protocol", "location-relay-v1")
+        .put("encryption_key_id", encryption.keyId)
+        .put("encryption_public_key", encryption.publicKey)
+        .put("receipt_key_id", receiptKeyId)
+        .put("receipt_public_key", receiptPublicKey)
+
     companion object {
         fun parse(json: JSONObject): RelayCapabilities {
             require(json.getString("protocol") == "location-relay-v1")
@@ -30,11 +37,13 @@ internal data class RelayCapabilities(
 internal class VerifiedRelayDirectory private constructor(
     val profileId: String,
     val localDeviceId: String,
+    private val issuedAt: Long,
     private val expiresAt: Long,
-    private val publicKeys: Map<String, String>
+    private val publicKeys: Map<String, String>,
+    private val leaseCurrent: () -> Boolean = { true }
 ) {
     fun accepts(envelope: RelayEnvelope, now: Long = System.currentTimeMillis()): Boolean {
-        if (now >= expiresAt || envelope.expiresAtEpochMillis <= now) return false
+        if (!current(now) || envelope.expiresAtEpochMillis <= now) return false
         val key = publicKeys[envelope.originDeviceId] ?: return false
         return runCatching {
             Signature.getInstance("SHA256withRSA").run {
@@ -46,17 +55,48 @@ internal class VerifiedRelayDirectory private constructor(
         }.getOrDefault(false)
     }
 
-    fun current(now: Long = System.currentTimeMillis()): Boolean = now < expiresAt
+    fun current(now: Long = System.currentTimeMillis()): Boolean = now < expiresAt && leaseCurrent()
+
+    fun withOfflineLease(anchor: RelayOfflineLease, bootCount: Int, elapsed: () -> Long): VerifiedRelayDirectory {
+        require(anchor.isCurrent(bootCount, elapsed(), expiresAt - issuedAt))
+        return VerifiedRelayDirectory(profileId, localDeviceId, issuedAt, expiresAt, publicKeys) {
+            anchor.isCurrent(bootCount, elapsed(), expiresAt - issuedAt)
+        }
+    }
+
+    fun verifyPeer(deviceId: String, data: ByteArray, signature: ByteArray, now: Long = System.currentTimeMillis()): Boolean {
+        if (!current(now)) return false
+        val key = publicKeys[deviceId] ?: return false
+        return runCatching {
+            Signature.getInstance("SHA256withRSA").run {
+                initVerify(importRelayPublicKey(key))
+                update(data)
+                verify(signature)
+            }
+        }.getOrDefault(false)
+    }
+
+    fun containsKey(deviceId: String, publicKey: String): Boolean = publicKeys[deviceId] == publicKey
 
     companion object {
         fun verify(json: JSONObject, capabilities: RelayCapabilities, profileId: String, deviceId: String,
-            now: Long = System.currentTimeMillis()): VerifiedRelayDirectory {
+            now: Long = System.currentTimeMillis()): VerifiedRelayDirectory =
+            verifyDocument(json, capabilities, deviceId, profileId, "directory", 120_000L, now)
+
+        fun verifyOffline(json: JSONObject, capabilities: RelayCapabilities, deviceId: String,
+            profileId: String? = null, now: Long = System.currentTimeMillis()): VerifiedRelayDirectory =
+            verifyDocument(json, capabilities, deviceId, profileId, "offline_directory", 86_400_000L, now)
+
+        private fun verifyDocument(json: JSONObject, capabilities: RelayCapabilities, deviceId: String,
+            expectedProfileId: String?, documentType: String, maxLifetime: Long, now: Long): VerifiedRelayDirectory {
             val body = verifyRelayDocument(json, capabilities)
-            require(body.getString("document_type") == "directory" && body.getString("profile_id") == profileId &&
-                body.getString("device_id") == deviceId)
+            val profileId = body.getString("profile_id")
+            require(UUID_PATTERN.matches(profileId) && (expectedProfileId == null || profileId == expectedProfileId))
+            require(body.getString("document_type") == documentType && body.getString("device_id") == deviceId)
             val issuedAt = Instant.parse(body.getString("issued_at")).toEpochMilli()
             val expiresAt = Instant.parse(body.getString("expires_at")).toEpochMilli()
-            require(issuedAt <= now + 30_000 && expiresAt > now && expiresAt <= issuedAt + 120_000)
+            require(issuedAt <= now + 30_000 && expiresAt > now && expiresAt > issuedAt &&
+                expiresAt - issuedAt <= maxLifetime)
             val devices = body.getJSONArray("devices")
             require(devices.length() in 1..128)
             val publicKeys = mutableMapOf<String, String>()
@@ -70,7 +110,7 @@ internal class VerifiedRelayDirectory private constructor(
                 publicKeys[id] = key
             }
             require(publicKeys.containsKey(deviceId))
-            return VerifiedRelayDirectory(profileId, deviceId, expiresAt, publicKeys)
+            return VerifiedRelayDirectory(profileId, deviceId, issuedAt, expiresAt, publicKeys)
         }
     }
 }
@@ -101,6 +141,18 @@ internal class VerifiedRelayReceipt private constructor(
             return VerifiedRelayReceipt(profileId, origin, messageId, digest, expiresAt, json.toString().toByteArray(Charsets.UTF_8))
         }
     }
+}
+
+internal fun acknowledgeDogRelayReceipt(store: MessageStore, receipt: VerifiedRelayReceipt, localDeviceId: String): Boolean {
+    if (receipt.originDeviceId != localDeviceId) return false
+    val message = store.findPending(receipt.messageId)?.message ?: return false
+    if (message.type != RelayEnvelope.OUTGOING_MESSAGE_TYPE &&
+        !isLegacyOwnRelayEnvelope(message, localDeviceId)
+    ) return false
+    val envelope = RelayEnvelope.parse(message.payload) ?: return false
+    if (envelope.originDeviceId != localDeviceId || !receipt.matches(envelope)) return false
+    store.acknowledge(message.messageId)
+    return true
 }
 
 internal fun relayEnvelopeDigest(envelope: RelayEnvelope): String {
