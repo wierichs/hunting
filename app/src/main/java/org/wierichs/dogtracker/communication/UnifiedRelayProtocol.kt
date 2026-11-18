@@ -42,6 +42,8 @@ internal class VerifiedRelayDirectory private constructor(
     private val publicKeys: Map<String, String>,
     private val deviceKinds: Map<String, String>,
     private val subjects: Map<String, String>,
+    private val broadcasters: Set<String>,
+    private val dogRegistrants: Map<String, String>,
     private val leaseCurrent: () -> Boolean = { true }
 ) {
     fun accepts(envelope: RelayEnvelope, now: Long = System.currentTimeMillis()): Boolean {
@@ -61,7 +63,8 @@ internal class VerifiedRelayDirectory private constructor(
 
     fun withOfflineLease(anchor: RelayOfflineLease, bootCount: Int, elapsed: () -> Long): VerifiedRelayDirectory {
         require(anchor.isCurrent(bootCount, elapsed(), expiresAt - issuedAt))
-        return VerifiedRelayDirectory(profileId, localDeviceId, issuedAt, expiresAt, publicKeys, deviceKinds, subjects) {
+        return VerifiedRelayDirectory(profileId, localDeviceId, issuedAt, expiresAt, publicKeys, deviceKinds, subjects,
+            broadcasters, dogRegistrants) {
             anchor.isCurrent(bootCount, elapsed(), expiresAt - issuedAt)
         }
     }
@@ -83,6 +86,15 @@ internal class VerifiedRelayDirectory private constructor(
     fun deviceKind(deviceId: String): String? = deviceKinds[deviceId]
 
     fun subjectId(deviceId: String): String? = subjects[deviceId]
+
+    fun canBroadcast(deviceId: String): Boolean = deviceId in broadcasters
+
+    fun canSignalDog(participantDevice: String, dogDevice: String, dogId: String): Boolean =
+        deviceKinds[participantDevice] == "participant" && deviceKinds[dogDevice] == "dog" &&
+            subjects[dogDevice] == dogId && dogRegistrants[dogDevice]?.let { it == subjects[participantDevice] } == true
+
+    fun participantSubjects(): Set<String> =
+        subjects.filterKeys { deviceKinds[it] == "participant" }.values.toSet()
 
     companion object {
         fun verify(json: JSONObject, capabilities: RelayCapabilities, profileId: String, deviceId: String,
@@ -108,6 +120,8 @@ internal class VerifiedRelayDirectory private constructor(
             val publicKeys = mutableMapOf<String, String>()
             val deviceKinds = mutableMapOf<String, String>()
             val subjects = mutableMapOf<String, String>()
+            val broadcasters = mutableSetOf<String>()
+            val dogRegistrants = mutableMapOf<String, String>()
             for (index in 0 until devices.length()) {
                 val device = devices.getJSONObject(index)
                 val id = device.getString("device_id")
@@ -123,9 +137,18 @@ internal class VerifiedRelayDirectory private constructor(
                     require(UUID_PATTERN.matches(subjectId))
                     subjects[id] = subjectId
                 }
+                if (kind == "participant" && id in subjects && device.opt("can_broadcast") == true) {
+                    broadcasters += id
+                }
+                if (kind == "dog" && id in subjects && !device.isNull("dog_registrant_id")) {
+                    val registrant = device.getString("dog_registrant_id")
+                    require(UUID_PATTERN.matches(registrant))
+                    dogRegistrants[id] = registrant
+                }
             }
             require(publicKeys.containsKey(deviceId))
-            return VerifiedRelayDirectory(profileId, deviceId, issuedAt, expiresAt, publicKeys, deviceKinds, subjects)
+            return VerifiedRelayDirectory(profileId, deviceId, issuedAt, expiresAt, publicKeys, deviceKinds, subjects,
+                broadcasters, dogRegistrants)
         }
     }
 }

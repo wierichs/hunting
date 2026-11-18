@@ -40,6 +40,7 @@ internal enum class PositionSharing { NEARBY_ONLY, SERVER_QUEUED }
 
 internal object RelayGateway {
     val state = MutableStateFlow(RelayGatewayStatus())
+    val broadcastSession = MutableStateFlow<RelayBroadcastSession?>(null)
     @Volatile internal var engine: RelayGatewayEngine? = null
     @Volatile private var service: RelayGatewayService? = null
     internal val shutdown = RelayGatewayShutdown()
@@ -58,8 +59,8 @@ internal object RelayGateway {
         } catch (failure: Exception) {
             state.value = RelayGatewayStatus(profileId = profileId, status = "Relaisdienst konnte nicht gestartet werden.")
             throw failure
+            }
         }
-    }
 
     @Synchronized
     fun stop(context: Context) {
@@ -76,7 +77,10 @@ internal object RelayGateway {
     @Synchronized
     internal fun serviceDestroyed(instance: RelayGatewayService, current: RelayGatewayEngine?, status: RelayGatewayStatus) {
         if (service !== instance) return
-        if (engine === current) engine = null
+        if (engine === current) {
+            engine = null
+            broadcastSession.value = null
+        }
         service = null
         state.value = status
     }
@@ -103,7 +107,22 @@ internal object RelayGateway {
     suspend fun cancelOwn(profileId: String) {
         engine?.takeIf { it.profileId == profileId }?.cancelOwn()
     }
+
+    suspend fun sendBroadcast(profileId: String, template: BroadcastTemplate) {
+        val current = checkNotNull(engine?.takeIf { it.profileId == profileId && state.value.active && !state.value.starting }) {
+            "Nearby ist für dieses Revier nicht bereit."
+        }
+        current.sendBroadcast(template)
+    }
+
+    suspend fun signalDog(profileId: String, dogId: String, signal: DogSignal): DogSignalResult {
+        val current = engine?.takeIf { it.profileId == profileId && state.value.active && !state.value.starting }
+            ?: return DogSignalResult.UNAVAILABLE
+        return current.signalDog(dogId, signal)
+    }
 }
+
+internal data class RelayBroadcastSession(val profileId: String, val userId: String, val mailbox: NearbyBroadcasts)
 
 internal class RelayGatewayEngine(
     context: Context,
@@ -116,6 +135,7 @@ internal class RelayGatewayEngine(
     val profileId: String get() = profile.id
     private val appContext = context.applicationContext
     private val positionUserId = repository.userId
+    private val broadcastMailbox = NearbyBroadcasts()
     private val mutex = Mutex()
     private var capabilities: RelayCapabilities? = null
     @Volatile private var directory: VerifiedRelayDirectory? = null
@@ -131,7 +151,7 @@ internal class RelayGatewayEngine(
     suspend fun initialize() = withContext(Dispatchers.IO) {
         mutex.withLock {
             val offline = try {
-                if (!hasValidatedRelayInternet(appContext)) throw IOException("Keine Internetverbindung.")
+                if (!hasRelayInternetRoute(appContext)) throw IOException("Keine Internetverbindung.")
                 refreshAuthorization()
                 false
             } catch (failure: IOException) {
@@ -152,13 +172,26 @@ internal class RelayGatewayEngine(
                 pendingPackets = { outgoing }, onIncomingDocument = onDocument, onIncomingPosition = onPosition,
                 canPublishPosition = {
                     readHuntingPermissions(appContext).ready && !TrackerPreferences.isTracking(appContext)
-                })
+                }, broadcasts = broadcastMailbox)
             refreshOutgoing()
             transport!!.start()
+            RelayGateway.broadcastSession.value = RelayBroadcastSession(profileId, positionUserId, broadcastMailbox)
             RelayGateway.state.value = RelayGatewayStatus(active = true, profileId = profileId,
                 status = if (offline) "Offline-Relaisfreigabe aktiv; Servererneuerung ausstehend."
                     else "Relaisfreigabe aktiv; bereit fuer signierte Reviermeldungen.", pending = pendingCount())
         }
+    }
+
+    suspend fun sendBroadcast(template: BroadcastTemplate) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            check(!closed) { "Nearby ist für dieses Revier nicht bereit." }
+            checkNotNull(transport).sendBroadcast(template)
+        }
+    }
+
+    suspend fun signalDog(dogId: String, signal: DogSignal): DogSignalResult = withContext(Dispatchers.IO) {
+        val nearby = mutex.withLock { transport?.takeUnless { closed } }
+        nearby?.signalDog(dogId, signal) ?: DogSignalResult.UNAVAILABLE
     }
 
     private suspend fun refreshAuthorization() {
@@ -195,15 +228,17 @@ internal class RelayGatewayEngine(
             val now = System.currentTimeMillis()
             require(now - location.time in -30_000L..30_000L)
             val id = deviceId!!
-            val online = hasValidatedRelayInternet(appContext)
+            val hasRoute = hasRelayInternetRoute(appContext)
             val hasBinding = current.subjectId(id) == positionUserId && positionUserId.isNotBlank()
-            check(online || hasBinding) { "Offline-Standortfreigabe muss einmal online erneuert werden." }
+            check(hasRoute || hasBinding) { "Offline-Standortfreigabe muss einmal online erneuert werden." }
             val sequence = nextRelaySequence(appContext, id)
             val nearby = if (hasBinding) current.localPosition(location, sequence) else null
-            if (!online) {
+            if (!hasRoute) {
                 nearby?.let { transport?.publishPosition(it) }
                 return@withLock PositionSharing.NEARBY_ONLY
             }
+            val publishedLocally = nearby != null && !hasRelayInternetRoute(appContext, requireValidation = true)
+            if (publishedLocally) transport?.publishPosition(nearby!!)
             try {
                 if (sharingStopPending) stopSharingOnServer()
                 if (sharingEpoch == null) {
@@ -212,11 +247,11 @@ internal class RelayGatewayEngine(
                 }
             } catch (failure: IOException) {
                 if (nearby == null || failure is SSLException) throw failure
-                transport?.publishPosition(nearby)
+                if (!publishedLocally) transport?.publishPosition(nearby)
                 update("Serverfreigabe nicht erreichbar; Position nur fuer Nearby bereit.")
                 return@withLock PositionSharing.NEARBY_ONLY
             }
-            nearby?.let { transport?.publishPosition(it) }
+            if (!publishedLocally) nearby?.let { transport?.publishPosition(it) }
             val payload = participantLocationPayload(profileId, sequence, location.latitude, location.longitude, location.accuracy, location.time, sharingEpoch!!)
             val envelope = RelayEnvelopeEncoder.create(id, payload, capabilities!!.encryption, RelaySigningIdentity::sign,
                 nowEpochMillis = location.time, lifetimeMillis = 90_000)
@@ -286,7 +321,7 @@ internal class RelayGatewayEngine(
         mutex.withLock {
             if (closed) return@withLock
             store!!.removeExpired()
-            if (!hasValidatedRelayInternet(appContext)) {
+            if (!hasRelayInternetRoute(appContext)) {
                 if (directory?.current() != true) {
                     outgoing = emptyList()
                     transport?.stop()
@@ -356,7 +391,7 @@ internal class RelayGatewayEngine(
             sharingStopPending = true
             purgeOwn()
             refreshOutgoing()
-            if (!hasValidatedRelayInternet(appContext)) {
+            if (!hasRelayInternetRoute(appContext)) {
                 update("Standortfreigabe lokal beendet; Serverwiderruf wartet auf Verbindung.")
                 return@withLock
             }

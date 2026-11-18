@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.SystemClock
 import android.provider.Settings
 import java.time.DateTimeException
@@ -17,14 +18,23 @@ import org.json.JSONException
 import org.json.JSONObject
 import org.wierichs.dogtracker.DeviceTokenStorage
 
-private fun NetworkCapabilities?.isValidatedInternet(): Boolean =
+private fun NetworkCapabilities?.canAttemptInternet(): Boolean =
     this != null && hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-        hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED) &&
+        !hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)
 
-internal fun hasValidatedRelayInternet(context: Context): Boolean {
+internal fun hasRelayInternetRoute(context: Context, requireValidation: Boolean = false): Boolean {
     val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
-    return manager.activeNetwork?.let { manager.getNetworkCapabilities(it).isValidatedInternet() } == true
+    val capabilities = manager.activeNetwork?.let(manager::getNetworkCapabilities) ?: return false
+    return capabilities.canAttemptInternet() &&
+        (!requireValidation || capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
 }
+
+internal fun relayInternetRequest(): NetworkRequest = NetworkRequest.Builder()
+    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
+    .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+    .build()
 
 internal fun internetRestorations(context: Context): Flow<Network> = callbackFlow<Network?> {
     val manager = checkNotNull(context.getSystemService(ConnectivityManager::class.java))
@@ -34,7 +44,7 @@ internal fun internetRestorations(context: Context): Flow<Network> = callbackFlo
         override fun onCapabilitiesChanged(current: Network, capabilities: NetworkCapabilities) {
             synchronized(lock) {
                 network = current
-                trySend(current.takeIf { capabilities.isValidatedInternet() })
+                trySend(current.takeIf { capabilities.canAttemptInternet() })
             }
         }
 
@@ -50,7 +60,7 @@ internal fun internetRestorations(context: Context): Flow<Network> = callbackFlo
     synchronized(lock) {
         manager.registerDefaultNetworkCallback(callback)
         network = manager.activeNetwork
-        trySend(network?.takeIf { manager.getNetworkCapabilities(it).isValidatedInternet() })
+        trySend(network?.takeIf { manager.getNetworkCapabilities(it).canAttemptInternet() })
     }
     awaitClose { manager.unregisterNetworkCallback(callback) }
 }.onInternetRestored()

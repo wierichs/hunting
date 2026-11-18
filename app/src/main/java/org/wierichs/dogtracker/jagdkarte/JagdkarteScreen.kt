@@ -5,8 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
-import android.graphics.Point
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Picture
+import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.PictureDrawable
 import android.net.Uri
@@ -42,6 +45,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -54,6 +58,8 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -74,6 +80,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.key
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -99,6 +106,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.repeatOnLifecycle
 import com.caverock.androidsvg.SVG
 import java.io.File
+import java.io.IOException
+import javax.net.ssl.SSLException
 import java.io.ByteArrayOutputStream
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
@@ -131,9 +140,14 @@ import org.wierichs.dogtracker.communication.OfflinePositionMessage
 import org.wierichs.dogtracker.communication.OfflinePositionStore
 import org.wierichs.dogtracker.communication.PositionSharing
 import org.wierichs.dogtracker.communication.RelayGateway
+import org.wierichs.dogtracker.communication.BroadcastTemplate
+import org.wierichs.dogtracker.communication.DogSignal
+import org.wierichs.dogtracker.communication.DogSignalResult
+import org.wierichs.dogtracker.communication.NearbyBroadcast
 import org.wierichs.dogtracker.communication.RelayGatewayStatus
 import org.wierichs.dogtracker.communication.UnreadableLocationPayloadException
 import org.wierichs.dogtracker.communication.internetRestorations
+import org.wierichs.dogtracker.communication.hasRelayInternetRoute
 import org.wierichs.dogtracker.HuntingMapCamera
 import org.wierichs.dogtracker.TrackerPreferences
 import org.wierichs.dogtracker.HuntingPermissionState
@@ -628,6 +642,7 @@ internal fun JagdkarteScreen(
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             var consecutiveFailures = 0
             while (true) {
+                var retryTransport = false
                 try {
                     val freshSnapshot = repository.snapshot(profileId)
                     snapshot = freshSnapshot
@@ -640,6 +655,7 @@ internal fun JagdkarteScreen(
                     throw cancelled
                 } catch (error: Exception) {
                     consecutiveFailures++
+                    retryTransport = error is IOException && error !is SSLException && hasRelayInternetRoute(context)
                     val accessDenied = error is JagdkarteApiException && error.status in setOf(401, 403, 404)
                     val cached = if (accessDenied) null else withContext(Dispatchers.IO) {
                         offlineCache.load(repository.userId, profileId)
@@ -655,7 +671,7 @@ internal fun JagdkarteScreen(
                     }
                 }
                 val retryDelay = if (consecutiveFailures > 0) {
-                    minOf(300_000L, 30_000L * (1L shl (consecutiveFailures - 1).coerceAtMost(4)))
+                    snapshotRetryDelayMillis(consecutiveFailures, retryTransport)
                 } else if (snapshot?.profile?.huntingMode == true) 30_000L else 300_000L
                 delay(retryDelay)
             }
@@ -751,6 +767,20 @@ internal fun JagdkarteScreen(
                 it.kind == MapPointKind.PARTICIPANT || it.kind == MapPointKind.DOG
             })
         }
+        val broadcastProfile = snapshot?.takeIf {
+            signedIn && huntingAccess.ready && it.profile.id == selectedId && it.profile.huntingMode
+        }
+        val broadcastSession by RelayGateway.broadcastSession.collectAsState()
+        val currentBroadcastSession = broadcastSession?.takeIf {
+            relayForProfile && it.profileId == broadcastProfile?.profile?.id && it.userId == repository.userId
+        }
+        val broadcastMessages = currentBroadcastSession?.let { it.mailbox.messages.collectAsState().value }.orEmpty()
+        var broadcastsOpen by remember(broadcastProfile?.profile?.id, repository.userId) { mutableStateOf(false) }
+        var lastSeenBroadcast by remember(currentBroadcastSession) { mutableStateOf<String?>(null) }
+        val latestIncoming = broadcastMessages.firstOrNull { !it.outgoing }?.id
+        var dogSignalTarget by remember(broadcastProfile?.profile?.id, repository.userId) {
+            mutableStateOf<HuntingMapPoint?>(null)
+        }
         NativeHuntingMap(visibleSnapshot, now, Modifier.weight(1f).fillMaxWidth(), onChooseLocation = { coordinates ->
             val current = snapshot
             if (current != null && !current.isStale &&
@@ -783,7 +813,108 @@ internal fun JagdkarteScreen(
             previewBoundary = publicBoundaryPreview?.geometry,
             previewBoundaryLabel = publicBoundaryPreview?.name.orEmpty(),
             previewBoundaryKey = publicBoundaryPreview?.let { "${it.source.id}:${it.id}" }.orEmpty(),
-            onClearBoundaryPreview = { publicBoundaryPreview = null })
+            onClearBoundaryPreview = { publicBoundaryPreview = null },
+            onOpenBroadcasts = if (broadcastProfile != null) {
+                { broadcastsOpen = true }
+            } else null,
+            hasUnreadBroadcast = latestIncoming != null && latestIncoming != lastSeenBroadcast,
+            onOwnDogSelected = { dogSignalTarget = it })
+
+        val ownDog = dogSignalTarget
+        val dogProfileId = broadcastProfile?.profile?.id
+        if (ownDog != null && dogProfileId != null && ownDog.createdBy == repository.userId) {
+            DogSignalDialog(ownDog, onDismiss = { dogSignalTarget = null }) { signal ->
+                RelayGateway.signalDog(dogProfileId, checkNotNull(ownDog.subjectId), signal)
+            }
+        }
+
+        @Composable
+        fun NearbyBroadcastControls(
+        messages: List<NearbyBroadcast>,
+        canSend: Boolean,
+        labels: Map<String, String>,
+        relayReady: Boolean,
+        onDismiss: () -> Unit,
+        send: suspend (BroadcastTemplate) -> Unit
+    ) {
+        val scope = rememberCoroutineScope()
+        var sending by remember { mutableStateOf(false) }
+        var error by remember { mutableStateOf("") }
+
+        fun label(userId: String): String = labels[userId] ?: "Teilnehmer ${userId.take(8)}"
+
+        AlertDialog(
+            onDismissRequest = { if (!sending) onDismiss() },
+            title = { Text("Nearby-Rundnachrichten") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Nur an gerade verbundene Geräte. Keine Nachlieferung. Empfang ist keine Lesebestätigung.")
+                    Text("Nicht als einziges Sicherheitssignal verwenden.")
+                    if (!relayReady) Text("Nearby ist für dieses Revier noch nicht bereit.")
+                    if (canSend) {
+                        BroadcastTemplate.entries.forEach { option ->
+                            TextButton(enabled = relayReady && !sending, onClick = {
+                                sending = true
+                                error = ""
+                                scope.launch {
+                                    try {
+                                        send(option)
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (failure: IllegalStateException) {
+                                        error = failure.message ?: "Rundnachricht konnte nicht gesendet werden."
+                                    } finally {
+                                        sending = false
+                                    }
+                                }
+                            }) { Text(option.text) }
+                        }
+                    } else if (messages.isEmpty()) {
+                        Text("Noch keine Rundnachrichten empfangen.")
+                    }
+                    if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
+                    messages.forEach { message ->
+                        val time = Instant.ofEpochMilli(message.sentAt).atZone(java.time.ZoneId.systemDefault())
+                            .toLocalTime().withNano(0)
+                        val source = when {
+                            !message.outgoing -> label(message.sender)
+                            message.connected.isEmpty() -> "Nicht gesendet"
+                            else -> "Sendeversuch"
+                        }
+                        Text("$time · $source: ${message.template.text}",
+                            style = MaterialTheme.typography.titleSmall)
+                        if (message.outgoing) {
+                            if (message.connected.isEmpty()) Text("Beim Senden war kein Teilnehmergerät verbunden.")
+                            message.recipients.sortedBy(::label).forEach { userId ->
+                                val status = when (userId) {
+                                    in message.confirmed -> "Angekommen"
+                                    in message.connected -> "Nicht bestätigt"
+                                    else -> "Nicht verbunden"
+                                }
+                                Text("${label(userId)}: $status")
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !sending, onClick = onDismiss) { Text("Schließen") }
+            }
+        )
+    }
+
+        if (broadcastsOpen && broadcastProfile != null) {
+            LaunchedEffect(latestIncoming) { lastSeenBroadcast = latestIncoming }
+            key(currentBroadcastSession) {
+                NearbyBroadcastControls(broadcastMessages, canSend = broadcastProfile.canEdit,
+                    labels = broadcastProfile.positionLabels.filterKeys { it.first == MapPointKind.PARTICIPANT }
+                        .mapKeys { it.key.second }.mapValues { it.value.name },
+                    relayReady = currentBroadcastSession != null,
+                    onDismiss = { broadcastsOpen = false },
+                    send = { RelayGateway.sendBroadcast(broadcastProfile.profile.id, it) })
+            }
+        }
     }
 
     if (managementOpen) {
@@ -1367,6 +1498,45 @@ private fun SignInDialog(repository: JagdkarteRepository, permissionSettings: @C
 }
 
 @Composable
+private fun DogSignalDialog(dog: HuntingMapPoint, onDismiss: () -> Unit,
+    send: suspend (DogSignal) -> DogSignalResult) {
+    val scope = rememberCoroutineScope()
+    var pending by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(dog.title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Eigener Hund", style = MaterialTheme.typography.labelLarge)
+                Text(dog.detail)
+                Text("Anstupsen über Nearby – nur bei direkter Verbindung.")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DogSignal.entries.forEach { signal ->
+                        TextButton(enabled = !pending, onClick = {
+                            pending = true
+                            status = "Warte auf Hundegerät …"
+                            scope.launch {
+                                try {
+                                    status = when (send(signal)) {
+                                        DogSignalResult.CONFIRMED -> "Vom Hundegerät bestätigt."
+                                        DogSignalResult.UNAVAILABLE -> "Hundegerät nicht erreichbar. Revierberechtigung und Nearby prüfen."
+                                        DogSignalResult.UNCONFIRMED -> "Keine Bestätigung vom Hundegerät."
+                                        DogSignalResult.SUPPRESSED -> "Hundegerät hat das Signal nicht ausgelöst."
+                                    }
+                                } finally { pending = false }
+                            }
+                        }) { Text(signal.label) }
+                    }
+                }
+                if (status.isNotEmpty()) Text(status)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Schließen") } }
+    )
+}
+
+@Composable
 internal fun NativeHuntingMap(
     snapshot: HuntingSnapshot?,
     now: Instant,
@@ -1389,7 +1559,10 @@ internal fun NativeHuntingMap(
     previewBoundary: JSONObject? = null,
     previewBoundaryLabel: String = "",
     previewBoundaryKey: String = "",
-    onClearBoundaryPreview: () -> Unit = {}
+    onClearBoundaryPreview: () -> Unit = {},
+    onOpenBroadcasts: (() -> Unit)? = null,
+    hasUnreadBroadcast: Boolean = false,
+    onOwnDogSelected: ((HuntingMapPoint) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -1475,6 +1648,7 @@ internal fun NativeHuntingMap(
     var boundaryVisible by remember(snapshot?.profile?.id) { mutableStateOf(true) }
     val chooseLocation by rememberUpdatedState(onChooseLocation)
     val selectMarker by rememberUpdatedState(onMarkerSelected)
+    val selectDog by rememberUpdatedState(onOwnDogSelected)
     val boundaryEditing by rememberUpdatedState(boundaryEdit)
     LaunchedEffect(map, mapStyle, availableOffline.map { it.id }, aerialAvailable) {
         tileSourceError = ""
@@ -1567,6 +1741,8 @@ internal fun NativeHuntingMap(
                     bounds.addAll(rings.first())
                 }
                 points.forEach { point ->
+                    val ownDog = point.kind == MapPointKind.DOG && currentUserId.isNotBlank() &&
+                        point.createdBy == currentUserId
                     val movement = point.subjectId?.takeUnless { point.staleAt(now) }?.let(movementDirections::get)
                         ?.takeIf { isDirectionFresh(it, now) }
                     val directionLabel = movement?.let { compassDirectionLabel(it.bearingDegrees) }
@@ -1575,46 +1751,31 @@ internal fun NativeHuntingMap(
                         position = GeoPoint(point.latitude, point.longitude)
                         title = point.title + (if (point.staleAt(now)) " (veraltet)" else "") +
                             (directionLabel?.let { " · Bewegung $it" } ?: "")
-                        snippet = "${point.detail}" + (movement?.let {
+                        snippet = (if (ownDog) "Eigener Hund\n" else "") + point.detail + (movement?.let {
                             "\nBewegungsrichtung: ${compassDirectionLabel(it.bearingDegrees)} (${it.bearingDegrees.toInt()}°)"
                         } ?: "") + "\nKoordinaten: ${markerCoordinateLabel(point.latitude, point.longitude)}"
                         if (point.kind == MapPointKind.FACILITY) {
                             setAnchor(0.5f, 46f / 48f)
                             icon = huntingMarkerIcon(context, point.markerTypeId, markerIconSize)
                         } else {
-                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                             val iconAsset = if (point.kind == MapPointKind.DOG) {
-                                dogLocationIconAsset(point.staleAt(now))
+                                dogLocationIconAsset(point.staleAt(now), ownDog)
                             } else {
                                 participantMarkerIconAsset(point.participantRole)
                             }
-                            icon = locationIcon(context, iconAsset)
-                            if (point.kind == MapPointKind.PARTICIPANT && point.staleAt(now)) alpha = 0.5f
-                        }
-                        if (movement != null && point.kind != MapPointKind.FACILITY) {
-                            val origin = GeoPoint(point.latitude, point.longitude)
-                            val originPixels = view.projection.toPixels(origin, Point())
-                            val length = (28 * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
-                            val radians = Math.toRadians(movement.bearingDegrees)
-                            val destinationPoint = view.projection.fromPixels(
-                                originPixels.x + (kotlin.math.sin(radians) * length).toInt(),
-                                originPixels.y - (kotlin.math.cos(radians) * length).toInt())
-                            val destination = GeoPoint(destinationPoint.latitude, destinationPoint.longitude)
-                            view.overlays.add(Polyline(view).apply {
-                                setPoints(listOf(origin, destination))
-                                outlinePaint.color = android.graphics.Color.DKGRAY
-                                outlinePaint.strokeWidth = (2 * context.resources.displayMetrics.density).coerceAtLeast(1f)
-                            })
-                            view.overlays.add(Marker(view).apply {
-                                position = destination
+                            if (movement == null) {
                                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                                icon = locationIcon(context, "movement-direction.svg", 20)
-                                setRotation(movement.bearingDegrees.toFloat())
-                                title = "Bewegungsrichtung: ${compassDirectionLabel(movement.bearingDegrees)}"
-                                snippet = "Kurs ueber Grund; aus zwei frischen GPS-Positionen abgeleitet."
-                            })
+                                icon = locationIcon(context, iconAsset)
+                            } else {
+                                val directedIcon = directedLocationIcon(context, iconAsset, movement.bearingDegrees)
+                                setAnchor(directedIcon.anchorX, directedIcon.anchorY)
+                                icon = directedIcon.drawable
+                            }
+                            if ((point.kind == MapPointKind.PARTICIPANT || ownDog) && point.staleAt(now)) alpha = 0.5f
                         }
-                        if (boundaryEdit == null && point.markerId != null && snapshot?.let {
+                        if (boundaryEdit == null && ownDog && point.subjectId != null && selectDog != null) {
+                            setOnMarkerClickListener { _, _ -> selectDog?.invoke(point); true }
+                        } else if (boundaryEdit == null && point.markerId != null && snapshot?.let {
                                 canDeleteHuntingMarker(it.canEdit, currentUserId, point)
                             } == true) {
                             point.markerId?.let { id -> setOnMarkerClickListener { _, _ -> selectMarker(id); true } }
@@ -1742,8 +1903,12 @@ internal fun NativeHuntingMap(
                                 LocationLegendEntry(context, "location-editor.svg", "Bearbeiter")
                                 LocationLegendEntry(context, "location-owner.svg", "Chef")
                             }
-                            if (visiblePoints.any { it.kind == MapPointKind.DOG }) {
-                                LocationLegendEntry(context, "location-dog.svg", "Hund")
+                            if (visiblePoints.any { it.kind == MapPointKind.DOG && it.createdBy != currentUserId }) {
+                                LocationLegendEntry(context, "location-dog.svg", "Anderer Hund")
+                            }
+                            if (currentUserId.isNotBlank() &&
+                                visiblePoints.any { it.kind == MapPointKind.DOG && it.createdBy == currentUserId }) {
+                                LocationLegendEntry(context, "location-dog-own.svg", "Eigener Hund")
                             }
                             if (visiblePoints.any { it.staleAt(now) }) {
                                 Text("Blass oder grau: letzte bekannte Position", style = MaterialTheme.typography.labelSmall)
@@ -1816,7 +1981,9 @@ internal fun NativeHuntingMap(
                     if (boundaryEdit.drawingPoints != null) "Grenzpunkt an Kartenmitte hinzufuegen" else "Grenzpunkt zur Kartenmitte verschieben")
             }
         }
-        if (snapshot != null && !snapshot.isStale && boundaryEdit == null) {
+        val canPlaceMarker = snapshot != null && !snapshot.isStale
+        val openBroadcasts = onOpenBroadcasts?.takeIf { snapshot?.profile?.huntingMode == true }
+        if (boundaryEdit == null && (canPlaceMarker || openBroadcasts != null)) {
             if (choosingPosition) {
                 Icon(Icons.Default.LocationOn, "Zielposition", Modifier.align(Alignment.Center).offset(y = (-20).dp).size(40.dp),
                     tint = MaterialTheme.colorScheme.primary)
@@ -1824,16 +1991,32 @@ internal fun NativeHuntingMap(
                     Icon(Icons.Default.Close, "Positionswahl abbrechen")
                 }
             }
-            FloatingActionButton(onClick = {
-                if (choosingPosition) {
-                    val center = map.mapCenter
-                    if (chooseLocation(MarkerCoordinates(center.latitude, center.longitude))) choosingPosition = false
-                } else {
-                    choosingPosition = true
+            Column(
+                Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (openBroadcasts != null) {
+                    FloatingActionButton(onClick = openBroadcasts) {
+                        BadgedBox(badge = { if (hasUnreadBroadcast) Badge() }) {
+                            Icon(Icons.Default.Mail,
+                                if (hasUnreadBroadcast) "Rundnachrichten – neue Nachricht" else "Rundnachrichten")
+                        }
+                    }
                 }
-            }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) {
-                Icon(if (choosingPosition) Icons.Default.Check else Icons.Default.Add,
-                    if (choosingPosition) "Hier setzen" else "Markierung setzen")
+                if (canPlaceMarker) {
+                    FloatingActionButton(onClick = {
+                        if (choosingPosition) {
+                            val center = map.mapCenter
+                            if (chooseLocation(MarkerCoordinates(center.latitude, center.longitude))) choosingPosition = false
+                        } else {
+                            choosingPosition = true
+                        }
+                    }) {
+                        Icon(if (choosingPosition) Icons.Default.Check else Icons.Default.Add,
+                            if (choosingPosition) "Hier setzen" else "Markierung setzen")
+                    }
+                }
             }
         }
         Column(Modifier.align(Alignment.BottomStart).padding(8.dp).widthIn(max = 200.dp),
@@ -1903,11 +2086,56 @@ private fun huntingMarkerIcon(
     return PictureDrawable(picture)
 }
 
+internal fun snapshotRetryDelayMillis(failures: Int, transportWithRoute: Boolean): Long {
+    val attempt = (failures - 1).coerceIn(0, 4)
+    if (transportWithRoute) {
+        return when (attempt) {
+            0 -> 2_000L
+            1 -> 5_000L
+            2 -> 10_000L
+            else -> 30_000L
+        }
+    }
+    return minOf(300_000L, 30_000L * (1L shl attempt))
+}
+
 private fun locationIcon(context: Context, asset: String, sizeDp: Int = 36): PictureDrawable {
     val density = context.resources.displayMetrics.density
     val size = (sizeDp * density).toInt().coerceAtLeast(1)
     val picture = markerSvgPicture(context, asset, size, size)
     return PictureDrawable(picture)
+}
+
+internal data class DirectedLocationIcon(val drawable: PictureDrawable, val anchorX: Float, val anchorY: Float)
+
+internal fun directedLocationIcon(context: Context, asset: String, bearingDegrees: Double): DirectedLocationIcon {
+    val marker = locationIcon(context, asset).picture
+    val size = marker.width.toFloat()
+    val half = size / 2f
+    val arrow = Path().apply {
+        moveTo(0f, -0.49f * size)
+        lineTo(1.35f * size, 0f)
+        lineTo(0f, 0.49f * size)
+        close()
+        transform(Matrix().apply { setRotate(bearingDegrees.toFloat() - 90f) })
+    }
+    val bounds = RectF()
+    arrow.computeBounds(bounds, true)
+    bounds.union(-half, -half, half, half)
+    val left = kotlin.math.floor(bounds.left).toInt() - 1
+    val top = kotlin.math.floor(bounds.top).toInt() - 1
+    val width = kotlin.math.ceil(bounds.right).toInt() + 1 - left
+    val height = kotlin.math.ceil(bounds.bottom).toInt() + 1 - top
+    val picture = Picture()
+    with(picture.beginRecording(width, height)) {
+        translate(-left.toFloat(), -top.toFloat())
+        drawPath(arrow, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(0, 166, 223) })
+        translate(-half, -half)
+        drawPicture(marker)
+    }
+    picture.endRecording()
+    // The asymmetric picture still anchors at the center of the original marker.
+    return DirectedLocationIcon(PictureDrawable(picture), -left.toFloat() / width, -top.toFloat() / height)
 }
 
 internal fun geometryPolygons(geometry: JSONObject?): List<List<List<GeoPoint>>> {

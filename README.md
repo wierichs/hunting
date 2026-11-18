@@ -15,12 +15,15 @@ oder Zustellung.
 - [Hilfe](docs/help/hilfe.md): Bedienung aus Nutzersicht; dieselbe Datei wird
   offline im Hilfe-Dialog der App angezeigt.
 - [Portierungsstatus](PORTIERUNGSSTATUS.md): Umsetzungsstand, bekannte
-  Einschränkungen und offene Abnahmen gegenüber der PWA.
+  Einschränkungen und Entwicklungsoptionen gegenüber der PWA.
+- [Testaufgaben](docs/testing/Testaufgaben.md): separat erfasste offene
+  Prüfungen für eine spätere Abnahme.
 - [Kommunikationskonzept](CommunicationConcept.md): direkte Übertragung,
-  Relay-Architektur, Sicherheitsgrenzen und offene Prüfungen.
-- [Entwurf Offline-Positionsanzeige](docs/design/offline-positions/CompleteRoadmap.md):
-  Arbeitsentwurf für lokale Positionen sowie spätere Broadcasts und Hunde-Alerts;
-  noch keine freigegebene technische Spezifikation.
+  Relay-Architektur, Sicherheitsgrenzen und bestätigte Wiederverbindung.
+- [Offline-Positionsnachrichten](docs/design/offline-positions/OfflinePositionMessageFormat.md):
+  implementierter Protokollstand und bestätigte Feldtests.
+- [Rundnachrichten und Hunde-Alerts](docs/design/offline-positions/BroadcastAlertDesign.md):
+  Arbeitsentwurf für spätere Erweiterungen.
 - [Relay-Serverstufe](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md):
   Serververtrag, Bereitstellung und Betrieb im Web-Repository.
 
@@ -38,7 +41,8 @@ Die Git-Historie enthält frühere Entwicklungs- und Fehlerbehebungsstände.
 - OpenStreetMap, NRW-Luftbilder und importierte Mapsforge-Offlinekarten.
   Einzelne öffentliche Grenzen können separat offline gespeichert werden.
   Ein verschlüsselter, höchstens sieben Tage alter Revier-Snapshot ermöglicht
-  eine als veraltet gekennzeichnete Leseansicht ohne Livepositionen.
+  eine als veraltet gekennzeichnete Leseansicht. Nearby-Positionen werden
+  getrennt vom Snapshot gespeichert und angezeigt.
 - Jagdmodus mit Teilnehmer- und Hundepositionen sowie gerätebezogener
   Berechtigung und Zustimmung zur Standortfreigabe und zum Relaisbetrieb.
 - DogTracker mit QR- oder manueller Kopplung, Vordergrunddienst,
@@ -122,16 +126,18 @@ vereinigte Abdeckung das gesamte Revier umfasst; das Dateirechteck allein
 genügt nicht. Der Offline-Modus wechselt nicht still auf Onlinekarten. Die
 Luftbildquelle ist Geobasis NRW und keine weltweite Abdeckung.
 
-Drei getrennte lokale Bestände erfüllen unterschiedliche Zwecke:
+Die lokalen Bestände erfüllen unterschiedliche Zwecke:
 
 | Bestand | Inhalt und Grenzen |
 | --- | --- |
 | Offlinekarten | Kartenpakete und Abdeckungen ohne private Revierdaten; kein automatischer Karten-Download. |
 | Öffentliche Offline-Grenzen | Ausdrücklich gespeicherte Suchtreffer; höchstens 4 MiB je Grenze, 64 MiB und 100 Einträge insgesamt. |
 | Revier-Snapshot | Konto- und revierbezogen, verschlüsselt, höchstens sieben Tage, 4 MiB je Revier, 32 MiB und 20 Reviere insgesamt. Nur lesbar und als veraltet markiert; keine Teilnehmer- oder Hund-Livepositionen. |
+| Nearby-Positionen | Verschlüsselter letzter Stand je Konto, Revier und Absendergerät; ab 120 Sekunden als veraltet sichtbar, bis das Jagdmodusende bekannt wird. |
 
-Diese Bestände liegen im privaten, vom Android-Backup ausgeschlossenen
-`noBackupFilesDir`; sie synchronisieren nicht mit Konto oder PWA. Die
+Die ersten drei Bestände liegen im `noBackupFilesDir`. Die separate
+Positionsdatenbank ist von Backup und Gerätetransfer ausgeschlossen.
+Die lokalen Bestände werden nicht mit Konto oder PWA synchronisiert. Die
 Kartenwahl betrifft nur die Kartenbasis und deaktiviert weder Serverzugriffe
 noch Relay. Details:
 [OfflineMapCoverage.kt](app/src/main/java/org/wierichs/dogtracker/jagdkarte/OfflineMapCoverage.kt),
@@ -142,8 +148,9 @@ und [JagdkarteOfflineCache.kt](app/src/main/java/org/wierichs/dogtracker/jagdkar
 
 Standortfreigabe und Relay benötigen ausdrückliche gerätebezogene Zustimmung
 zusätzlich zu Android-Berechtigungen. Teilnehmerpositionen werden nur bei
-aktiver Karte erfasst und spätestens 90 Sekunden nach der Messung verworfen;
-das Relay kann sichtbar im Hintergrund weiterlaufen. Der DogTracker startet
+aktiver Karte erfasst. Ihre Server-Relay-Umschläge gelten höchstens
+90 Sekunden ab Messung; das Relay kann sichtbar im Hintergrund weiterlaufen.
+Der DogTracker startet
 ausdrücklich und hält für den direkten Upload höchstens den neuesten GPS-Fix
 für 24 Stunden vor. Seine lokal verschlüsselten Nutzdaten und Relay-Umschläge
 haben unterschiedliche Ablauf- und Bestätigungsregeln.
@@ -162,15 +169,15 @@ Offline-Verzeichnisse gelten höchstens 24 Stunden; ihre Laufzeit wird zusätzli
 ist vor erneutem Relaisbetrieb eine Online-Erneuerung erforderlich. Ein
 Gateway kann nach einem Prozessende innerhalb desselben Gerätebetriebs mit
 gespeicherter Berechtigung offline wieder anlaufen. Neue eigene
-Teilnehmerpositionen können derzeit nur bei Internetzugang erstellt und
-freigegeben werden.
-
-Die aktuelle Funkweitergabe ermöglicht noch keine lokale Positionsanzeige
-zwischen vollständig offline befindlichen Geräten: Die Umschläge sind nur
-für den Server lesbar. Das ist der nächste Entwicklungsschritt; Voraussetzungen,
-offene Entwurfsentscheidungen und Prüfungen stehen im
-[Kommunikationskonzept](CommunicationConcept.md) und im
-[Portierungsstatus](PORTIERUNGSSTATUS.md).
+Teilnehmer- und Hundepositionen können für dasselbe zuvor online eingerichtete
+Revier auch ohne Internet direkt an erreichbare Teilnehmergeräte gesendet
+werden. Dafür gibt es eigene signierte Positionsnachrichten, getrennt von
+den nur für den Server lesbaren Relay-Umschlägen. Das serverbestätigte
+Jagdende wird derzeit erst beim Online-Abruf des Revierstatus erkannt,
+nicht über Nearby. Sobald Android wieder ein geeignetes Standardnetz meldet,
+stößt die App Kartenabruf bzw. Upload automatisch an. Die 120-Sekunden-Grenze
+kennzeichnet das Alter von Nearby-Positionen und ist keine Wartezeit für die
+Wiederverbindung.
 
 ## Entwicklung und Tests
 

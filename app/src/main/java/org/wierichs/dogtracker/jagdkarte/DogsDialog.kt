@@ -88,7 +88,8 @@ internal fun DogsDialog(
     var dogStatesRevision by remember { mutableStateOf(0) }
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val showDogStates = canEdit && stagedDog == null && selectedDog == null &&
+    val showDogStates = (canEdit || dogs.any { it.createdBy == repository.userId }) &&
+        stagedDog == null && selectedDog == null &&
         pendingDogDeletion == null && deviceToken == null
     val pairedColor = if (isSystemInDarkTheme()) Color(0xFF81C784) else Color(0xFF2E7D32)
 
@@ -255,10 +256,12 @@ internal fun DogsDialog(
                 } else {
                     if (dogs.isEmpty() && !busy) Text("Keine Hunde registriert.")
                     dogs.forEach { dog ->
+                        val own = dog.createdBy == repository.userId
+                        val canManage = canEdit || own
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             val state = dogPairingStates[dog.id]
-                            if (canEdit && state != null) {
+                            if (canManage && state != null) {
                                 Icon(if (state.paired) Icons.Default.CheckCircle else Icons.Default.Close,
                                     contentDescription = "${dog.name}: ${if (state.paired) "gekoppelt" else "nicht gekoppelt"}",
                                     tint = if (state.paired) pairedColor else MaterialTheme.colorScheme.error,
@@ -266,7 +269,8 @@ internal fun DogsDialog(
                             }
                             Column(Modifier.weight(1f)) {
                                 Text(dog.name, maxLines = 1)
-                                if (canEdit) {
+                                if (own) Text("Eigener Hund", style = MaterialTheme.typography.bodySmall)
+                                if (canManage) {
                                     Text(when {
                                         state == null -> if (loadingDogStates) "Status wird geladen" else "Status unbekannt"
                                         state.paired -> "Gekoppelt"
@@ -278,7 +282,7 @@ internal fun DogsDialog(
                                     }
                                 }
                             }
-                            if (canEdit) {
+                            if (canManage) {
                                 Column(horizontalAlignment = Alignment.End) {
                                     TextButton(enabled = !busy, onClick = { selectedDog = dog; error = "" }) {
                                         Text("Koppeln")
@@ -292,10 +296,12 @@ internal fun DogsDialog(
                             }
                         }
                     }
-                    if (canEdit) {
+                    if (showDogStates) {
                         TextButton(enabled = !loadingDogStates, onClick = { dogStatesRevision++ }) {
                             Text("Kopplungsstatus aktualisieren")
                         }
+                    }
+                    if (repository.signedIn) {
                         OutlinedTextField(name, onValueChange = { name = it.take(60) }, label = { Text("Name des Hundes") },
                             enabled = !busy, singleLine = true)
                         TextButton(enabled = !busy && name.isNotBlank(), onClick = {
