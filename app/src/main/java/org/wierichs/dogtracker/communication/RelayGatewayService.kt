@@ -71,7 +71,7 @@ class RelayGatewayService : Service() {
                 check(repository.signedIn && repository.userId.isNotBlank()) { "Bitte erneut anmelden." }
                 val userId = repository.userId
                 val profile = try {
-                    if (!hasValidatedRelayInternet(applicationContext)) throw IOException("Keine Internetverbindung.")
+                    if (!hasRelayInternetRoute(applicationContext)) throw IOException("Keine Internetverbindung.")
                     repository.profiles().singleOrNull { it.id == profileId }
                         ?: throw JagdkarteApiException(403, "profile_unavailable", "Kein Zugriff auf dieses Revier.")
                 } catch (failure: IOException) {
@@ -158,6 +158,7 @@ class RelayGatewayService : Service() {
             .setContentTitle("Jagdbruder-Relais aktiv").setContentText("Verschluesselte Reviermeldungen weiterleiten")
             .setOngoing(true).setContentIntent(open).build()
         ServiceCompat.startForeground(this, 2101, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        NearbyBroadcastNotifications.createChannel(this)
     }
 
     override fun onDestroy() {

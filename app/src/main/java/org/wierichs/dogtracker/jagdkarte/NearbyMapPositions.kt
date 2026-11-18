@@ -19,7 +19,8 @@ internal fun HuntingSnapshot.withNearbyPositions(
                 label?.name ?: if (kind == MapPointKind.DOG) "Hund" else "Teilnehmer",
                 "Per Nearby empfangen\nMesszeit: $timestamp\nGenauigkeit: ${position.accuracyMeters.toInt()} m",
                 kind, timestamp = timestamp, subjectId = position.subjectId, accuracyMeters = position.accuracyMeters,
-                participantRole = label?.role ?: HuntingParticipantRole.GUEST, isNearby = true
+                participantRole = label?.role ?: HuntingParticipantRole.GUEST, isNearby = true,
+                createdBy = label?.createdBy
             )
         }
         .distinctBy { it.kind to it.subjectId }

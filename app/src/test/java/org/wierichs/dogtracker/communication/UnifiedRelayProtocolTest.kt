@@ -48,6 +48,80 @@ class UnifiedRelayProtocolTest {
         assertFalse(directory.current(now + 120_000))
     }
 
+    @Test fun broadcastPermissionRequiresExplicitSignedParticipantGrant() {
+        val dog = "b16cb2bc-6dca-40bb-8e10-fc33b4d9272e"
+        val guest = "c16cb2bc-6dca-40bb-8e10-fc33b4d9272e"
+        fun entry(id: String, kind: String) = JSONObject().put("device_id", id)
+            .put("device_kind", kind).put("public_key", publicKey).put("subject_id", id)
+        val devices = JSONArray().put(entry(device, "participant").put("can_broadcast", true))
+            .put(entry(dog, "dog").put("can_broadcast", true))
+            .put(entry(guest, "participant"))
+        val signed = document(JSONObject().put("document_type", "offline_directory").put("profile_id", profile)
+            .put("device_id", device).put("issued_at", Instant.ofEpochMilli(now).toString())
+            .put("expires_at", Instant.ofEpochMilli(now + 120_000).toString()).put("devices", devices))
+        val directory = VerifiedRelayDirectory.verifyOffline(signed, capabilities, device, profile, now)
+        assertTrue(directory.canBroadcast(device))
+        assertFalse(directory.canBroadcast(dog))
+        assertFalse(directory.canBroadcast(guest))
+        assertEquals(setOf(device, guest), directory.participantSubjects())
+    }
+
+    @Test fun broadcastIsScopedToItsRevierAndDuplicatesAreNotShownAgain() {
+        val mailbox = NearbyBroadcasts()
+        val message = NearbyBroadcast(device, BroadcastTemplate.ASSEMBLY, device, now)
+        val payload = JSONObject(String(broadcastPayload(profile, message), Charsets.UTF_8))
+        assertNull(parseNearbyBroadcast(payload, device, device, now))
+        assertNull(parseNearbyBroadcast(payload, profile, device, now + BROADCAST_MAX_AGE_MS + 1))
+        val parsed = requireNotNull(parseNearbyBroadcast(payload, profile, device, now))
+        assertTrue(mailbox.receive(device, parsed, now))
+        assertFalse(mailbox.receive(device, parsed, now))
+        assertEquals(listOf(message), mailbox.messages.value)
+    }
+
+    @Test fun broadcastReceiptCountsOnlyForInitiallyTargetedDevices() {
+        val mailbox = NearbyBroadcasts()
+        val message = NearbyBroadcast(device, BroadcastTemplate.ASSEMBLY, "owner", now,
+            recipients = setOf("guest", "disconnected"), connected = setOf("guest"), outgoing = true)
+        mailbox.sent(message, mapOf("target" to "guest"))
+        mailbox.confirm(message.id, "new-device", "guest")
+        mailbox.confirm(message.id, "target", "disconnected")
+        mailbox.confirm("other-message", "target", "guest")
+        assertTrue(mailbox.messages.value.single().confirmed.isEmpty())
+        mailbox.confirm(message.id, "target", "guest")
+        mailbox.confirm(message.id, "target", "guest")
+        assertEquals(setOf("guest"), mailbox.messages.value.single().confirmed)
+    }
+
+    @Test fun onlyTheDogRegistrantCanSignalThePairedDevice() {
+        val dogDevice = "b16cb2bc-6dca-40bb-8e10-fc33b4d9272e"
+        val dog = "c16cb2bc-6dca-40bb-8e10-fc33b4d9272e"
+        val admin = "d16cb2bc-6dca-40bb-8e10-fc33b4d9272e"
+        fun entry(id: String, kind: String, subject: String) = JSONObject().put("device_id", id)
+            .put("device_kind", kind).put("public_key", publicKey).put("subject_id", subject)
+        val dogEntry = entry(dogDevice, "dog", dog).put("dog_registrant_id", device)
+        val devices = JSONArray().put(entry(device, "participant", device))
+            .put(entry(admin, "participant", admin).put("can_broadcast", true)).put(dogEntry)
+        fun directory(): VerifiedRelayDirectory {
+            val signed = document(JSONObject().put("document_type", "offline_directory").put("profile_id", profile)
+                .put("device_id", dogDevice).put("issued_at", Instant.ofEpochMilli(now).toString())
+                .put("expires_at", Instant.ofEpochMilli(now + 120_000).toString()).put("devices", devices))
+            return VerifiedRelayDirectory.verifyOffline(signed, capabilities, dogDevice, profile, now)
+        }
+        assertTrue(directory().canSignalDog(device, dogDevice, dog))
+        assertFalse(directory().canSignalDog(admin, dogDevice, dog))
+        assertFalse(directory().canSignalDog(device, dogDevice, profile))
+        dogEntry.remove("dog_registrant_id")
+        assertFalse(directory().canSignalDog(device, dogDevice, dog))
+    }
+
+    @Test fun dogSignalsRejectExpiredPacketsAndUnknownActions() {
+        val packet = DogSignalPacket.create(device, DogSignal.VIBRATE, now)
+        val payload = JSONObject(String(packet.encode(profile), Charsets.UTF_8))
+        assertEquals(packet, DogSignalPacket.parse(payload, now + 10_000))
+        assertNull(DogSignalPacket.parse(payload, now + 10_001))
+        assertNull(DogSignalPacket.parse(payload.put("signal", "unknown"), now))
+    }
+
     @Test fun offlineDirectoryAllowsOnlySignedPeersOnTheSameNearbyChannel() {
         val issued = System.currentTimeMillis()
         val peer = "b16cb2bc-6dca-40bb-8e10-fc33b4d9272e"

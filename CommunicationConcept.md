@@ -9,25 +9,25 @@ Das verbessert die Zustellchance bei Funklöchern, garantiert aber weder
 Echtzeit noch Reichweite oder Zustellung. Die PWA und der bisherige
 Hundetracker-Vertrag bleiben eigenständig und müssen kompatibel bleiben.
 
-Dieses Dokument unterscheidet den vorhandenen Stand vom Zielbild und den
-erforderlichen Umsetzungsschritten. Bereitstellung und Serververtrag sind in der
+Dieses Dokument beschreibt die implementierten Übertragungswege und ihre Grenzen.
+Bereitstellung und Serververtrag sind in der
 [Relay-Serveranleitung](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md)
-beschrieben; offene Abnahmen stehen im [Portierungsstatus](PORTIERUNGSSTATUS.md).
+beschrieben; offene Abnahmen stehen in den [Testaufgaben](docs/testing/Testaufgaben.md).
 
-## Zielbild: Kommunikation im Funkloch
+## Kommunikation im Funkloch
 
-- Teilnehmer und Hundegeräte sollen nach vorheriger Online-Einrichtung
+- Teilnehmer und Hundegeräte können nach vorheriger Online-Einrichtung
   desselben Reviers und regelmäßiger Erneuerung der Berechtigung auch ohne
-  Mobilfunk automatisch lokale Verbindungen herstellen. Für jede Begegnung
-  darf kein Kopplungsdialog nötig sein.
+  Internet automatisch lokale Verbindungen herstellen, ohne Kopplungsdialog
+  bei jeder Begegnung.
   Android-Berechtigungen und die ausdrückliche Zustimmung zur Standortfreigabe
   und zum Relaisbetrieb bleiben erforderlich. Die Hundegerät-Einrichtung für
   einen konkreten Hund bleibt von der automatischen Relaisverbindung getrennt.
-- Teilnehmer sollen aktuelle freigegebene Teilnehmer- und Hundepositionen auch
+- Teilnehmer können freigegebene Teilnehmer- und Hundepositionen auch
   dann auf ihrer Karte sehen können, wenn weder Sender noch Empfänger Internet
-  haben. Dies ist ein Ziel, noch keine vorhandene Funktion. Kartenpakete und
-  benötigte Revierdaten müssen vorher offline verfügbar sein.
-- Ein Gerät mit Internet soll geeignete Meldungen zusätzlich an das Backend
+  haben. Kartenpakete und benötigte Revierdaten müssen vorher offline
+  verfügbar sein.
+- Ein Gerät mit Internet kann geeignete Relay-Umschläge an das Backend
   weiterleiten, damit sie auch über Jagdkarte und PWA verfügbar werden.
   Offline-Nachbarn sind nicht selbst mit der PWA oder dem Server verbunden.
 - Übliche Abstände von 100 bis 300 Metern sind eine Anforderung für die
@@ -66,9 +66,10 @@ für den Server und signiert unveränderliche Metadaten mit
 RSASSA-PKCS1-v1_5/SHA-256. Der private Signaturschlüssel bleibt im Android
 Keystore. Benutzer-JWTs und Hundegeräte-Bearer-Token werden nicht an Relais
 weitergegeben. Die Funkverbindung allein begründet keine Revierberechtigung.
-Da die Umschläge für den Server verschlüsselt sind, können empfangende
-Smartphones die Position daraus nicht lokal anzeigen. Die bisherige
-Offline-Revieransicht ist ein lesbarer Snapshot ohne Livepositionen.
+Da diese Umschläge für den Server verschlüsselt sind, dienen sie nicht
+der lokalen Kartenanzeige. Diese nutzt stattdessen eigene signierte
+[Nearby-Positionsnachrichten](docs/design/offline-positions/OfflinePositionMessageFormat.md).
+Der lesbare Revier-Snapshot selbst enthält keine Positionskoordinaten.
 
 ### Hundetracker
 
@@ -120,8 +121,9 @@ Die gerätebezogene Einrichtung erklärt und erlaubt eigene Standortfreigabe und
 Relaisbetrieb gemeinsam. Android-Berechtigungen allein sind keine Zustimmung.
 Im aktiven Jagdmodus des ausgewählten Reviers sind vollständige Berechtigungen
 und eine gültige, zuvor online eingerichtete Autorisierung erforderlich.
-Teilnehmerpositionen werden nur bei aktiver Karte erfasst und spätestens 90 Sekunden nach der Messung
-verworfen. Beim Pausieren der Karte kann das sichtbare Relay-Gateway im
+Teilnehmerpositionen werden nur bei aktiver Karte erfasst. Ihre
+Server-Relay-Umschläge gelten höchstens 90 Sekunden ab Messung.
+Beim Pausieren der Karte kann das sichtbare Relay-Gateway im
 Hintergrund weiterarbeiten; Hintergrund-GPS für Teilnehmer ist nicht
 implementiert. Beim Start des DogTrackers wird der Relaisbetrieb übergeben;
 die Teilnehmerposition wird dabei nicht parallel geteilt.
@@ -135,9 +137,8 @@ Zeit gebunden; eine zurückgestellte Systemzeit verlängert sie nicht. Nach eine
 Geräteneustart oder bei fehlendem Bootzähler pausiert das Relais bis zur
 Online-Erneuerung. Bereits gespeicherte Berechtigungen älterer App-Versionen
 werden nicht übernommen; die neue Version muss zunächst online eingerichtet
-werden. Neue eigene Teilnehmerpositionen werden derzeit nur bei
-Internetzugang erstellt; die Aktivierung der Standortfreigabe benötigt einen
-Serveraufruf.
+werden. Mit gültiger Berechtigung und aktivem Jagdmodus kann die Karte
+eigene Teilnehmerpositionen auch offline an erreichbare Teilnehmergeräte senden.
 
 Bei ausdrücklichem Beenden oder Verlust der
 Berechtigung wird die Registrierung weiterhin widerrufen. Nach einem Widerruf
@@ -147,110 +148,92 @@ automatisch erneut versucht. Im Gerätetest nahm das nach einem Prozessende
 offline wieder geöffnete Gateway neue Hundemeldungen an; nach Wiederherstellung
 des Internetzugangs wurden die ausstehenden Meldungen serverbestätigt.
 Nach vollständigem Offline-Geräteneustart pausierten Gateway und DogTracker
-jeweils bis zur Online-Erneuerung. Weitere Unterbrechungs- und
-Wiederverbindungstests stehen aus.
+jeweils bis zur Online-Erneuerung.
 
 Die Offline-Erweiterung wurde laut Nutzer im gemeinsamen Entwicklungsprojekt
 bereitgestellt. Ein Gerätetest bestätigte die Weiterleitung vom offline
 befindlichen DogTracker über ein online befindliches Teilnehmergerät zum Server.
-Weitere Geräte- und Unterbrechungstests stehen aus. Der Stand
-anderer Zielprojekte muss gesondert geprüft werden. Ältere DogTracker-APKs
-unterstützen die neueren Rückbestätigungen nicht.
+Das belegt keine Bereitstellung in anderen Zielprojekten.
+Ältere DogTracker-APKs unterstützen die neueren Rückbestätigungen nicht.
 
-## Erforderliche Umsetzung
+## Direkte Offline-Anzeige und Jagdende
 
-Der zuletzt vereinbarte nächste Schritt 4 umfasst die nachstehenden Punkte 3
-und 4: ein sicheres lokales Positionsformat und dessen Kartenintegration.
+Positionen von erreichbaren Geräten werden auf der Karte getrennt vom
+Server-Relay verarbeitet. Die Karte kennzeichnet Nearby-Positionen ab
+120 Sekunden als veraltet, lässt sie aber bis zum bekannten Ende des
+Jagdmodus sichtbar. Das Abschalten der eigenen Standortfreigabe stoppt
+neue Positionen, beendet aber nicht den Jagdmodus des Reviers.
 
-1. **Authentifizierung weiter prüfen.** Der Android-Debug-Build und gezielte
-   Protokolltests bestehen; umfassende Integrations- und Gerätetests stehen noch aus.
-   Beide Seiten müssen ihre
-   Revierzugehörigkeit und den Besitz ihres Geräteschlüssels nachweisen; der
-   Nachweis muss an die konkrete Verbindung gebunden und gegen Replay und
-   fremde Geräte geschützt sein. Vor erfolgreicher Prüfung keine Nutzdaten
-   annehmen oder versenden. Bei Ablauf und Revierwechsel bestehende Sitzungen
-   beenden. Kein manueller Fallback für ältere App-Versionen.
-2. **Offline-Autorisierung und Lebenszyklus prüfen.** Geräte und
-   Schlüssel müssen vorab online registriert und die signierten Verzeichnisse
-   beider Geräte aktuell genug sein, um einander zu kennen. Der
-   Teilnehmerdienst kann innerhalb desselben Gerätebetriebs mit geschütztem
-   lokalem Zustand wieder anlaufen; neue eigene Teilnehmerpositionen erfordern
-   derzeit Internet. Die Höchstdauer beträgt 24 Stunden und wird zusätzlich
-   zur signierten Ablaufzeit monoton begrenzt. Nach Geräteneustart ist eine
-   Online-Erneuerung erforderlich. Prozesswiederanlauf und Offline-Geräteneustart
-   wurden auf zwei Geräten geprüft; Schlüsselwechsel und verzögerter Widerruf
-   bleiben gesondert zu prüfen.
-3. **Lokale Positionsnachrichten entwerfen.** Neben dem bestehenden
-   serververschlüsselten Umschlag wird ein versioniertes Format für berechtigte
-   Offline-Empfänger benötigt. Es muss Vertraulichkeit, unveränderliche
-   Absenderidentität, Revierbindung, Aktualität und Replay-Schutz gewährleisten.
-   Schlüsselverteilung und -rotation für Teilnehmer und Hundegeräte, der
-   Schutz lokaler Schlüssel sowie die Begrenzung auf berechtigte Empfänger
-   sind vor der Implementierung festzulegen. Ein sichtbarer Gerätename,
-   Reviername oder BLE-Werbung ist kein Berechtigungsnachweis. Der
-   Serververtrag und die PWA dürfen dadurch nicht stillschweigend brechen.
-4. **Offline-Karte anbinden.** Verifizierte lokale Positionen müssen in
-   einen reviergebundenen, begrenzten lokalen Positionsbestand und von dort
-   in die Kartenanzeige gelangen. Backend- und Funkdaten müssen anhand von
-   Herkunft, Messzeit und Sequenz zusammengeführt werden, sodass ältere
-   Positionen neuere nicht überschreiben. Alter und Quelle sind sichtbar zu
-   machen; abgelaufene Positionen dürfen nicht als aktuell erscheinen.
-   Offline-Kartenpaket, Reviersnapshot, Neustart und Revierwechsel sind dabei
-   gesondert zu prüfen.
-5. **Weiterleitung stufenweise ausbauen.** Die erste Ausbaustufe unterstützt
-   den direkten Austausch erreichbarer Nachbarn und die vorhandene
-   Ein-Hop-Weitergabe zum Internet-Gateway. Das Nachrichtenformat soll spätere
-   Mehrhop-Weiterleitung berücksichtigen. Für eine Verbindung A → B → C ohne
-   direkte Funkverbindung von A zu C ist echte Mehrhop-Weiterleitung nötig;
-   Nearby-Cluster allein bietet sie nicht. Diese folgt in einer späteren
-   Ausbaustufe. Dafür müssen Hop-Limit, Ablauf, Deduplizierung,
-   Speichergrenzen, Wiederholung, Weitergabe bei wiederkehrenden Kontakten und
-   Schleifenvermeidung definiert und getestet werden. Lokale Übernahme und
-   Serverbestätigung bleiben getrennt.
-6. **Backend und Kompatibilität.** Nötige Supabase-Änderungen ausschließlich
-   im PWA-Projekt `D:\NoScan\wierichs.github.io\Jagdkarte\` entwickeln und
-   mit bestehenden Hunde- und PWA-Verträgen prüfen. Eine Testbereitstellung
-   und ein späteres Deployment erfolgen separat nach ausdrücklicher Freigabe;
-   Auswirkungen auf gemeinsam genutzte Projekte sind vorher abzustimmen. Die
-   neue Android-Version erst gegen ein passend bereitgestelltes Backend testen;
-   vorhandene Geräteinstallationen nicht ungefragt ersetzen.
-7. **Feldabnahme.** Nach automatisierten Protokoll-, Ablauf-, Rechte- und
-   Persistenztests mindestens zwei Geräte ohne Mobilfunk und ein Gerät mit
-   Internet einsetzen; bei Mehrhop mindestens drei offline verbundene Geräte
-   und zusätzlich ein Internet-Gateway. Verbindung ohne Dialog, gegenseitige
-   Offline-Anzeige, Hund → Teilnehmer, Unterbrechung und Wiederverbindung,
-   Ablauf, fremdes Revier, alte App-Version und spätere Server-/PWA-Anzeige
-   prüfen. Auf 100, 200 und 300 Metern sowie dazwischen Entdeckung, erfolgreiche
-   Übertragung, Verzögerung und Akkuverbrauch bei Sichtkontakt und im Wald
-   messen. Auch Bildschirm aus, Hintergrundbetrieb und Neustart einbeziehen.
-   Für Flugmodus-Tests WLAN und Bluetooth ausdrücklich wieder aktivieren.
-   Mindestwerte für Erfolgsquote, Verzögerung und Betriebsdauer sind vor der
-   Abnahme gemeinsam festzulegen; die Tests begründen keine allgemeine
-   Reichweiten- oder Zustellgarantie.
-
-### Feldabnahme: noch festzulegen
-
-- **Festgelegt am 2026-11-18:** Teilnehmer- und Hundepositionen werden nach
-  120 Sekunden als veraltet markiert, bleiben aber bis zum bekannten Ende des
-  Jagdmodus sichtbar. Eine veraltete Position ist besser als keine Position.
-  Sind Sender und Empfänger vollständig getrennt, kann der Empfänger das Ende
-  des Jagdmodus oder den Widerruf nicht sofort erfahren; bis zur nächsten
-  Verbindung muss die Position daher sichtbar als veraltet erkennbar bleiben.
-- Welche konkreten Abnahmewerte für Funkzuverlässigkeit, Verzögerung und
-  Akkulaufzeit sind für den Einsatz akzeptabel?
+Nur ein Online-Gerät kann den Jagdmodus über den Server ändern. Ein
+Offline-Gerät erfährt das Ende erst beim erneuten Online-Abruf und
+blendet dann die Positionen aus. Nearby überträgt den Status derzeit nicht.
+Format, Speicher und bestätigte Gerätetests sind bei den
+[Offline-Positionsnachrichten](docs/design/offline-positions/OfflinePositionMessageFormat.md)
+dokumentiert. Supabase-Änderungen gehören ausschließlich ins PWA-Projekt;
+Bereitstellungen und Geräteinstallationen separat abstimmen.
 
 Android 12 / API 31 bleibt vorerst Mindestversion. Eine Unterstützung von
 Android 9 ist eine separate Kompatibilitätsprüfung und nicht Voraussetzung
 dieses Konzepts.
 
+## Nearby-Rundnachrichten
+
+Owner und Bearbeiter können im aktiven Jagdmodus eine feste Vorlage an
+bereits direkt verbundene Teilnehmergeräte senden. Gäste können empfangen
+und bestätigen. Hundegeräte, Serverweitergabe und Nachlieferung sind nicht
+beteiligt. Der Empfänger prüft das authentifizierte Absendergerät und
+dessen Senderecht im signierten Offline-Verzeichnis. Die Bestätigung
+wird dem Teilnehmer erst zugerechnet, wenn sie von einem beim Versand
+adressierten Gerät kommt. Sie bedeutet Empfang, nicht Lesen.
+Die Übersicht ist auf die laufende Relais-Sitzung begrenzt.
+
+Eine neu angenommene Nachricht löst auf dem Empfängergerät eine normale
+Android-Benachrichtigung im separaten Kanal **Nearby-Rundnachrichten** aus.
+Duplikate und Empfangsbestätigungen lösen keine aus. Systemberechtigungen
+und Kanaleinstellungen bestimmen Ton und Vibration, nicht die Zustellung.
+
+Für den Gerätetest im Supabase-Projekt die Migration
+`202611180002_offline_broadcast_roles.sql` aus dem PWA-Repository anwenden.
+Die bereits aktualisierte `location-relay`-Funktion signiert das neue Feld
+`can_broadcast` automatisch; sie braucht dafür kein erneutes Deployment.
+Danach die Offline-Verzeichnisse der Testgeräte online erneuern. Ein
+älteres Verzeichnis ohne das Feld erteilt kein Senderecht für Rundnachrichten.
+
+**Feldtest am 18.11.2026:** Direkter Offline-Versand und Anzeige
+„Angekommen“ auf Motorola und Xiaomi wurden bestätigt. Der anschließende
+Test der Android-Benachrichtigungen steht noch aus.
+
+## Eigenes Hundegerät anstupsen
+
+Angemeldete Reviermitglieder können eigene Hunde registrieren und koppeln.
+Nur das registrierende Konto darf das aktuell gekoppelte Hundegerät per
+Nearby klingeln oder vibrieren lassen. Beide Geräte prüfen dafür
+`dog_registrant_id` aus dem signierten Offline-Verzeichnis. Das Hundegerät
+verwirft verspätete Nachrichten und Duplikate und erlaubt höchstens ein
+Signal alle fünf Sekunden. Es gibt keine Warteschlange und keine
+Weiterleitung. Die Bestätigung belegt, dass der DogTracker eine
+Android-Benachrichtigung ausgelöst hat; sie garantiert keinen hörbaren Ton.
+
+Vor dem ersten Gerätetest die Migration
+`202611180003_own_dogs_and_nearby_signals.sql` aus dem PWA-Projekt anwenden
+und die Offline-Verzeichnisse beider Geräte einmal online erneuern.
+Die bestehende Edge Function übernimmt das zusätzliche Feld ohne
+erneute Bereitstellung.
+
 ## Rückkehr der Internetverbindung
 
-Sobald Android wieder ein Standardnetz mit geprüftem Internetzugang meldet,
-aktualisiert die geöffnete Jagdkarte die Serverdaten ohne App-Neustart. Das
-Teilnehmer-Relais stößt die Erneuerung der Offline-Berechtigung an; der
-laufende DogTracker zieht den Server-Upload und die Prüfung seiner
-Revierberechtigung vor. Eine vom Server angeforderte Upload-Wartefrist bleibt
-gültig. Der lokale Nearby-Betrieb benötigt weiterhin kein Internet.
+Sobald Android ein nutzbares Standardnetz mit Internetfähigkeit meldet,
+versucht die App den Serverzugriff, ohne auf Androids Internetvalidierung
+zu warten. Erkannte Anmeldenetze und pausierte Netze lösen keinen Versuch
+aus. Erst der erfolgreiche Abruf belegt einen aktuellen Kartenstand.
+Bei vorübergehenden Verbindungsfehlern trotz verfügbarer Route versucht die
+geöffnete Karte den Abruf nach 2, 5 und 10 Sekunden erneut, danach im
+30-Sekunden-Abstand. Das Teilnehmer-Relais stößt die Erneuerung der
+Offline-Berechtigung an. Der DogTracker meldet den Upload bei WorkManager
+bevorzugt an; Android kann ihn bei ausgeschöpftem Kontingent normal einplanen.
+Eine vom Server angeforderte Upload-Wartefrist bleibt gültig. Die
+120-Sekunden-Grenze für die Veraltung von Nearby-Positionen ist unabhängig
+davon. Der lokale Nearby-Betrieb benötigt weiterhin kein Internet.
 
 **Gerätetest:** Im aktiven Jagdmodus zunächst die Karte bzw. den Hundetracker
 online starten. Internet trennen, dann wieder verbinden, ohne die App zu
@@ -259,10 +242,19 @@ der Karte wieder aktualisiert wird bzw. der DogTracker eine frische Position
 vom Server bestätigt bekommt.
 
 **Ergebnis vom 18.11.2026:** Die automatische Wiederverbindung nach der
-Netzunterbrechung wurde für Jagdkarte und DogTracker manuell bestätigt.
-Der separate Wiederverbindungstest mit ausgeschaltetem Bildschirm wurde
-für Jagdkarte und DogTracker auf eine spätere Feldabnahme verschoben und
-ist noch offen.
+Netzunterbrechung wurde für die geöffnete Jagdkarte und den laufenden
+DogTracker manuell bestätigt. Eine weitere Rückkehr auf dem Motorola war
+verzögert, gelang aber ohne manuelles Aktualisieren; die Dauer wurde nicht
+gemessen. Der verschobene Display-Test steht in den
+[Testaufgaben](docs/testing/Testaufgaben.md#kommunikation-und-gerätebetrieb).
+
+**Messungen mit der optimierten Version (18.11.2026, Motorola):** Nach dem
+Wiedereinschalten der mobilen Daten zeigte die geöffnete Jagdkarte nach
+7 Sekunden einen neuen Serverstand, ohne manuelle Aktualisierung. Der
+laufende DogTracker zeigte nach etwa 17 Sekunden die nächste
+Serverbestätigung bei eingestelltem 30-Sekunden-Standortintervall.
+Das sind Einzelmessungen. Die DogTracker-Messung trennt die Zeit für
+eine neue GPS-Position nicht von der Zeit für den Upload.
 
 ## Mögliche Verbesserung für eine Folgeversion: erster Standort ohne Internet
 
@@ -275,15 +267,14 @@ ist noch offen.
   Android-Standort-API bietet keinen unterstützten Weg, über Nearby empfangene
   A-GNSS-Hilfsdaten in den GNSS-Empfänger einzuspeisen. Fremde Positionen
   werden nicht als eigener Standort verwendet.
-- **Prüfauftrag:** Standort beim ohnehin vorgesehenen Start der Jagdteilnahme
+- **Möglicher Ansatz:** Standort beim ohnehin vorgesehenen Start der Jagdteilnahme
   oder des Hundetrackings möglichst früh anfordern, ohne einen zusätzlichen
   Bedienschritt. Prüfen, ob ein letzter eigener Fix mit sichtbarer Messzeit
   vorübergehend lokal angezeigt werden kann; ihn nicht als frische Messung
-  versenden. Auf Motorola und Xiaomi die Zeit bis zur ersten frischen Messung
-  online und offline bei vergleichbaren Bedingungen messen und dabei kürzlich
-  genutzte Standortbestimmung und Starts nach längerer Pause getrennt betrachten.
+  versenden. Der Messauftrag steht separat in den
+  [Testaufgaben](docs/testing/Testaufgaben.md#kommunikation-und-gerätebetrieb).
 
-## Grenzen und offene Abnahme
+## Grenzen
 
 - Funktransfer setzt laufende, berechtigte Geräte in Reichweite voraus.
   Android-Berechtigungen, Energiesparregeln, Akkustand und Empfang beeinflussen
@@ -295,9 +286,6 @@ ist noch offen.
   Unterschiedliche Serverpfade haben jedoch unterschiedliche
   Deduplizierungs- und Bestätigungsregeln; ein generelles
   Exactly-once-Versprechen besteht nicht.
-- Reale Nearby-Verbindungen, Unterbrechungen, Wiederholungen und
-  Serverbestätigungen müssen mit mehreren physischen Geräten und einem
-  isolierten Backend geprüft werden.
 
 Weitere Transportadapter oder Mehrhop-Routing sind mögliche spätere
 Erweiterungen, keine zugesagten Funktionen. Dafür wären insbesondere

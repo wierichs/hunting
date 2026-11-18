@@ -18,6 +18,7 @@ import org.wierichs.dogtracker.communication.LocationPayloadCryptoException
 import org.wierichs.dogtracker.communication.MessageTransportResponse
 import org.wierichs.dogtracker.communication.RelayEnvelope
 import org.wierichs.dogtracker.communication.isLegacyOwnRelayEnvelope
+import org.wierichs.dogtracker.communication.hasRelayInternetRoute
 import org.wierichs.dogtracker.communication.SqliteMessageStore
 import org.wierichs.dogtracker.communication.UnreadableLocationPayloadException
 
@@ -28,6 +29,7 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
 
     private suspend fun upload(): Result = withContext(Dispatchers.IO) {
         var refreshRelay = inputData.getBoolean(REFRESH_RELAY_ON_RECONNECT, false)
+        if (refreshRelay && !hasRelayInternetRoute(applicationContext)) return@withContext Result.retry()
         var relaySetupPending = false
         while (true) {
             ensureActive()

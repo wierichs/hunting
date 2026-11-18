@@ -24,10 +24,12 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.wierichs.dogtracker.communication.RelayPeerAuthentication.RelayPeerSession
 
@@ -40,7 +42,9 @@ internal class NearbyRelayTransport(
     private val pendingPackets: (() -> List<NearbyPacket>)? = null,
     private val onIncomingDocument: (ByteArray, () -> Unit) -> Unit = { _, _ -> },
     private val onIncomingPosition: ((OfflinePositionMessage, () -> Unit) -> Unit)? = null,
-    private val canPublishPosition: () -> Boolean = { false }
+    private val canPublishPosition: () -> Boolean = { false },
+    private val broadcasts: NearbyBroadcasts? = null,
+    private val onDogSignal: ((DogSignal) -> Boolean)? = null
 ) {
     private val appContext = context.applicationContext
     private val client = Nearby.getConnectionsClient(appContext)
@@ -50,6 +54,11 @@ internal class NearbyRelayTransport(
     private val discoveredEndpoints = ConcurrentHashMap<String, String>()
     private val sendWindow = NearbySendWindow()
     private val sessions = ConcurrentHashMap<String, RelayPeerSession>()
+    private data class PendingDogSignal(val session: RelayPeerSession, val dogId: String,
+        val result: CompletableDeferred<DogSignalResult> = CompletableDeferred())
+    private val pendingDogSignals = ConcurrentHashMap<String, PendingDogSignal>()
+    private val recentDogSignals = mutableMapOf<String, Long>()
+    private var lastDogSignal = -5_000L
     private val handler = Handler(Looper.getMainLooper())
     private val sendJob = SupervisorJob()
     private val sendScope = CoroutineScope(sendJob + Dispatchers.IO)
@@ -204,6 +213,7 @@ internal class NearbyRelayTransport(
             requestedEndpoints.clear()
             discoveredEndpoints.clear()
             sessions.clear()
+            pendingDogSignals.values.forEach { it.result.complete(DogSignalResult.UNCONFIRMED) }
             sendWindow.clear()
             cancelRetry()
             sendJob.cancelChildren()
@@ -212,6 +222,61 @@ internal class NearbyRelayTransport(
 
     fun sendPendingToAll() {
         connectedEndpoints.forEach(::sendPendingTo)
+    }
+
+    suspend fun signalDog(dogId: String, signal: DogSignal): DogSignalResult {
+        val directory = authorization()?.takeIf { isStarted && canPublishPosition() && it.current() }
+            ?: return DogSignalResult.UNAVAILABLE
+        val target = connectedEndpoints.firstNotNullOfOrNull { endpoint ->
+            val session = sessions[endpoint] ?: return@firstNotNullOfOrNull null
+            val device = session.authenticatedPeerId(directory) ?: return@firstNotNullOfOrNull null
+            if (directory.canSignalDog(localDeviceId, device, dogId)) endpoint to session else null
+        } ?: return DogSignalResult.UNAVAILABLE
+        val (endpoint, session) = target
+        val packet = DogSignalPacket.create(dogId, signal, System.currentTimeMillis())
+        val pending = PendingDogSignal(session, dogId)
+        pendingDogSignals[packet.id] = pending
+        return try {
+            if (sessions[endpoint] !== session || !authenticated(session)) return DogSignalResult.UNAVAILABLE
+            client.sendPayload(endpoint, Payload.fromBytes(packet.encode(directory.profileId)))
+                .addOnFailureListener { pending.result.complete(DogSignalResult.UNCONFIRMED) }
+            withTimeoutOrNull(4_000) { pending.result.await() } ?: DogSignalResult.UNCONFIRMED
+        } finally {
+            pendingDogSignals.remove(packet.id)
+        }
+    }
+
+    @Synchronized
+    fun sendBroadcast(template: BroadcastTemplate) {
+        val mailbox = checkNotNull(broadcasts)
+        val directory = authorization()
+        check(isStarted && canPublishPosition() && directory?.current() == true) {
+            "Nearby ist für dieses Revier nicht bereit."
+        }
+        check(directory.canBroadcast(localDeviceId)) {
+            "Nur Owner und Bearbeiter mit aktueller Revierberechtigung können senden. Bitte online erneuern."
+        }
+        val sender = checkNotNull(directory.subjectId(localDeviceId))
+        val targets = connectedEndpoints.mapNotNull { endpoint ->
+            val session = sessions[endpoint] ?: return@mapNotNull null
+            val device = session.authenticatedPeerId(directory) ?: return@mapNotNull null
+            val user = directory.subjectId(device) ?: return@mapNotNull null
+            if (directory.deviceKind(device) != "participant" || user == sender) return@mapNotNull null
+            Triple(endpoint, session, device to user)
+        }.distinctBy { it.third.first }
+        val devices = targets.associate { it.third }
+        val message = NearbyBroadcast(UUID.randomUUID().toString(), template, sender, System.currentTimeMillis(),
+            recipients = directory.participantSubjects() - sender, connected = devices.values.toSet(), outgoing = true)
+        mailbox.sent(message, devices)
+        val bytes = broadcastPayload(directory.profileId, message)
+        targets.forEach { (endpoint, session, _) -> sendBroadcastPayload(endpoint, session, bytes) }
+    }
+
+    private fun sendBroadcastPayload(endpoint: String, session: RelayPeerSession, bytes: ByteArray) {
+        if (sessions[endpoint] !== session || !authenticated(session)) return
+        client.sendPayload(endpoint, Payload.fromBytes(bytes)).addOnFailureListener {
+            android.util.Log.w("NearbyRelayTransport", "Nearby-Rundnachricht oder Empfangsbestätigung nicht übertragen.", it)
+        }
     }
 
     @Synchronized
@@ -320,6 +385,14 @@ internal class NearbyRelayTransport(
         } catch (_: org.json.JSONException) {
             null
         }
+        if (json?.optString("action") in setOf(DOG_SIGNAL_ACTION, DOG_SIGNAL_ACK)) {
+            receiveDogSignal(endpointId, session, checkNotNull(json))
+            return
+        }
+        if (json?.optString("action") in setOf(BROADCAST_ACTION, BROADCAST_ACK_ACTION)) {
+            receiveBroadcast(endpointId, session, checkNotNull(json))
+            return
+        }
         if (json?.optString("action") == "peer_receipt_ack") {
             val digest = json.optString("digest")
             if (sessions[endpointId] !== session) return
@@ -346,6 +419,71 @@ internal class NearbyRelayTransport(
         val envelope = RelayEnvelope.parse(bytes)
         if (envelope != null) onIncomingEnvelope(envelope)
         else onIncomingDocument(bytes) { acknowledgeReceipt(endpointId, session, bytes) }
+    }
+
+    @Synchronized
+    private fun receiveDogSignal(endpointId: String, session: RelayPeerSession, json: JSONObject) {
+        val directory = authorization() ?: return
+        if (sessions[endpointId] !== session || json.optString("profile_id") != directory.profileId) return
+        val peer = session.authenticatedPeerId(directory) ?: return
+        if (json.optString("action") == DOG_SIGNAL_ACK) {
+            val pending = broadcastId(json)?.let(pendingDogSignals::get) ?: return
+            if (pending.session !== session || !directory.canSignalDog(localDeviceId, peer, pending.dogId)) return
+            val result = when (json.optString("result")) {
+                "accepted" -> DogSignalResult.CONFIRMED
+                "suppressed" -> DogSignalResult.SUPPRESSED
+                else -> return
+            }
+            pending.result.complete(result)
+            return
+        }
+        val notify = onDogSignal ?: return
+        val packet = DogSignalPacket.parse(json, System.currentTimeMillis())
+        if (packet == null || !directory.canSignalDog(peer, localDeviceId, packet.dogId)) {
+            android.util.Log.w("NearbyRelayTransport", "Ungültiges oder nicht berechtigtes Hundesignal verworfen.")
+            return
+        }
+        val elapsed = SystemClock.elapsedRealtime()
+        recentDogSignals.entries.removeAll { elapsed - it.value > 15_000L }
+        if (packet.id in recentDogSignals || recentDogSignals.size >= 32) return
+        recentDogSignals[packet.id] = elapsed
+        if (elapsed - lastDogSignal < 5_000L) {
+            acknowledgeDogSignal(endpointId, session, directory.profileId, packet.id, false)
+            return
+        }
+        lastDogSignal = elapsed
+        acknowledgeDogSignal(endpointId, session, directory.profileId, packet.id, notify(packet.signal))
+    }
+
+    private fun acknowledgeDogSignal(endpointId: String, session: RelayPeerSession, profileId: String,
+        id: String, accepted: Boolean) {
+        val bytes = JSONObject().put("action", DOG_SIGNAL_ACK).put("profile_id", profileId).put("id", id)
+            .put("result", if (accepted) "accepted" else "suppressed").toString().toByteArray(Charsets.UTF_8)
+        sendBroadcastPayload(endpointId, session, bytes)
+    }
+
+    private fun receiveBroadcast(endpointId: String, session: RelayPeerSession, json: JSONObject) {
+        val mailbox = broadcasts ?: return
+        val directory = authorization() ?: return
+        if (sessions[endpointId] !== session || !canPublishPosition()) return
+        val device = session.authenticatedPeerId(directory) ?: return
+        val user = directory.subjectId(device) ?: return
+        if (directory.deviceKind(device) != "participant" || user == directory.subjectId(localDeviceId)) return
+        if (json.optString("profile_id") != directory.profileId) return
+        if (json.optString("action") == BROADCAST_ACK_ACTION) {
+            broadcastId(json)?.let { mailbox.confirm(it, device, user) }
+            return
+        }
+        val now = System.currentTimeMillis()
+        val message = parseNearbyBroadcast(json, directory.profileId, user, now)
+        if (!directory.canBroadcast(device) || message == null) {
+            android.util.Log.w("NearbyRelayTransport", "Ungültige oder nicht berechtigte Nearby-Rundnachricht verworfen.")
+            return
+        }
+        if (mailbox.receive(device, message, now)) {
+            sendBroadcastPayload(endpointId, session, broadcastAck(directory.profileId, message.id))
+            NearbyBroadcastNotifications.show(appContext, device, message)
+        }
     }
 
     private fun acknowledgeReceipt(endpointId: String, session: RelayPeerSession, bytes: ByteArray) {

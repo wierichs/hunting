@@ -115,8 +115,10 @@ automatisch; ein Bestätigungsdialog für jede Verbindung ist nicht nötig.
 Dafür müssen beide Geräte zuvor online eingerichtet worden sein und aktuelle
 Revierberechtigungen besitzen, die das jeweils andere Gerät enthalten. Die
 Offline-Berechtigung gilt höchstens 24 Stunden. Nach einem vollständigen
-Neustart des Smartphones muss sie online erneuert werden. Eine gegenseitige
-Positionsanzeige ganz ohne Internet ist noch nicht verfügbar.
+Neustart des Smartphones muss sie online erneuert werden. Sind beide Geräte
+für dasselbe Revier eingerichtet und in Funkreichweite, kann die Jagdkarte
+Teilnehmer- und Hundepositionen auch ohne Internet über Nearby empfangen.
+Für die Kartenbasis muss eine geeignete Offlinekarte verfügbar sein.
 
 **Jagdfunktionen deaktivieren** beendet Jagdteilnahme und DogTracker. Die
 reine Anzeige des eigenen Standorts auf der Karte bleibt davon unabhängig.
@@ -124,11 +126,20 @@ reine Anzeige des eigenen Standorts auf der Karte bleibt davon unabhängig.
 ## Jagdmodus und Livepositionen
 
 Owner und Bearbeiter können den Jagdmodus unter **Revier und Verwaltung**
-steuern. Bei aktivem Jagdmodus, vollständiger Einrichtung und gültiger
-Berechtigung werden verschlüsselte Reviermeldungen automatisch weitergeleitet.
-Neue eigene Teilnehmerpositionen können derzeit nur bei Internetzugang
-freigegeben werden. Deine Position wird nur bei aktiver Karte und innerhalb
-der Reviergrenze übermittelt.
+mit Internetverbindung steuern. Bei aktivem Jagdmodus, vollständiger Einrichtung
+und gültiger Berechtigung werden verschlüsselte Reviermeldungen automatisch
+weitergeleitet.
+Deine Teilnehmerposition wird nur bei aktiver Karte und innerhalb der
+Reviergrenze übermittelt. Das Fadenkreuz zeigt unabhängig davon deinen
+eigenen Standort an, sobald das Gerät ihn ermittelt hat.
+
+Im Markerdetail erkennst du eine direkt empfangene Position an
+**Per Nearby empfangen** und ihrer Messzeit. Ohne neue Position wird der
+Marker ab zwei Minuten als veraltet angezeigt, bleibt aber sichtbar.
+Das Ausschalten der eigenen Standortfreigabe beendet nicht den Jagdmodus
+für das Revier. Erfährt deine Karte beim Online-Abruf vom Jagdende,
+verschwinden die gespeicherten Revierpositionen. Wenn das Internet
+zurückkehrt, wird die geöffnete Jagdkarte automatisch aktualisiert.
 
 Bei Revierwechsel, Abmeldung oder ausgeschaltetem Jagdmodus endet die
 bisherige Teilnahme. Wird die Karte pausiert, endet die eigene
@@ -138,15 +149,41 @@ Teilnehmerposition wird dabei nicht parallel geteilt. Beim Ausschalten des
 Jagdmodus werden gespeicherte Gruppen- und Hundepositionen serverseitig
 entfernt.
 
-Bei frischen, ausreichend genauen Positionen kann ein Pfeil neben Person oder
-Hund die aus zwei GPS-Positionen abgeleitete Bewegungsrichtung anzeigen. Er
-zeigt nicht die Blickrichtung oder Ausrichtung des Smartphones. Hundepositionen
-können auch außerhalb der Reviergrenze angezeigt werden.
+Bei frischen, ausreichend genauen Positionen zeigt eine blaue Pfeilspitze
+direkt am Personen- oder Hundemarker die aus zwei GPS-Positionen abgeleitete
+Bewegungsrichtung. Sie zeigt nicht die Blickrichtung oder Ausrichtung des
+Smartphones. Hundepositionen können auch außerhalb der Reviergrenze angezeigt
+werden.
+
+## Nearby-Rundnachrichten
+
+Im aktiven Jagdmodus öffnet der **Briefumschlag** unten rechts in der Karte
+die Rundnachrichten. Er sitzt über dem Plus für Markierungen. Owner und
+Bearbeiter senden eine Vorlage direkt, indem sie auf ihren Text tippen:
+„Das Treiben beginnt!“, „Hahn in Ruh!“ oder „Zurück zum Sammelplatz.“.
+Gäste können empfangen, aber nicht senden. Beide Seiten benötigen zuvor online
+erneuerte Revierberechtigungen und eine direkte Nearby-Verbindung. Eine
+Internetverbindung ist für den Versand nicht erforderlich.
+
+Die Liste zeigt zu jeder eigenen Nachricht den Stand der Teilnehmer aus
+dem Revierverzeichnis: **Angekommen** (mindestens eines ihrer Geräte hat
+den Empfang bestätigt), **Nicht bestätigt** oder **Nicht verbunden**.
+Es gibt keine Nachlieferung und keine Lesebestätigung. Die Übersicht
+bleibt nur während der laufenden Relais-Sitzung erhalten. Verwende die
+Nachrichten nicht als einziges Sicherheitssignal.
+
+Bei Empfang zeigt Android eine Benachrichtigung. Unter **Android-Einstellungen
+→ Apps → Jagdbruder → Benachrichtigungen → Nearby-Rundnachrichten** kannst du
+den Benachrichtigungston und, je nach Gerät, Vibration einstellen oder die
+Kategorie stummschalten. Sie wird beim ersten Start des Revier-Relais
+angelegt. Auch bei ausgeschalteten Benachrichtigungen bleibt die Nachricht
+in der App sichtbar und der Empfang wird bestätigt.
 
 ## Hunde und DogTracker
 
-Öffne **Revier und Verwaltung → Hunde**. Owner und Bearbeiter können einen
-Hund registrieren und ein Smartphone koppeln. Dafür gibt es zwei Wege:
+Öffne **Revier und Verwaltung → Hunde**. Jedes angemeldete Reviermitglied,
+auch ein Gast, kann einen eigenen Hund registrieren und ein Smartphone für
+ihn koppeln. Dafür gibt es zwei Wege:
 
 1. In Jagdkarte **Smartphone koppeln** wählen und den angezeigten QR-Code im
    DogTracker mit **Tracker-Kamera** scannen oder den Schlüssel dort manuell
@@ -172,10 +209,27 @@ zwischen 15 Sekunden und 60 Minuten und tippe auf **Tracking starten**. Eine
 dauerhafte Benachrichtigung zeigt die Sitzung und bietet eine Stoppaktion.
 **Tracking stoppen** beendet auch den Relaisbetrieb des DogTrackers. Ohne
 Internet bleibt für den direkten Upload nur die neueste GPS-Position
-höchstens 24 Stunden auf dem Smartphone gespeichert.
+höchstens 24 Stunden auf dem Smartphone gespeichert. Sobald wieder eine
+Verbindung verfügbar ist, versucht der laufende DogTracker den Upload
+automatisch. Erst **Position vom Server bestätigt** zeigt an, dass der
+Server die Position angenommen hat.
 
-Mit **Hund loeschen** entfernen Owner und Bearbeiter den Hund dauerhaft samt
-Serverkopplung und gespeicherter Hundeposition.
+Mit **Löschen** entfernen Registrierende ihre eigenen Hunde. Owner und
+Bearbeiter behalten ihre Verwaltungsrechte. Beim Löschen entfallen auch
+Kopplung und gespeicherte Hundeposition.
+
+Im Jagdmodus erscheinen eigene Hunde **türkis**, andere Hunde **orange**,
+solange ihre Position aktuell ist. Tippe auf deinen Hund und wähle
+**Klingeln** oder **Vibrieren**. Das Signal geht direkt per Nearby an das
+gekoppelte Gerät mit laufendem DogTracker. Ist es nicht erreichbar,
+wird das Signal nicht später nachgeliefert. **Vom Hundegerät bestätigt**
+bedeutet, dass der DogTracker die Benachrichtigung ausgelöst hat, nicht
+zwingend, dass das Gerät geklingelt oder vibriert hat. Auf dem Hundegerät
+gelten die Android-Benachrichtigungseinstellungen für **Hundegerät:
+Klingeln** und **Hundegerät: Vibrieren**. Falls das Xiaomi-Hundegerät im
+normalen Tonmodus nicht vibriert, aktiviere unter **Einstellungen → Ton &
+Vibration** die Option **Bei Anruf vibrieren**. Auf dem getesteten Xiaomi
+hat diese Einstellung das Problem behoben.
 
 ## Revierdateien
 
@@ -210,11 +264,11 @@ unklarer Lizenz musst du bestätigen, dass du die Nutzungsbedingungen geprüft
 hast. Gespeicherte Grenzen findest und entfernst du unter **Offline-Grenzen**.
 
 Der zuletzt online geladene Revierstand mit Grenze und Markierungen kann für
-höchstens sieben Tage offline angesehen werden. Diese Ansicht ist als
-veraltet markiert und nur lesbar; Teilnehmer- und Hund-Livepositionen fehlen.
-Änderungen, Einladungen und die Freigabe neuer eigener Teilnehmerpositionen
-benötigen weiterhin Internet. Das zuvor eingerichtete Relais
-kann Meldungen ohne Internet annehmen und später über ein Gerät mit
+höchstens sieben Tage offline angesehen werden. Er ist als veraltet markiert,
+nur lesbar und enthält selbst keine Teilnehmer- oder Hundepositionen.
+Nearby-Positionen können separat auf der Karte erscheinen. Änderungen an
+Revierdaten und Einladungen benötigen weiterhin Internet. Das zuvor
+eingerichtete Relais kann Meldungen ohne Internet annehmen und später über ein Gerät mit
 Internetverbindung weiterleiten. Der Revierstand, öffentliche Grenzen und
 Kartenpakete werden nicht mit der PWA oder einem Konto synchronisiert.
 

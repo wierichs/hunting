@@ -23,6 +23,7 @@ import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.google.android.gms.location.LocationCallback
@@ -45,6 +46,7 @@ import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 import org.wierichs.dogtracker.communication.CommunicationMessage
 import org.wierichs.dogtracker.communication.DogRelayAuthorization
+import org.wierichs.dogtracker.communication.DogSignalNotifications
 import org.wierichs.dogtracker.communication.LocationPayloadCryptoException
 import org.wierichs.dogtracker.communication.NearbyRelayTransport
 import org.wierichs.dogtracker.communication.RelayEnvelope
@@ -57,6 +59,7 @@ import org.wierichs.dogtracker.communication.acknowledgeDogRelayReceipt
 import org.wierichs.dogtracker.communication.localPosition
 import org.wierichs.dogtracker.communication.nextRelaySequence
 import org.wierichs.dogtracker.communication.internetRestorations
+import org.wierichs.dogtracker.communication.relayInternetRequest
 import org.wierichs.dogtracker.communication.RelayGateway
 import org.wierichs.dogtracker.communication.RelayGatewayService
 
@@ -279,6 +282,7 @@ class LocationTrackingService : Service() {
         }
         if (nearbyRelayTransport != null) return
 
+        DogSignalNotifications.createChannels(this)
         nearbyRelayTransport = NearbyRelayTransport(
             context = this,
             localDeviceId = deviceId,
@@ -286,7 +290,11 @@ class LocationTrackingService : Service() {
             onIncomingEnvelope = { envelope -> storeIncomingRelayEnvelope(envelope) },
             onTransportStatus = { status -> TrackerPreferences.setStatus(this, status) },
             onIncomingDocument = { bytes, acknowledge -> acceptRelayReceipt(deviceId, bytes, acknowledge) },
-            canPublishPosition = ::canPublishNearbyPosition
+            canPublishPosition = ::canPublishNearbyPosition,
+            onDogSignal = { signal ->
+                TrackerPreferences.isTracking(this) && TrackerPreferences.relayEnabled(this) &&
+                    DogSignalNotifications.show(this, signal)
+            }
         ).also(NearbyRelayTransport::start)
     }
 
@@ -354,12 +362,18 @@ class LocationTrackingService : Service() {
 
     private fun scheduleUpload(reconnected: Boolean = false) {
         val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .apply {
+                if (reconnected) setRequiredNetworkRequest(relayInternetRequest(), NetworkType.CONNECTED)
+                else setRequiredNetworkType(NetworkType.CONNECTED)
+            }
             .build()
         val request = OneTimeWorkRequestBuilder<LocationUploadWorker>()
             .setConstraints(constraints)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .setInputData(workDataOf(LocationUploadWorker.REFRESH_RELAY_ON_RECONNECT to reconnected))
+            .apply {
+                if (reconnected) setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            }
             .build()
 
         WorkManager.getInstance(applicationContext).enqueueUniqueWork(

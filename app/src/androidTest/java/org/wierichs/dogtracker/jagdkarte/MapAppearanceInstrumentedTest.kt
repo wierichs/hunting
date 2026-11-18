@@ -41,6 +41,60 @@ class MapAppearanceInstrumentedTest {
     private val district = JSONObject("""{"type":"Polygon","coordinates":[[
         [9.515,47.135],[9.525,47.135],[9.525,47.145],[9.515,47.145],[9.515,47.135]]]}""")
 
+    @Test fun broadcastButtonAppearsAboveMarkerButtonOnlyInHuntingMode() {
+        val huntingMode = mutableStateOf(false)
+        var opened = false
+        rule.setContent {
+            MaterialTheme {
+                NativeHuntingMap(HuntingSnapshot(
+                    HuntingProfile("broadcast-test", "Testrevier", "test-owner", huntingMode.value, district),
+                    emptyList(), true
+                ), Instant.now(), Modifier.fillMaxSize(), onChooseLocation = { false },
+                    onOpenBroadcasts = { opened = true })
+            }
+        }
+        rule.onNodeWithContentDescription("Rundnachrichten").assertDoesNotExist()
+        val plus = rule.onNodeWithContentDescription("Markierung setzen").assertIsDisplayed()
+        rule.runOnIdle { huntingMode.value = true }
+        val envelope = rule.onNodeWithContentDescription("Rundnachrichten").assertIsDisplayed()
+        assertTrue(envelope.getUnclippedBoundsInRoot().bottom < plus.getUnclippedBoundsInRoot().top)
+        envelope.performClick()
+        rule.runOnIdle { assertTrue(opened) }
+    }
+
+    @Test fun movementArrowTouchesMarkerAndPointsAlongTheBearing() {
+        val arrowColor = android.graphics.Color.rgb(0, 166, 223)
+        val markerSize = (36 * context.resources.displayMetrics.density).toInt()
+        val bearings = listOf(0.0 to (0 to -1), 90.0 to (1 to 0),
+            180.0 to (0 to 1), 270.0 to (-1 to 0))
+        for (asset in listOf("location-member.svg", "location-dog.svg")) {
+            bearings.forEach { (bearing, direction) ->
+                val (dx, dy) = direction
+                val (drawable, anchorX, anchorY) = directedLocationIcon(context, asset, bearing)
+                val width = drawable.intrinsicWidth
+                val height = drawable.intrinsicHeight
+                val centerX = (width * anchorX).roundToInt()
+                val centerY = (height * anchorY).roundToInt()
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                drawable.setBounds(0, 0, width, height)
+                drawable.draw(Canvas(bitmap))
+                assertNotEquals(0, bitmap.getPixel(centerX, centerY))
+                assertNotEquals(arrowColor, bitmap.getPixel(centerX, centerY))
+                for (offset in markerSize / 3..markerSize) {
+                    assertNotEquals("Gap along $asset at $bearing°", 0,
+                        bitmap.getPixel(centerX + dx * offset, centerY + dy * offset))
+                }
+                assertEquals(arrowColor, bitmap.getPixel(centerX + dx * markerSize, centerY + dy * markerSize))
+                val opposite = (markerSize * 0.65f).roundToInt()
+                val oppositeX = centerX - dx * opposite
+                val oppositeY = centerY - dy * opposite
+                if (oppositeX in 0 until width && oppositeY in 0 until height) {
+                    assertEquals(0, bitmap.getPixel(oppositeX, oppositeY))
+                }
+            }
+        }
+    }
+
     @Test fun menuHidesUnavailableOfflineAndDisablesUnavailableAerial() {
         rule.setContent { MaterialTheme {
             MapStyleMenu(HuntingMapStyle.OPEN_STREET_MAP, false, false, {}, {})

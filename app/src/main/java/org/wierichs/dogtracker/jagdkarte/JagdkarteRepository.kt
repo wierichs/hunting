@@ -52,8 +52,11 @@ internal fun participantMarkerIconAsset(role: HuntingParticipantRole): String = 
     HuntingParticipantRole.OWNER -> "location-owner.svg"
 }
 
-internal fun dogLocationIconAsset(stale: Boolean): String =
-    if (stale) "location-dog-stale.svg" else "location-dog.svg"
+internal fun dogLocationIconAsset(stale: Boolean, own: Boolean = false): String = when {
+    own -> "location-dog-own.svg"
+    stale -> "location-dog-stale.svg"
+    else -> "location-dog.svg"
+}
 
 internal data class HuntingMapPoint(
     val latitude: Double,
@@ -95,9 +98,10 @@ internal data class HuntingSnapshot(
     val positionLabels: Map<Pair<MapPointKind, String>, HuntingPositionLabel> = emptyMap()
 )
 
-internal data class HuntingPositionLabel(val name: String, val role: HuntingParticipantRole = HuntingParticipantRole.GUEST)
+internal data class HuntingPositionLabel(val name: String, val role: HuntingParticipantRole = HuntingParticipantRole.GUEST,
+    val createdBy: String? = null)
 
-internal data class HuntingDog(val id: String, val name: String)
+internal data class HuntingDog(val id: String, val name: String, val createdBy: String? = null)
 
 internal enum class DogDevicePairingStatus { PENDING, ACTIVE, NOT_FOUND }
 
@@ -412,18 +416,18 @@ internal class JagdkarteRepository(
                         participantRole = participantRoles[participantId] ?: HuntingParticipantRole.GUEST)
             }
             val dogs = mutableMapOf<String, String>()
-            rows(request("rest/v1/hunting_dogs?select=id,name&profile_id=eq.$profileId", bearer = token)) { row ->
+            rows(request("rest/v1/hunting_dogs?select=id,name,created_by&profile_id=eq.$profileId", bearer = token)) { row ->
                 val id = row.getString("id")
                 val name = row.getString("name")
                 dogs[id] = name
-                positionLabels[MapPointKind.DOG to id] = HuntingPositionLabel(name)
+                positionLabels[MapPointKind.DOG to id] = HuntingPositionLabel(name, createdBy = row.getString("created_by"))
             }
             rows(request("rest/v1/hunting_dog_locations?select=dog_id,latitude,longitude,accuracy,recorded_at&profile_id=eq.$profileId", bearer = token)) { row ->
                 val recorded = row.instant("recorded_at")
                 val dogId = row.getString("dog_id")
                 points += point(row, dogs[dogId] ?: "Hund",
                     "Messzeit: ${recorded ?: "unbekannt"}\nGenauigkeit: ${row.optDouble("accuracy").toInt()} m", MapPointKind.DOG)
-                    .copy(subjectId = dogId,
+                    .copy(subjectId = dogId, createdBy = positionLabels[MapPointKind.DOG to dogId]?.createdBy,
                         accuracyMeters = row.optDouble("accuracy", Double.NaN).takeIf(Double::isFinite),
                         timestamp = recorded)
             }
@@ -622,8 +626,8 @@ internal class JagdkarteRepository(
 
     suspend fun dogs(profileId: String): List<HuntingDog> = authenticated { token ->
         val result = mutableListOf<HuntingDog>()
-        rows(request("rest/v1/hunting_dogs?select=id,name&profile_id=eq.${uuid(profileId)}&order=name", bearer = token)) {
-            result += HuntingDog(it.getString("id"), it.getString("name"))
+        rows(request("rest/v1/hunting_dogs?select=id,name,created_by&profile_id=eq.${uuid(profileId)}&order=name", bearer = token)) {
+            result += HuntingDog(it.getString("id"), it.getString("name"), it.getString("created_by"))
         }
         result
     }

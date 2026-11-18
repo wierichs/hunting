@@ -114,7 +114,7 @@ internal class JagdkarteOfflineCache(context: Context) {
         .put("positionLabels", JSONArray().apply {
             snapshot.positionLabels.forEach { (key, label) ->
                 put(JSONObject().put("kind", key.first.name).put("id", key.second)
-                    .put("name", label.name).put("role", label.role.id))
+                    .put("name", label.name).put("role", label.role.id).put("createdBy", label.createdBy ?: JSONObject.NULL))
             }
         })
         .put("points", JSONArray().apply {
@@ -162,7 +162,8 @@ internal class JagdkarteOfflineCache(context: Context) {
             (0 until array.length()).associate { index ->
                 val entry = array.getJSONObject(index)
                 (MapPointKind.valueOf(entry.getString("kind")) to entry.getString("id")) to
-                    HuntingPositionLabel(entry.getString("name"), HuntingParticipantRole.fromId(entry.optString("role")))
+                    HuntingPositionLabel(entry.getString("name"), HuntingParticipantRole.fromId(entry.optString("role")),
+                        entry.optNullableString("createdBy"))
             }
         }.orEmpty()
         return HuntingSnapshot(profile, points, canEdit = false, cachedAt = savedAt, isStale = true, positionLabels = labels)
