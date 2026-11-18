@@ -24,6 +24,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
@@ -32,9 +33,12 @@ import com.google.android.gms.location.Priority
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.io.IOException
+import java.security.GeneralSecurityException
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
@@ -50,6 +54,9 @@ import org.wierichs.dogtracker.communication.RelaySigningIdentity
 import org.wierichs.dogtracker.communication.SqliteMessageStore
 import org.wierichs.dogtracker.communication.VerifiedRelayReceipt
 import org.wierichs.dogtracker.communication.acknowledgeDogRelayReceipt
+import org.wierichs.dogtracker.communication.localPosition
+import org.wierichs.dogtracker.communication.nextRelaySequence
+import org.wierichs.dogtracker.communication.internetRestorations
 import org.wierichs.dogtracker.communication.RelayGateway
 import org.wierichs.dogtracker.communication.RelayGatewayService
 
@@ -58,6 +65,7 @@ class LocationTrackingService : Service() {
     private val fusedLocationClient by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private var locationCallback: LocationCallback? = null
     private var nearbyRelayTransport: NearbyRelayTransport? = null
+    private var networkMonitor: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -120,6 +128,11 @@ class LocationTrackingService : Service() {
         updateForegroundServiceTypes(includeNearbyRelay = relayCanStart)
         startNearbyRelayIfEligible()
         requestLocationUpdates(intervalSeconds)
+        if (networkMonitor == null) networkMonitor = serviceScope.launch {
+            internetRestorations(applicationContext).collect {
+                if (TrackerPreferences.isTracking(this@LocationTrackingService)) scheduleUpload(reconnected = true)
+            }
+        }
         return START_STICKY
     }
 
@@ -173,6 +186,8 @@ class LocationTrackingService : Service() {
             .toString()
 
         serviceScope.launch(Dispatchers.IO) {
+            startNearbyRelayIfEligible()
+            publishNearbyPosition(location)
             val pendingCount = try {
                 SqliteMessageStore(this@LocationTrackingService).use { store ->
                     store.enqueue(
@@ -197,11 +212,32 @@ class LocationTrackingService : Service() {
                 this@LocationTrackingService,
                 "Position lokal gespeichert; Upload ausstehend ($pendingCount)."
             )
-            startNearbyRelayIfEligible()
             nearbyRelayTransport?.sendPendingToAll()
             scheduleUpload()
         }
     }
+
+    private fun publishNearbyPosition(location: Location) {
+        val transport = nearbyRelayTransport ?: return
+        if (!canPublishNearbyPosition() ||
+            System.currentTimeMillis() - location.time !in -30_000L..30_000L) return
+        val deviceId = TrackerPreferences.relayDeviceId(this) ?: return
+        val directory = DogRelayAuthorization.current(this, deviceId) ?: return
+        if (directory.deviceKind(deviceId) != "dog" || directory.subjectId(deviceId) == null) return
+        try {
+            directory.localPosition(location, nextRelaySequence(this, deviceId))?.let(transport::publishPosition)
+        } catch (failure: IOException) {
+            android.util.Log.w("LocationTrackingService", "Nearby-Positionssequenz konnte nicht gespeichert werden.", failure)
+        } catch (failure: GeneralSecurityException) {
+            android.util.Log.w("LocationTrackingService", "Nearby-Position konnte nicht signiert werden.", failure)
+        } catch (failure: IllegalArgumentException) {
+            android.util.Log.w("LocationTrackingService", "Nearby-Position konnte nicht vorbereitet werden.", failure)
+        }
+    }
+
+    private fun canPublishNearbyPosition(): Boolean =
+        TrackerPreferences.isTracking(this) && TrackerPreferences.relayEnabled(this) &&
+            readHuntingPermissions(this).ready && hasNearbyPermissions()
 
     private fun createRelayEnvelopeIfReady(locationPayload: String): CommunicationMessage? {
         if (!TrackerPreferences.relayEnabled(this)) return null
@@ -249,7 +285,8 @@ class LocationTrackingService : Service() {
             authorization = { DogRelayAuthorization.current(this, deviceId) },
             onIncomingEnvelope = { envelope -> storeIncomingRelayEnvelope(envelope) },
             onTransportStatus = { status -> TrackerPreferences.setStatus(this, status) },
-            onIncomingDocument = { bytes, acknowledge -> acceptRelayReceipt(deviceId, bytes, acknowledge) }
+            onIncomingDocument = { bytes, acknowledge -> acceptRelayReceipt(deviceId, bytes, acknowledge) },
+            canPublishPosition = ::canPublishNearbyPosition
         ).also(NearbyRelayTransport::start)
     }
 
@@ -315,18 +352,19 @@ class LocationTrackingService : Service() {
         ServiceCompat.startForeground(this, NOTIFICATION_ID, trackingNotification(), serviceTypes)
     }
 
-    private fun scheduleUpload() {
+    private fun scheduleUpload(reconnected: Boolean = false) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
         val request = OneTimeWorkRequestBuilder<LocationUploadWorker>()
             .setConstraints(constraints)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .setInputData(workDataOf(LocationUploadWorker.REFRESH_RELAY_ON_RECONNECT to reconnected))
             .build()
 
         WorkManager.getInstance(applicationContext).enqueueUniqueWork(
             UPLOAD_WORK_NAME,
-            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            if (reconnected) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.APPEND_OR_REPLACE,
             request
         )
     }

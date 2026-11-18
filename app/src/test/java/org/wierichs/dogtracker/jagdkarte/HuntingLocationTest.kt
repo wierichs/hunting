@@ -9,6 +9,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import org.wierichs.dogtracker.communication.OfflinePositionMessage
 
 class HuntingLocationTest {
     private val now = Instant.parse("2026-11-02T10:00:00Z")
@@ -65,6 +66,45 @@ class HuntingLocationTest {
         assertTrue(point.copy(expiresAt = now.plusSeconds(1)).visibleAt(now))
         assertFalse(point.copy(latitude = 91.0, expiresAt = null).visibleAt(now))
     }
+
+    @Test fun nearbyPositionsStayVisibleAndTurnStaleAtExactlyTwoMinutes() {
+        val profile = HuntingProfile("revier", "Testrevier", "anna", true, null)
+        val snapshot = HuntingSnapshot(profile, emptyList(), canEdit = false, isStale = true)
+        val positions = listOf(nearbyFix("anna", "participant", now), nearbyFix("fido", "dog", now))
+        val points = snapshot.withNearbyPositions(positions, now).points
+        assertEquals(setOf(MapPointKind.PARTICIPANT, MapPointKind.DOG), points.map { it.kind }.toSet())
+        points.forEach {
+            assertFalse(it.staleAt(now.plusSeconds(120).minusMillis(1)))
+            assertTrue(it.staleAt(now.plusSeconds(120)))
+            assertTrue(it.visibleAt(now.plusSeconds(600)))
+        }
+        assertTrue(snapshot.copy(profile = profile.copy(huntingMode = false))
+            .withNearbyPositions(positions, now.plusSeconds(600)).points.isEmpty())
+    }
+
+    @Test fun onlineAndNearbyPositionsMergeWithoutDuplicatingTheSameParticipant() {
+        val profile = HuntingProfile("revier", "Testrevier", "anna", true, null)
+        val server = HuntingMapPoint(52.0, 7.0, "Anna", "", MapPointKind.PARTICIPANT,
+            timestamp = now.minusSeconds(10), subjectId = "anna")
+        val snapshot = HuntingSnapshot(profile, listOf(server), canEdit = true, positionLabels = mapOf(
+            (MapPointKind.PARTICIPANT to "anna") to HuntingPositionLabel("Anna", HuntingParticipantRole.OWNER)
+        ))
+        val nearby = nearbyFix("anna", "participant", now, latitude = 51.0)
+        val point = snapshot.withNearbyPositions(listOf(
+            nearby, nearby.copy(senderDeviceId = "second-phone", recordedAtEpochMillis = now.minusSeconds(30).toEpochMilli()),
+            nearby.copy(profileId = "anderes-revier", subjectId = "fremd")
+        ), now).points.single()
+        assertTrue(point.isNearby)
+        assertEquals(51.0, point.latitude, 0.0)
+        assertEquals("Anna", point.title)
+        assertEquals(HuntingParticipantRole.OWNER, point.participantRole)
+        assertEquals(server, snapshot.withNearbyPositions(
+            listOf(nearby.copy(recordedAtEpochMillis = now.minusSeconds(20).toEpochMilli())), now
+        ).points.single())
+    }
+
+    private fun nearbyFix(subject: String, kind: String, measuredAt: Instant, latitude: Double = 51.0) =
+        OfflinePositionMessage("revier", "phone", kind, subject, 1, measuredAt.toEpochMilli(), latitude, 7.0, 5.0, "")
 
     @Test fun participantRpcUsesItsActualColumnNamesAndSafeFallbacks() {
         val names = participantNames(JSONArray("""[

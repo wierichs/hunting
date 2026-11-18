@@ -126,8 +126,14 @@ import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
+import org.wierichs.dogtracker.communication.LocationPayloadCryptoException
+import org.wierichs.dogtracker.communication.OfflinePositionMessage
+import org.wierichs.dogtracker.communication.OfflinePositionStore
+import org.wierichs.dogtracker.communication.PositionSharing
 import org.wierichs.dogtracker.communication.RelayGateway
 import org.wierichs.dogtracker.communication.RelayGatewayStatus
+import org.wierichs.dogtracker.communication.UnreadableLocationPayloadException
+import org.wierichs.dogtracker.communication.internetRestorations
 import org.wierichs.dogtracker.HuntingMapCamera
 import org.wierichs.dogtracker.TrackerPreferences
 import org.wierichs.dogtracker.HuntingPermissionState
@@ -186,7 +192,7 @@ internal fun JagdkarteScreen(
     var selectedId by remember(repository.userId) {
         mutableStateOf(TrackerPreferences.lastHuntingProfileId(context, repository.userId))
     }
-    var snapshot by remember { mutableStateOf<HuntingSnapshot?>(null) }
+    var snapshot by remember(repository.userId) { mutableStateOf<HuntingSnapshot?>(null) }
     var status by remember { mutableStateOf("") }
     var invitationStatus by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
@@ -241,6 +247,7 @@ internal fun JagdkarteScreen(
     var trackerActive by remember { mutableStateOf(TrackerPreferences.isTracking(context)) }
     var nextRelayAttemptAt by remember(selectedId, huntingAccess.ready, signedIn) { mutableStateOf(0L) }
     var relayRetryTick by remember { mutableStateOf(0) }
+    var networkRevision by remember { mutableStateOf(0) }
     DisposableEffect(context, selectedId, repository.userId) {
         val preferences = context.getSharedPreferences("tracker_settings", Context.MODE_PRIVATE)
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
@@ -400,6 +407,14 @@ internal fun JagdkarteScreen(
         }
     }
 
+    LaunchedEffect(context) {
+        internetRestorations(context).collect {
+            nextRelayAttemptAt = 0L
+            relayRetryTick++
+            networkRevision++
+        }
+    }
+
     LaunchedEffect(pendingGuestLinkToken, signedIn, guestLinkAttempt) {
         val token = pendingGuestLinkToken?.takeIf { signedIn } ?: return@LaunchedEffect
         guestLinkBusy = true
@@ -478,14 +493,18 @@ internal fun JagdkarteScreen(
                     while (true) {
                         try {
                             val location = freshLocation(context)
-                            check(RelayGateway.enqueue(profileId, location))
-                            sharingStatus = "Standort lokal gespeichert; Serverbestaetigung siehe Relaisstatus."
+                            sharingStatus = when (checkNotNull(RelayGateway.enqueue(profileId, location))) {
+                                PositionSharing.NEARBY_ONLY ->
+                                    "Standort fuer Geraete in der Naehe bereit; kein Serverupload."
+                                PositionSharing.SERVER_QUEUED ->
+                                    "Standort lokal gespeichert; Serverbestaetigung siehe Relaisstatus."
+                            }
                         } catch (cancelled: CancellationException) {
                             throw cancelled
-                        } catch (_: Exception) {
+                        } catch (failure: Exception) {
                             RelayGateway.cancelOwn(profileId)
                             runCatching { repository.removeLocation(profileId) }
-                            sharingStatus = "Standort nicht bestaetigt; Verbindung und GPS pruefen."
+                            sharingStatus = failure.message ?: "Standort nicht bestaetigt; Verbindung und GPS pruefen."
                         }
                         delay(30_000)
                     }
@@ -504,7 +523,7 @@ internal fun JagdkarteScreen(
         }
     }
 
-    LaunchedEffect(signedIn, revision) {
+    LaunchedEffect(signedIn, revision, networkRevision) {
         if (!signedIn) {
             profiles = emptyList()
             hiddenProfileIds = emptySet()
@@ -594,46 +613,82 @@ internal fun JagdkarteScreen(
         }
     }
 
-    LaunchedEffect(selectedId, signedIn, revision) {
-        val profileId = selectedId?.takeIf { signedIn } ?: return@LaunchedEffect
-        snapshot = withContext(Dispatchers.IO) { offlineCache.load(repository.userId, profileId)?.snapshot }
-        snapshot?.cachedAt?.let { cachedAt ->
-            status = "Offline-Stand vom $cachedAt. Live-Positionen fehlen."
+    LaunchedEffect(selectedId, signedIn, revision, networkRevision) {
+        val profileId = selectedId?.takeIf { signedIn }
+        if (profileId == null) {
+            snapshot = null
+            return@LaunchedEffect
+        }
+        if (snapshot?.profile?.id != profileId) {
+            snapshot = withContext(Dispatchers.IO) { offlineCache.load(repository.userId, profileId)?.snapshot }
+            snapshot?.cachedAt?.let { cachedAt ->
+                status = "Offline-Stand vom $cachedAt. Serverpositionen nicht verfügbar."
+            }
         }
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             var consecutiveFailures = 0
-            try {
-                while (true) {
-                    try {
-                        val freshSnapshot = repository.snapshot(profileId)
-                        snapshot = freshSnapshot
-                        withContext(Dispatchers.IO) {
-                            runCatching { offlineCache.save(repository.userId, freshSnapshot) }
-                        }
-                        consecutiveFailures = 0
-                        status = "Stand: ${java.time.LocalTime.now().withNano(0)}"
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Exception) {
-                        consecutiveFailures++
-                        val cached = withContext(Dispatchers.IO) { offlineCache.load(repository.userId, profileId) }
-                        if (cached != null) {
-                            snapshot = cached.snapshot
-                            val reason = if (error is JagdkarteApiException) "HTTP ${error.status}"
-                            else error.javaClass.simpleName
-                            status = "Offline-Stand vom ${cached.savedAt}. Live-Positionen fehlen. Aktualisierung fehlgeschlagen ($reason)."
-                        } else {
-                            snapshot = null
-                            status = error.message ?: "Aktualisierung fehlgeschlagen."
-                        }
+            while (true) {
+                try {
+                    val freshSnapshot = repository.snapshot(profileId)
+                    snapshot = freshSnapshot
+                    withContext(Dispatchers.IO) {
+                        runCatching { offlineCache.save(repository.userId, freshSnapshot) }
                     }
-                    val retryDelay = if (consecutiveFailures > 0) {
-                        minOf(300_000L, 30_000L * (1L shl (consecutiveFailures - 1).coerceAtMost(4)))
-                    } else if (snapshot?.profile?.huntingMode == true) 30_000L else 300_000L
-                    delay(retryDelay)
+                    consecutiveFailures = 0
+                    status = "Stand: ${java.time.LocalTime.now().withNano(0)}"
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    consecutiveFailures++
+                    val accessDenied = error is JagdkarteApiException && error.status in setOf(401, 403, 404)
+                    val cached = if (accessDenied) null else withContext(Dispatchers.IO) {
+                        offlineCache.load(repository.userId, profileId)
+                    }
+                    if (cached != null) {
+                        snapshot = cached.snapshot
+                        val reason = if (error is JagdkarteApiException) "HTTP ${error.status}"
+                        else error.javaClass.simpleName
+                        status = "Offline-Stand vom ${cached.savedAt}. Serverpositionen nicht verfügbar ($reason)."
+                    } else {
+                        snapshot = null
+                        status = error.message ?: "Aktualisierung fehlgeschlagen."
+                    }
                 }
-            } finally {
-                snapshot = null
+                val retryDelay = if (consecutiveFailures > 0) {
+                    minOf(300_000L, 30_000L * (1L shl (consecutiveFailures - 1).coerceAtMost(4)))
+                } else if (snapshot?.profile?.huntingMode == true) 30_000L else 300_000L
+                delay(retryDelay)
+            }
+        }
+    }
+
+    val nearbyUserId = repository.userId
+    val nearbyProfileId = selectedId?.takeIf {
+        signedIn && huntingAccess.ready && snapshot?.profile?.id == it && snapshot?.profile?.huntingMode == true
+    }
+    var nearbyPositions by remember(nearbyUserId, nearbyProfileId) { mutableStateOf(emptyList<OfflinePositionMessage>()) }
+    var nearbyReadFailed by remember(nearbyUserId, nearbyProfileId) { mutableStateOf(false) }
+    LaunchedEffect(lifecycle, nearbyUserId, nearbyProfileId) {
+        val profileId = nearbyProfileId ?: return@LaunchedEffect
+        if (nearbyUserId.isBlank()) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            OfflinePositionStore.changes.collect {
+                try {
+                    nearbyPositions = withContext(Dispatchers.IO) {
+                        OfflinePositionStore(context).use { it.load(nearbyUserId, profileId) }
+                    }
+                    nearbyReadFailed = false
+                } catch (failure: Exception) {
+                    when (failure) {
+                        is android.database.sqlite.SQLiteException, is LocationPayloadCryptoException,
+                        is UnreadableLocationPayloadException -> {
+                            android.util.Log.w("JagdkarteScreen", "Nearby-Positionen konnten nicht gelesen werden.", failure)
+                            nearbyPositions = emptyList()
+                            nearbyReadFailed = true
+                        }
+                        else -> throw failure
+                    }
+                }
             }
         }
     }
@@ -690,7 +745,9 @@ internal fun JagdkarteScreen(
             }
         }
         val visibleSnapshot = snapshot?.let { current ->
-            if (huntingAccess.ready) current else current.copy(points = current.points.filterNot {
+            if (signedIn && huntingAccess.ready && current.profile.id == selectedId) {
+                current.withNearbyPositions(nearbyPositions, now)
+            } else current.copy(points = current.points.filterNot {
                 it.kind == MapPointKind.PARTICIPANT || it.kind == MapPointKind.DOG
             })
         }
@@ -709,7 +766,7 @@ internal fun JagdkarteScreen(
         }, markerIconSize = markerIconSize, focusMarkerId = guestFocusMarkerId,
             focusRequest = guestFocusRequest, currentUserId = repository.userId, onMarkerSelected = { markerId ->
             editingMarker = snapshot?.takeUnless { it.isStale }?.points?.firstOrNull { it.markerId == markerId }
-        }, statusMessage = status,
+        }, statusMessage = if (nearbyReadFailed) "Nearby-Positionen konnten nicht geladen werden." else status,
             ownLocationVisible = ownLocationVisible,
             onToggleOwnLocation = {
                 if (ownLocationVisible) ownLocationVisible = false
@@ -749,7 +806,12 @@ internal fun JagdkarteScreen(
                                 scope.launch {
                                     try {
                                         repository.setHuntingMode(profile.profile.id, enabled)
-                                        if (selectedId == profile.profile.id) revision++
+                                        if (selectedId == profile.profile.id) {
+                                            if (!enabled) snapshot = snapshot?.let {
+                                                it.copy(profile = it.profile.copy(huntingMode = false))
+                                            }
+                                            revision++
+                                        }
                                     } catch (cancelled: CancellationException) {
                                         throw cancelled
                                     } catch (failure: Exception) {
@@ -1505,7 +1567,7 @@ internal fun NativeHuntingMap(
                     bounds.addAll(rings.first())
                 }
                 points.forEach { point ->
-                    val movement = point.subjectId?.let(movementDirections::get)
+                    val movement = point.subjectId?.takeUnless { point.staleAt(now) }?.let(movementDirections::get)
                         ?.takeIf { isDirectionFresh(it, now) }
                     val directionLabel = movement?.let { compassDirectionLabel(it.bearingDegrees) }
                     view.overlays.add(Marker(view).apply {
@@ -1527,6 +1589,7 @@ internal fun NativeHuntingMap(
                                 participantMarkerIconAsset(point.participantRole)
                             }
                             icon = locationIcon(context, iconAsset)
+                            if (point.kind == MapPointKind.PARTICIPANT && point.staleAt(now)) alpha = 0.5f
                         }
                         if (movement != null && point.kind != MapPointKind.FACILITY) {
                             val origin = GeoPoint(point.latitude, point.longitude)
@@ -1681,6 +1744,9 @@ internal fun NativeHuntingMap(
                             }
                             if (visiblePoints.any { it.kind == MapPointKind.DOG }) {
                                 LocationLegendEntry(context, "location-dog.svg", "Hund")
+                            }
+                            if (visiblePoints.any { it.staleAt(now) }) {
+                                Text("Blass oder grau: letzte bekannte Position", style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }

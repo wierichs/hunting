@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -20,6 +21,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.IOException
+import org.wierichs.dogtracker.communication.DogRelayAuthorization
 
 @RunWith(AndroidJUnit4::class)
 class TrackerPairingInstrumentedTest {
@@ -143,5 +145,26 @@ class TrackerPairingInstrumentedTest {
         rule.onNodeWithText("Relaiswechsel nicht abgeschlossen.").assertIsDisplayed()
         assertEquals(0, starts)
         assertEquals(false, TrackerPreferences.isTracking(context))
+    }
+
+    @Test fun missingNearbyAuthorizationIsVisibleWhileTrackerWaitsForGps() {
+        prepareTrackingPermissions()
+        val relayWasEnabled = TrackerPreferences.relayEnabled(context)
+        val previousStatus = TrackerPreferences.status(context)
+        try {
+            DogRelayAuthorization.clear(context)
+            TrackerPreferences.setRelayEnabled(context, true)
+            TrackerPreferences.setTracking(context, true)
+            TrackerPreferences.setStatus(context, "Warte auf Standortdaten …")
+            showTracker { _, _ -> error("Keine Kopplung erwartet") }
+
+            val warning = "Nearby-Relais pausiert: Revierberechtigung fehlt oder ist abgelaufen. Bitte einmal online gehen."
+            rule.waitUntil(5_000) { rule.onAllNodesWithText(warning).fetchSemanticsNodes().isNotEmpty() }
+            rule.onNodeWithText(warning).performScrollTo().assertIsDisplayed()
+            rule.onNodeWithText("Warte auf Standortdaten …").performScrollTo().assertIsDisplayed()
+        } finally {
+            TrackerPreferences.setRelayEnabled(context, relayWasEnabled)
+            TrackerPreferences.setStatus(context, previousStatus)
+        }
     }
 }

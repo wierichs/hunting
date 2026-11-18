@@ -57,13 +57,16 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.wierichs.dogtracker.ui.theme.DogTrackerTheme
 import org.wierichs.dogtracker.jagdkarte.JagdkarteScreen
 import org.wierichs.dogtracker.jagdkarte.guestLinkTokenFromUrl
 import org.wierichs.dogtracker.jagdkarte.EmailAuthLink
 import org.wierichs.dogtracker.jagdkarte.emailAuthLinkFromUrl
+import org.wierichs.dogtracker.communication.DogRelayAuthorization
 import org.wierichs.dogtracker.communication.RelayGateway
 import org.wierichs.dogtracker.DogTrackerPairingQrCode
 
@@ -239,6 +242,7 @@ internal fun TrackerScreen(
     }
     var isTracking by rememberSaveable { mutableStateOf(TrackerPreferences.isTracking(context)) }
     var status by remember { mutableStateOf(TrackerPreferences.status(context)) }
+    var relayStatus by remember(isTracking) { mutableStateOf<String?>(null) }
     var validationMessage by remember { mutableStateOf("") }
     val hostActivity = context as? Activity
 
@@ -370,6 +374,25 @@ internal fun TrackerScreen(
         }
     }
 
+    LaunchedEffect(isTracking) {
+        if (!isTracking) return@LaunchedEffect
+        while (true) {
+            relayStatus = withContext(Dispatchers.IO) {
+                if (!TrackerPreferences.relayEnabled(context)) return@withContext "Nearby-Relais ist ausgeschaltet."
+                val deviceId = TrackerPreferences.relayDeviceId(context)
+                val directory = deviceId?.let { DogRelayAuthorization.current(context, it) }
+                when {
+                    directory == null -> "Nearby-Relais pausiert: Revierberechtigung fehlt oder ist abgelaufen. Bitte einmal online gehen."
+                    directory.deviceKind(directory.localDeviceId) != "dog" ||
+                        directory.subjectId(directory.localDeviceId) == null ->
+                        "Nearby-Positionsversand benötigt ein aktuelles Revierverzeichnis. Bitte einmal online gehen."
+                    else -> "Nearby-Revierberechtigung ist gültig."
+                }
+            }
+            delay(10_000)
+        }
+    }
+
     Scaffold(modifier = Modifier.fillMaxSize(), contentWindowInsets = WindowInsets(0, 0, 0, 0)) { innerPadding ->
         Column(
             modifier = Modifier
@@ -492,6 +515,7 @@ internal fun TrackerScreen(
                     Text("Status", style = MaterialTheme.typography.titleSmall)
                     Text(if (isTracking) "Tracking aktiv" else "Tracking gestoppt")
                     Text(status, style = MaterialTheme.typography.bodyMedium)
+                    if (isTracking) relayStatus?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                 }
             }
 

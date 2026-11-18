@@ -36,6 +36,8 @@ internal data class RelayGatewayStatus(
     val confirmed: Int = 0
 )
 
+internal enum class PositionSharing { NEARBY_ONLY, SERVER_QUEUED }
+
 internal object RelayGateway {
     val state = MutableStateFlow(RelayGatewayStatus())
     @Volatile internal var engine: RelayGatewayEngine? = null
@@ -93,10 +95,9 @@ internal object RelayGateway {
         }
     }
 
-    suspend fun enqueue(profileId: String, location: Location): Boolean {
-        val current = engine?.takeIf { state.value.active && it.profileId == profileId } ?: return false
-        current.enqueueLocation(location)
-        return true
+    suspend fun enqueue(profileId: String, location: Location): PositionSharing? {
+        val current = engine?.takeIf { state.value.active && it.profileId == profileId } ?: return null
+        return current.enqueueLocation(location)
     }
 
     suspend fun cancelOwn(profileId: String) {
@@ -109,10 +110,12 @@ internal class RelayGatewayEngine(
     private val repository: JagdkarteRepository,
     private val profile: HuntingProfile,
     private val onIncoming: (RelayEnvelope) -> Unit,
-    private val onDocument: (ByteArray, () -> Unit) -> Unit
+    private val onDocument: (ByteArray, () -> Unit) -> Unit,
+    private val onPosition: ((OfflinePositionMessage, () -> Unit) -> Unit)? = null
 ) {
     val profileId: String get() = profile.id
     private val appContext = context.applicationContext
+    private val positionUserId = repository.userId
     private val mutex = Mutex()
     private var capabilities: RelayCapabilities? = null
     @Volatile private var directory: VerifiedRelayDirectory? = null
@@ -146,7 +149,10 @@ internal class RelayGatewayEngine(
             store!!.removeExpired()
             purgeOwn()
             transport = NearbyRelayTransport(appContext, id, { directory }, onIncoming, { status -> update(status) },
-                pendingPackets = { outgoing }, onIncomingDocument = onDocument)
+                pendingPackets = { outgoing }, onIncomingDocument = onDocument, onIncomingPosition = onPosition,
+                canPublishPosition = {
+                    readHuntingPermissions(appContext).ready && !TrackerPreferences.isTracking(appContext)
+                })
             refreshOutgoing()
             transport!!.start()
             RelayGateway.state.value = RelayGatewayStatus(active = true, profileId = profileId,
@@ -182,20 +188,35 @@ internal class RelayGatewayEngine(
             check(readHuntingPermissions(appContext).ready) {
                 "Jagdfreigabe oder erforderliche Berechtigung wurde entzogen."
             }
-            check(!closed && directory?.current() == true) { "Relaisberechtigung ist abgelaufen. Online-Verbindung erforderlich." }
-            check(hasValidatedRelayInternet(appContext)) { "Teilnehmerstandortfreigabe erfordert Internet." }
+            val current = checkNotNull(directory?.takeIf { !closed && it.current() }) {
+                "Relaisberechtigung ist abgelaufen. Online-Verbindung erforderlich."
+            }
             require(locationInsideBoundary(profile.boundary, location.latitude, location.longitude)) { "Standort ausserhalb des Reviers." }
             val now = System.currentTimeMillis()
             require(now - location.time in -30_000L..30_000L)
             val id = deviceId!!
-            if (sharingStopPending) stopSharingOnServer()
-            if (sharingEpoch == null) {
-                val response = repository.relayPost(JSONObject().put("action", "set_sharing").put("device_id", id).put("enabled", true))
-                sharingEpoch = response.getString("sharing_epoch")
+            val online = hasValidatedRelayInternet(appContext)
+            val hasBinding = current.subjectId(id) == positionUserId && positionUserId.isNotBlank()
+            check(online || hasBinding) { "Offline-Standortfreigabe muss einmal online erneuert werden." }
+            val sequence = nextRelaySequence(appContext, id)
+            val nearby = if (hasBinding) current.localPosition(location, sequence) else null
+            if (!online) {
+                nearby?.let { transport?.publishPosition(it) }
+                return@withLock PositionSharing.NEARBY_ONLY
             }
-            val preferences = appContext.getSharedPreferences("relay_sequences", Context.MODE_PRIVATE)
-            val sequence = Math.addExact(preferences.getLong(id, 0), 1)
-            check(preferences.edit().putLong(id, sequence).commit()) { "Sequenz konnte nicht dauerhaft gespeichert werden." }
+            try {
+                if (sharingStopPending) stopSharingOnServer()
+                if (sharingEpoch == null) {
+                    val response = repository.relayPost(JSONObject().put("action", "set_sharing").put("device_id", id).put("enabled", true))
+                    sharingEpoch = response.getString("sharing_epoch")
+                }
+            } catch (failure: IOException) {
+                if (nearby == null || failure is SSLException) throw failure
+                transport?.publishPosition(nearby)
+                update("Serverfreigabe nicht erreichbar; Position nur fuer Nearby bereit.")
+                return@withLock PositionSharing.NEARBY_ONLY
+            }
+            nearby?.let { transport?.publishPosition(it) }
             val payload = participantLocationPayload(profileId, sequence, location.latitude, location.longitude, location.accuracy, location.time, sharingEpoch!!)
             val envelope = RelayEnvelopeEncoder.create(id, payload, capabilities!!.encryption, RelaySigningIdentity::sign,
                 nowEpochMillis = location.time, lifetimeMillis = 90_000)
@@ -206,6 +227,7 @@ internal class RelayGatewayEngine(
             refreshOutgoing()
             update("Eigene Position lokal gespeichert; Serverbestaetigung ausstehend.")
             transport?.sendPendingToAll()
+            PositionSharing.SERVER_QUEUED
         }
     }
 
@@ -220,6 +242,16 @@ internal class RelayGatewayEngine(
             database.enqueue(envelope.toStoredMessage())
             refreshOutgoing()
             update("Reviermeldung dauerhaft gespeichert; Serverbestaetigung ausstehend.")
+        }
+    }
+
+    suspend fun acceptPosition(position: OfflinePositionMessage): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val currentDirectory = directory ?: return@withLock false
+            if (closed || positionUserId.isBlank() || !readHuntingPermissions(appContext).ready ||
+                TrackerPreferences.isTracking(appContext) || !position.verify(currentDirectory)
+            ) return@withLock false
+            OfflinePositionStore(appContext).use { it.save(positionUserId, position) }
         }
     }
 
@@ -250,7 +282,7 @@ internal class RelayGatewayEngine(
         update("Positionsmeldung vom Server bestaetigt.")
     }
 
-    suspend fun synchronize() = withContext(Dispatchers.IO) {
+    suspend fun synchronize(refreshOnReconnect: Boolean = false) = withContext(Dispatchers.IO) {
         mutex.withLock {
             if (closed) return@withLock
             store!!.removeExpired()
@@ -265,7 +297,7 @@ internal class RelayGatewayEngine(
                 }
                 return@withLock
             }
-            if (SystemClock.elapsedRealtime() >= nextRefresh) {
+            if (refreshOnReconnect || SystemClock.elapsedRealtime() >= nextRefresh) {
                 try { refreshAuthorization(); transport?.start() }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) {
@@ -319,6 +351,7 @@ internal class RelayGatewayEngine(
     suspend fun cancelOwn() = withContext(Dispatchers.IO) {
         mutex.withLock {
             if (closed || store == null) return@withLock
+            transport?.clearOwnPosition()
             sharingEpoch = null
             sharingStopPending = true
             purgeOwn()

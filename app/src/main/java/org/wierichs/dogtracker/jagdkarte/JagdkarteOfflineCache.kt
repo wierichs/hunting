@@ -111,6 +111,12 @@ internal class JagdkarteOfflineCache(context: Context) {
             .put("huntingMode", snapshot.profile.huntingMode)
             .put("boundary", snapshot.profile.boundary ?: JSONObject.NULL))
         .put("canEdit", false)
+        .put("positionLabels", JSONArray().apply {
+            snapshot.positionLabels.forEach { (key, label) ->
+                put(JSONObject().put("kind", key.first.name).put("id", key.second)
+                    .put("name", label.name).put("role", label.role.id))
+            }
+        })
         .put("points", JSONArray().apply {
             snapshot.points.forEach { point ->
                 put(JSONObject()
@@ -152,7 +158,14 @@ internal class JagdkarteOfflineCache(context: Context) {
                 createdBy = point.optNullableString("createdBy")
             )
         }
-        return HuntingSnapshot(profile, points, canEdit = false, cachedAt = savedAt, isStale = true)
+        val labels = json.optJSONArray("positionLabels")?.let { array ->
+            (0 until array.length()).associate { index ->
+                val entry = array.getJSONObject(index)
+                (MapPointKind.valueOf(entry.getString("kind")) to entry.getString("id")) to
+                    HuntingPositionLabel(entry.getString("name"), HuntingParticipantRole.fromId(entry.optString("role")))
+            }
+        }.orEmpty()
+        return HuntingSnapshot(profile, points, canEdit = false, cachedAt = savedAt, isStale = true, positionLabels = labels)
     }
 
     private fun JSONObject.optionalInstant(key: String): Instant? =

@@ -54,12 +54,16 @@ internal object RelayPeerAuthentication {
         }
 
         @Synchronized
-        fun authenticated(directory: VerifiedRelayDirectory): Boolean {
-            val proof = hello ?: return false
-            val sender = peerId ?: return false
-            return complete && directory.localDeviceId == localDeviceId && directory.profileId == profileId &&
-                RelayPeerAuthentication.verify(proof, "hello", localDeviceId, token, directory) == sender
+        fun authenticatedPeerId(directory: VerifiedRelayDirectory): String? {
+            val proof = hello ?: return null
+            val sender = peerId ?: return null
+            return sender.takeIf {
+                complete && directory.localDeviceId == localDeviceId && directory.profileId == profileId &&
+                    RelayPeerAuthentication.verify(proof, "hello", localDeviceId, token, directory) == sender
+            }
         }
+
+        fun authenticated(directory: VerifiedRelayDirectory): Boolean = authenticatedPeerId(directory) != null
     }
 
     fun verify(bytes: ByteArray, action: String, recipient: String, token: ByteArray,

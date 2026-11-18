@@ -19,6 +19,7 @@ import org.json.JSONObject
 import org.json.JSONTokener
 import org.wierichs.dogtracker.DeviceTokenStorage
 import org.wierichs.dogtracker.BackendConfiguration
+import org.wierichs.dogtracker.communication.OfflinePositionStore
 import org.wierichs.dogtracker.communication.RelayGatewayEngine
 
 internal data class HuntingProfile(
@@ -68,19 +69,21 @@ internal data class HuntingMapPoint(
     val participantRole: HuntingParticipantRole = HuntingParticipantRole.GUEST,
     val createdBy: String? = null,
     val subjectId: String? = null,
-    val accuracyMeters: Double? = null
+    val accuracyMeters: Double? = null,
+    val isNearby: Boolean = false
 ) {
     fun visibleAt(now: Instant): Boolean = when {
         !latitude.isFinite() || !longitude.isFinite() -> false
         latitude !in -90.0..90.0 || longitude !in -180.0..180.0 -> false
         expiresAt != null && !expiresAt.isAfter(now) -> false
+        isNearby -> true
         kind == MapPointKind.PARTICIPANT -> timestamp != null &&
             !timestamp.isAfter(now.plusSeconds(30)) && timestamp.isAfter(now.minusSeconds(90))
         else -> true
     }
 
-    fun staleAt(now: Instant): Boolean = kind == MapPointKind.DOG &&
-        (timestamp == null || timestamp.isBefore(now.minusSeconds(120)) || timestamp.isAfter(now.plusSeconds(30)))
+    fun staleAt(now: Instant): Boolean = (isNearby || kind == MapPointKind.DOG) &&
+        (timestamp == null || !timestamp.isAfter(now.minusSeconds(120)) || timestamp.isAfter(now.plusSeconds(30)))
 }
 
 internal data class HuntingSnapshot(
@@ -88,8 +91,11 @@ internal data class HuntingSnapshot(
     val points: List<HuntingMapPoint>,
     val canEdit: Boolean,
     val cachedAt: Instant? = null,
-    val isStale: Boolean = false
+    val isStale: Boolean = false,
+    val positionLabels: Map<Pair<MapPointKind, String>, HuntingPositionLabel> = emptyMap()
 )
+
+internal data class HuntingPositionLabel(val name: String, val role: HuntingParticipantRole = HuntingParticipantRole.GUEST)
 
 internal data class HuntingDog(val id: String, val name: String)
 
@@ -107,10 +113,11 @@ internal fun dogDevicePairingStatus(response: String): DogDevicePairingStatus =
 
 internal class JagdkarteApiException(val status: Int, val errorCode: String, message: String) : Exception(message)
 
-internal fun participantNames(array: JSONArray): Map<String, String> = (0 until array.length()).associate { index ->
+internal fun participantNames(array: JSONArray, includeEmailFallback: Boolean = true): Map<String, String> =
+    (0 until array.length()).associate { index ->
     val row = array.getJSONObject(index)
     val name = row.optString("display_name").trim().takeUnless { it.isBlank() || it == "null" }
-        ?: row.optString("participant_email").trim().takeUnless { it.isBlank() || it == "null" }
+        ?: row.optString("participant_email").trim().takeIf { includeEmailFallback && it.isNotBlank() && it != "null" }
         ?: "Teilnehmer"
     row.getString("participant_user_id") to name
 }
@@ -337,7 +344,13 @@ internal class JagdkarteRepository(
         }
     }
 
-    suspend fun profiles(): List<HuntingProfile> = authenticated(::loadProfiles)
+    suspend fun profiles(): List<HuntingProfile> = authenticated { token ->
+        loadProfiles(token).also { profiles ->
+            OfflinePositionStore(appContext).use { store ->
+                profiles.forEach { store.recordHuntingMode(userId, it.id, it.huntingMode) }
+            }
+        }
+    }
 
     suspend fun editableProfiles(): List<HuntingProfile> = authenticated { token ->
         val profiles = loadProfiles(token)
@@ -370,8 +383,10 @@ internal class JagdkarteRepository(
 
     suspend fun snapshot(profileId: String): HuntingSnapshot = authenticated { token ->
         val profile = loadProfile(token, profileId)
+        OfflinePositionStore(appContext).use { it.recordHuntingMode(userId, profile.id, profile.huntingMode) }
         val canEdit = canEditProfile(token, profile)
         val points = mutableListOf<HuntingMapPoint>()
+        val positionLabels = mutableMapOf<Pair<MapPointKind, String>, HuntingPositionLabel>()
         rows(request("rest/v1/hunting_markers?select=id,title,notes,type_id,latitude,longitude,expires_at,created_by&profile_id=eq.$profileId", bearer = token)) { row ->
             points += point(row, row.getString("title"), "${row.optString("type_id")}: ${row.optString("notes")}", MapPointKind.FACILITY)
                 .copy(expiresAt = row.instant("expires_at"), markerId = row.getString("id"),
@@ -383,6 +398,10 @@ internal class JagdkarteRepository(
                 JSONObject().put("p_profile_id", profileId), token))
             val participants = participantNames(participantRows)
             val participantRoles = participantRoles(participantRows)
+            participantNames(participantRows, includeEmailFallback = false).forEach { (id, name) ->
+                positionLabels[MapPointKind.PARTICIPANT to id] =
+                    HuntingPositionLabel(name, participantRoles[id] ?: HuntingParticipantRole.GUEST)
+            }
             rows(request("rest/v1/hunting_profile_locations?select=user_id,latitude,longitude,accuracy,updated_at&profile_id=eq.$profileId", bearer = token)) { row ->
                 val participantId = row.getString("user_id")
                 points += point(row, participants[participantId] ?: "Teilnehmer",
@@ -394,7 +413,10 @@ internal class JagdkarteRepository(
             }
             val dogs = mutableMapOf<String, String>()
             rows(request("rest/v1/hunting_dogs?select=id,name&profile_id=eq.$profileId", bearer = token)) { row ->
-                dogs[row.getString("id")] = row.getString("name")
+                val id = row.getString("id")
+                val name = row.getString("name")
+                dogs[id] = name
+                positionLabels[MapPointKind.DOG to id] = HuntingPositionLabel(name)
             }
             rows(request("rest/v1/hunting_dog_locations?select=dog_id,latitude,longitude,accuracy,recorded_at&profile_id=eq.$profileId", bearer = token)) { row ->
                 val recorded = row.instant("recorded_at")
@@ -406,7 +428,7 @@ internal class JagdkarteRepository(
                         timestamp = recorded)
             }
         }
-        HuntingSnapshot(profile, points, canEdit)
+        HuntingSnapshot(profile, points, canEdit, positionLabels = positionLabels)
     }
 
     suspend fun createMarker(profileId: String, draft: HuntingMarkerDraft, currentLocation: MarkerCoordinates?) = authenticated { token ->
@@ -583,7 +605,7 @@ internal class JagdkarteRepository(
     private fun loadProfile(token: String, profileId: String): HuntingProfile = parseProfiles(JSONArray(request(
         "rest/v1/hunting_profiles?select=id,district_name,owner_id,hunting_mode,boundary_geojson&id=eq.${uuid(profileId)}",
         bearer = token
-    ))).singleOrNull() ?: error("Kein Zugriff auf dieses Revier.")
+    ))).singleOrNull() ?: throw JagdkarteApiException(403, "profile_unavailable", "Kein Zugriff auf dieses Revier.")
 
     private fun canEditProfile(token: String, profile: HuntingProfile): Boolean {
         if (profile.ownerId == userId) return true
@@ -595,7 +617,7 @@ internal class JagdkarteRepository(
     suspend fun setHuntingMode(profileId: String, enabled: Boolean) = authenticated { token ->
         request("rest/v1/rpc/set_hunting_mode", "POST", JSONObject()
             .put("p_profile_id", uuid(profileId)).put("p_enabled", enabled), token)
-        Unit
+        OfflinePositionStore(appContext).use { it.recordHuntingMode(userId, profileId, enabled) }
     }
 
     suspend fun dogs(profileId: String): List<HuntingDog> = authenticated { token ->

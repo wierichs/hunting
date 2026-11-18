@@ -40,6 +40,8 @@ internal class VerifiedRelayDirectory private constructor(
     private val issuedAt: Long,
     private val expiresAt: Long,
     private val publicKeys: Map<String, String>,
+    private val deviceKinds: Map<String, String>,
+    private val subjects: Map<String, String>,
     private val leaseCurrent: () -> Boolean = { true }
 ) {
     fun accepts(envelope: RelayEnvelope, now: Long = System.currentTimeMillis()): Boolean {
@@ -59,7 +61,7 @@ internal class VerifiedRelayDirectory private constructor(
 
     fun withOfflineLease(anchor: RelayOfflineLease, bootCount: Int, elapsed: () -> Long): VerifiedRelayDirectory {
         require(anchor.isCurrent(bootCount, elapsed(), expiresAt - issuedAt))
-        return VerifiedRelayDirectory(profileId, localDeviceId, issuedAt, expiresAt, publicKeys) {
+        return VerifiedRelayDirectory(profileId, localDeviceId, issuedAt, expiresAt, publicKeys, deviceKinds, subjects) {
             anchor.isCurrent(bootCount, elapsed(), expiresAt - issuedAt)
         }
     }
@@ -77,6 +79,10 @@ internal class VerifiedRelayDirectory private constructor(
     }
 
     fun containsKey(deviceId: String, publicKey: String): Boolean = publicKeys[deviceId] == publicKey
+
+    fun deviceKind(deviceId: String): String? = deviceKinds[deviceId]
+
+    fun subjectId(deviceId: String): String? = subjects[deviceId]
 
     companion object {
         fun verify(json: JSONObject, capabilities: RelayCapabilities, profileId: String, deviceId: String,
@@ -100,17 +106,26 @@ internal class VerifiedRelayDirectory private constructor(
             val devices = body.getJSONArray("devices")
             require(devices.length() in 1..128)
             val publicKeys = mutableMapOf<String, String>()
+            val deviceKinds = mutableMapOf<String, String>()
+            val subjects = mutableMapOf<String, String>()
             for (index in 0 until devices.length()) {
                 val device = devices.getJSONObject(index)
                 val id = device.getString("device_id")
-                require(UUID_PATTERN.matches(id) && device.getString("device_kind") in setOf("dog", "participant"))
+                val kind = device.getString("device_kind")
+                require(UUID_PATTERN.matches(id) && kind in setOf("dog", "participant"))
                 require(!publicKeys.containsKey(id))
                 val key = device.getString("public_key")
                 importRelayPublicKey(key)
                 publicKeys[id] = key
+                deviceKinds[id] = kind
+                if (device.has("subject_id")) {
+                    val subjectId = device.getString("subject_id")
+                    require(UUID_PATTERN.matches(subjectId))
+                    subjects[id] = subjectId
+                }
             }
             require(publicKeys.containsKey(deviceId))
-            return VerifiedRelayDirectory(profileId, deviceId, issuedAt, expiresAt, publicKeys)
+            return VerifiedRelayDirectory(profileId, deviceId, issuedAt, expiresAt, publicKeys, deviceKinds, subjects)
         }
     }
 }

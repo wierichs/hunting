@@ -37,7 +37,9 @@ class JagdkarteOfflineCacheInstrumentedTest {
             timestamp = savedAt)
         val dog = HuntingMapPoint(51.26, 6.86, "Hund", "Live", MapPointKind.DOG, timestamp = savedAt)
         try {
-            cache.save(userId, HuntingSnapshot(profile, listOf(staticMarker, participant, dog), canEdit = true), savedAt)
+            val labels = mapOf((MapPointKind.DOG to "dog-id") to HuntingPositionLabel("Fido"))
+            cache.save(userId, HuntingSnapshot(profile, listOf(staticMarker, participant, dog), canEdit = true,
+                positionLabels = labels), savedAt)
             val encryptedFile = File(root, "hunting-snapshots").listFiles().orEmpty().single()
             assertFalse(String(encryptedFile.readBytes(), Charsets.UTF_8).contains("Privates Revier"))
 
@@ -46,6 +48,7 @@ class JagdkarteOfflineCacheInstrumentedTest {
             assertFalse(cached.snapshot.canEdit)
             assertNull(cached.snapshot.profile.ownerEmail)
             assertEquals(listOf("Kanzel"), cached.snapshot.points.map { it.title })
+            assertEquals(labels, cached.snapshot.positionLabels)
             assertNull(cache.load(UUID.randomUUID().toString(), profileId, savedAt.plusSeconds(60)))
             assertNull(cache.load(userId, profileId, savedAt.plus(JagdkarteOfflineCache.MAX_AGE).plusSeconds(1)))
             assertTrue(encryptedFile.parentFile?.isDirectory == true)

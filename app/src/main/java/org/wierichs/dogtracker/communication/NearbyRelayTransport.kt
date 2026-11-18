@@ -38,7 +38,9 @@ internal class NearbyRelayTransport(
     private val onIncomingEnvelope: (RelayEnvelope) -> Unit,
     private val onTransportStatus: (String) -> Unit,
     private val pendingPackets: (() -> List<NearbyPacket>)? = null,
-    private val onIncomingDocument: (ByteArray, () -> Unit) -> Unit = { _, _ -> }
+    private val onIncomingDocument: (ByteArray, () -> Unit) -> Unit = { _, _ -> },
+    private val onIncomingPosition: ((OfflinePositionMessage, () -> Unit) -> Unit)? = null,
+    private val canPublishPosition: () -> Boolean = { false }
 ) {
     private val appContext = context.applicationContext
     private val client = Nearby.getConnectionsClient(appContext)
@@ -52,6 +54,7 @@ internal class NearbyRelayTransport(
     private val sendJob = SupervisorJob()
     private val sendScope = CoroutineScope(sendJob + Dispatchers.IO)
     private val retryScheduled = AtomicBoolean(false)
+    private var ownPosition: Pair<OfflinePositionMessage, NearbyPacket>? = null
     private val startup = NearbyStartupRetry(
         schedule = { retry -> handler.postDelayed({ retry() }, TimeUnit.SECONDS.toMillis(10)) },
         onFailure = onTransportStatus
@@ -189,9 +192,11 @@ internal class NearbyRelayTransport(
         }
     }
 
+    @Synchronized
     fun stop() {
         startup.stop {
             isStarted = false
+            clearOwnPosition()
             client.stopAdvertising()
             client.stopDiscovery()
             client.stopAllEndpoints()
@@ -210,10 +215,28 @@ internal class NearbyRelayTransport(
     }
 
     @Synchronized
+    fun publishPosition(position: OfflinePositionMessage) {
+        if (!isStarted) return
+        val previous = ownPosition?.first
+        if (previous != null && (previous.sequence >= position.sequence ||
+                previous.recordedAtEpochMillis > position.recordedAtEpochMillis)) return
+        val bytes = position.toByteArray()
+        ownPosition = position to NearbyPacket(nearbyPacketDigest(bytes), bytes, receipt = true)
+        sendPendingToAll()
+    }
+
+    @Synchronized
+    fun clearOwnPosition() {
+        ownPosition = null
+    }
+
+    @Synchronized
     private fun sendPendingTo(endpointId: String) {
         if (!isStarted) return
         val session = sessions[endpointId] ?: return
-        if (!authenticated(session)) {
+        val directory = authorization()
+        val peerId = directory?.let(session::authenticatedPeerId)
+        if (directory == null || peerId == null) {
             disconnect(endpointId, "Relay-Berechtigung abgelaufen oder widerrufen.")
             return
         }
@@ -229,7 +252,13 @@ internal class NearbyRelayTransport(
                 NearbyPacket(envelope.messageId, stored.message.payload)
             }.take(MAX_MESSAGES_PER_SYNC).toList()
         }
-        val validPackets = packets.filter { it.bytes.size <= 8192 }
+        val positionPacket = ownPosition?.takeIf { (position, _) ->
+            directory.deviceKind(peerId) == "participant" && directory.subjectId(peerId) != null &&
+                position.profileId == directory.profileId &&
+                position.senderDeviceId == localDeviceId &&
+                position.subjectId == directory.subjectId(localDeviceId) && canPublishPosition()
+        }?.second
+        val validPackets = (listOfNotNull(positionPacket) + packets).filter { it.bytes.size <= 8192 }
         val selected = sendWindow.select(endpointId, validPackets, SystemClock.elapsedRealtime())
         selected.forEach { attempt ->
             sendPacket(endpointId, session, attempt)
@@ -299,6 +328,19 @@ internal class NearbyRelayTransport(
                 sendWindow.acknowledge(endpointId, digest)
             }
             else onTransportStatus("Relay-Bestätigung für Funkübergabe ungültig.")
+            return
+        }
+        if (json?.optString("action") == OfflinePositionMessage.ACTION) {
+            val receive = onIncomingPosition ?: return
+            val directory = authorization() ?: return
+            if (sessions[endpointId] !== session) return
+            val peerId = session.authenticatedPeerId(directory) ?: return
+            val position = OfflinePositionMessage.fromPeer(bytes, peerId, directory)
+            if (position == null) {
+                android.util.Log.w("NearbyRelayTransport", "Ungueltige Offline-Position verworfen.")
+                return
+            }
+            receive(position) { acknowledgeReceipt(endpointId, session, bytes) }
             return
         }
         val envelope = RelayEnvelope.parse(bytes)

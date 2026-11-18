@@ -228,17 +228,60 @@ und 4: ein sicheres lokales Positionsformat und dessen Kartenintegration.
    Abnahme gemeinsam festzulegen; die Tests begründen keine allgemeine
    Reichweiten- oder Zustellgarantie.
 
-### Noch festzulegen
+### Feldabnahme: noch festzulegen
 
-- Wie lange dürfen Teilnehmer- und Hundepositionen offline sichtbar bleiben?
-  Insbesondere sind Freigabeende, Jagdmodusänderung, ungültige GPS-Daten und
-  Aktualitätsanzeige für Teilnehmer und Hunde festzulegen.
+- **Festgelegt am 2026-11-18:** Teilnehmer- und Hundepositionen werden nach
+  120 Sekunden als veraltet markiert, bleiben aber bis zum bekannten Ende des
+  Jagdmodus sichtbar. Eine veraltete Position ist besser als keine Position.
+  Sind Sender und Empfänger vollständig getrennt, kann der Empfänger das Ende
+  des Jagdmodus oder den Widerruf nicht sofort erfahren; bis zur nächsten
+  Verbindung muss die Position daher sichtbar als veraltet erkennbar bleiben.
 - Welche konkreten Abnahmewerte für Funkzuverlässigkeit, Verzögerung und
   Akkulaufzeit sind für den Einsatz akzeptabel?
 
 Android 12 / API 31 bleibt vorerst Mindestversion. Eine Unterstützung von
 Android 9 ist eine separate Kompatibilitätsprüfung und nicht Voraussetzung
 dieses Konzepts.
+
+## Rückkehr der Internetverbindung
+
+Sobald Android wieder ein Standardnetz mit geprüftem Internetzugang meldet,
+aktualisiert die geöffnete Jagdkarte die Serverdaten ohne App-Neustart. Das
+Teilnehmer-Relais stößt die Erneuerung der Offline-Berechtigung an; der
+laufende DogTracker zieht den Server-Upload und die Prüfung seiner
+Revierberechtigung vor. Eine vom Server angeforderte Upload-Wartefrist bleibt
+gültig. Der lokale Nearby-Betrieb benötigt weiterhin kein Internet.
+
+**Gerätetest:** Im aktiven Jagdmodus zunächst die Karte bzw. den Hundetracker
+online starten. Internet trennen, dann wieder verbinden, ohne die App zu
+beenden oder die Karte manuell zu aktualisieren. Prüfen, dass der Serverstand
+der Karte wieder aktualisiert wird bzw. der DogTracker eine frische Position
+vom Server bestätigt bekommt.
+
+**Ergebnis vom 18.11.2026:** Die automatische Wiederverbindung nach der
+Netzunterbrechung wurde für Jagdkarte und DogTracker manuell bestätigt.
+Der separate Wiederverbindungstest mit ausgeschaltetem Bildschirm wurde
+für Jagdkarte und DogTracker auf eine spätere Feldabnahme verschoben und
+ist noch offen.
+
+## Mögliche Verbesserung für eine Folgeversion: erster Standort ohne Internet
+
+- **Beobachtung aus dem Feldtest (18.11.2026):** Ohne Internet dauerte es
+  deutlich länger, bis ein eigener Standort verfügbar war. Eine mögliche
+  Ursache sind fehlende oder veraltete A-GNSS-Hilfsdaten; das ist noch nicht
+  gemessen.
+- **Grenze des Relais:** Nearby kann bereits gemessene Positionen zustellen,
+  aber keinen eigenen GNSS-Fix ersetzen. Die von der App genutzte
+  Android-Standort-API bietet keinen unterstützten Weg, über Nearby empfangene
+  A-GNSS-Hilfsdaten in den GNSS-Empfänger einzuspeisen. Fremde Positionen
+  werden nicht als eigener Standort verwendet.
+- **Prüfauftrag:** Standort beim ohnehin vorgesehenen Start der Jagdteilnahme
+  oder des Hundetrackings möglichst früh anfordern, ohne einen zusätzlichen
+  Bedienschritt. Prüfen, ob ein letzter eigener Fix mit sichtbarer Messzeit
+  vorübergehend lokal angezeigt werden kann; ihn nicht als frische Messung
+  versenden. Auf Motorola und Xiaomi die Zeit bis zur ersten frischen Messung
+  online und offline bei vergleichbaren Bedingungen messen und dabei kürzlich
+  genutzte Standortbestimmung und Starts nach längerer Pause getrennt betrachten.
 
 ## Grenzen und offene Abnahme
 

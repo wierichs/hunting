@@ -18,6 +18,9 @@ oder Zustellung.
   Einschränkungen und offene Abnahmen gegenüber der PWA.
 - [Kommunikationskonzept](CommunicationConcept.md): direkte Übertragung,
   Relay-Architektur, Sicherheitsgrenzen und offene Prüfungen.
+- [Entwurf Offline-Positionsanzeige](docs/design/offline-positions/CompleteRoadmap.md):
+  Arbeitsentwurf für lokale Positionen sowie spätere Broadcasts und Hunde-Alerts;
+  noch keine freigegebene technische Spezifikation.
 - [Relay-Serverstufe](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md):
   Serververtrag, Bereitstellung und Betrieb im Web-Repository.
 

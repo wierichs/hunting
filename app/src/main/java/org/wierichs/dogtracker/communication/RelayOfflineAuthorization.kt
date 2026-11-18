@@ -2,21 +2,61 @@ package org.wierichs.dogtracker.communication
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.SystemClock
 import android.provider.Settings
 import java.time.DateTimeException
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
 import org.json.JSONException
 import org.json.JSONObject
 import org.wierichs.dogtracker.DeviceTokenStorage
 
+private fun NetworkCapabilities?.isValidatedInternet(): Boolean =
+    this != null && hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+        hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+
 internal fun hasValidatedRelayInternet(context: Context): Boolean {
     val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
-    val network = manager.activeNetwork ?: return false
-    val capabilities = manager.getNetworkCapabilities(network) ?: return false
-    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    return manager.activeNetwork?.let { manager.getNetworkCapabilities(it).isValidatedInternet() } == true
 }
+
+internal fun internetRestorations(context: Context): Flow<Network> = callbackFlow<Network?> {
+    val manager = checkNotNull(context.getSystemService(ConnectivityManager::class.java))
+    val lock = Any()
+    var network: Network? = null
+    val callback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(current: Network, capabilities: NetworkCapabilities) {
+            synchronized(lock) {
+                network = current
+                trySend(current.takeIf { capabilities.isValidatedInternet() })
+            }
+        }
+
+        override fun onLost(lost: Network) {
+            synchronized(lock) {
+                if (network == lost) {
+                    network = null
+                    trySend(null)
+                }
+            }
+        }
+    }
+    synchronized(lock) {
+        manager.registerDefaultNetworkCallback(callback)
+        network = manager.activeNetwork
+        trySend(network?.takeIf { manager.getNetworkCapabilities(it).isValidatedInternet() })
+    }
+    awaitClose { manager.unregisterNetworkCallback(callback) }
+}.onInternetRestored()
+
+internal fun <T : Any> Flow<T?>.onInternetRestored(): Flow<T> =
+    distinctUntilChanged().drop(1).filterNotNull()
 
 internal data class RelayOfflineLease(val bootCount: Int, val requestElapsed: Long, val verifiedAt: Long) {
     fun isCurrent(currentBoot: Int, elapsed: Long, lifetime: Long): Boolean =

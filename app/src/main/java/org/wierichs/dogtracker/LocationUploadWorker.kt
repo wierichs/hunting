@@ -6,6 +6,9 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.wierichs.dogtracker.communication.RelayApiClient
 import org.wierichs.dogtracker.communication.DogRelayAuthorization
@@ -21,9 +24,13 @@ import org.wierichs.dogtracker.communication.UnreadableLocationPayloadException
 class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
     CoroutineWorker(context, parameters) {
 
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+    override suspend fun doWork(): Result = uploadLock.withLock { upload() }
+
+    private suspend fun upload(): Result = withContext(Dispatchers.IO) {
+        var refreshRelay = inputData.getBoolean(REFRESH_RELAY_ON_RECONNECT, false)
         var relaySetupPending = false
         while (true) {
+            ensureActive()
             val pending = try {
                 SqliteMessageStore(applicationContext).use { store ->
                     store.removeExpired()
@@ -42,7 +49,16 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
                     "Lokale GPS-Daten konnten nicht sicher entschluesselt werden; erneuter Versuch folgt."
                 )
                 return@withContext Result.retry()
-            } ?: return@withContext Result.success()
+            }
+            if (pending == null) {
+                if (refreshRelay && TrackerPreferences.isTracking(applicationContext) &&
+                    TrackerPreferences.relayEnabled(applicationContext)
+                ) {
+                    val token = TrackerPreferences.deviceToken(applicationContext)
+                    if (token != null && !relayIsProvisioned(token)) return@withContext Result.retry()
+                }
+                return@withContext Result.success()
+            }
 
             try {
                 if (isLegacyOwnRelayEnvelope(pending.message, TrackerPreferences.relayDeviceId(applicationContext))) {
@@ -70,7 +86,7 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
                         TrackerPreferences.setStatus(applicationContext, "Geräteschlüssel fehlt. Bitte erneut aus der Jagdkarte einfügen.")
                         return@withContext Result.failure()
                     }
-                if (!relayIsProvisioned(deviceToken)) relaySetupPending = true
+                if (relayIsProvisioned(deviceToken)) refreshRelay = false else relaySetupPending = true
                 val response = if (pending.message.type == RELAY_ENVELOPE_MESSAGE_TYPE) {
                     val deviceId = TrackerPreferences.relayDeviceId(applicationContext)
                         ?: throw IllegalStateException("Relay-Gerätekennung fehlt.")
@@ -211,6 +227,8 @@ class LocationUploadWorker(context: Context, parameters: WorkerParameters) :
     }
 
     companion object {
+        internal const val REFRESH_RELAY_ON_RECONNECT = "refresh_relay_on_reconnect"
+        private val uploadLock = Mutex()
         private const val LOCATION_MESSAGE_TYPE = "location.fix"
         private const val RELAY_ENVELOPE_MESSAGE_TYPE = "relay.envelope"
     }

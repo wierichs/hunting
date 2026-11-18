@@ -20,9 +20,10 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.wierichs.dogtracker.MainActivity
 import org.wierichs.dogtracker.TrackerPreferences
 import org.wierichs.dogtracker.readHuntingPermissions
@@ -37,7 +38,7 @@ class RelayGatewayService : Service() {
     private var terminalStatus: String? = null
     private var requestedProfileId: String? = null
     private var revokeOnDestroy = false
-    private val incoming = Channel<Pair<ByteArray, () -> Unit>>(64)
+    private val incoming = Channel<suspend (RelayGatewayEngine) -> Unit>(64)
 
     override fun onCreate() {
         super.onCreate()
@@ -68,6 +69,7 @@ class RelayGatewayService : Service() {
             try {
                 val repository = JagdkarteRepository(applicationContext)
                 check(repository.signedIn && repository.userId.isNotBlank()) { "Bitte erneut anmelden." }
+                val userId = repository.userId
                 val profile = try {
                     if (!hasValidatedRelayInternet(applicationContext)) throw IOException("Keine Internetverbindung.")
                     repository.profiles().singleOrNull { it.id == profileId }
@@ -81,34 +83,53 @@ class RelayGatewayService : Service() {
                     throw JagdkarteApiException(409, "hunting_mode_inactive", "Relaisfreigabe benoetigt aktiven Jagdmodus.")
                 }
                 val engine = RelayGatewayEngine(applicationContext, repository, profile,
-                    onIncoming = { envelope -> incoming.trySend(envelope.toByteArray() to {}) },
-                    onDocument = { bytes, acknowledge -> incoming.trySend(bytes to acknowledge) })
+                    onIncoming = { envelope -> incoming.trySend { it.acceptEnvelope(envelope) } },
+                    onDocument = { bytes, acknowledge -> incoming.trySend { if (it.acceptDocument(bytes)) acknowledge() } },
+                    onPosition = { position, acknowledge -> incoming.trySend { if (it.acceptPosition(position)) acknowledge() } })
                 gateway = engine
                 RelayGateway.engine = engine
-                engine.initialize()
-                scope.launch {
-                    for ((bytes, acknowledge) in incoming) {
-                        try {
-                            val envelope = RelayEnvelope.parse(bytes)
-                            if (envelope != null) engine.acceptEnvelope(envelope)
-                            else if (engine.acceptDocument(bytes)) acknowledge()
-                        } catch (cancelled: CancellationException) { throw cancelled }
-                        catch (_: Exception) {
-                            RelayGateway.state.value = RelayGateway.state.value.copy(status = "Funkmeldung konnte nicht dauerhaft gespeichert werden; nicht bestaetigt.")
+                try {
+                    engine.initialize()
+                    scope.launch {
+                        for (receive in incoming) {
+                            try {
+                                receive(engine)
+                            } catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) {
+                                RelayGateway.state.value = RelayGateway.state.value.copy(status = "Funkmeldung konnte nicht dauerhaft gespeichert werden; nicht bestaetigt.")
+                            }
                         }
                     }
-                }
-                while (true) {
-                    if (!readHuntingPermissions(this@RelayGatewayService).ready || TrackerPreferences.isTracking(this@RelayGatewayService)) {
-                        revokeOnDestroy = true
-                        terminalStatus = if (TrackerPreferences.isTracking(this@RelayGatewayService)) {
-                            "Der DogTracker uebernimmt den Relaisbetrieb."
-                        } else "Jagdteilnahme beendet: Jagdfreigabe oder erforderliche Berechtigung fehlt."
-                        stopSelf()
-                        break
+                    coroutineScope {
+                        val reconnect = Channel<Unit>(Channel.CONFLATED)
+                        val monitor = launch {
+                            internetRestorations(applicationContext).collect { reconnect.trySend(Unit) }
+                        }
+                        try {
+                            var refresh = false
+                            while (true) {
+                                if (!readHuntingPermissions(this@RelayGatewayService).ready || TrackerPreferences.isTracking(this@RelayGatewayService)) {
+                                    revokeOnDestroy = true
+                                    terminalStatus = if (TrackerPreferences.isTracking(this@RelayGatewayService)) {
+                                        "Der DogTracker uebernimmt den Relaisbetrieb."
+                                    } else "Jagdteilnahme beendet: Jagdfreigabe oder erforderliche Berechtigung fehlt."
+                                    stopSelf()
+                                    break
+                                }
+                                engine.synchronize(refreshOnReconnect = refresh)
+                                refresh = withTimeoutOrNull(10_000) { reconnect.receive() } != null
+                            }
+                        } finally {
+                            monitor.cancel()
+                        }
                     }
-                    engine.synchronize()
-                    delay(10_000)
+                } catch (failure: JagdkarteApiException) {
+                    if (failure.errorCode == "hunting_mode_inactive") {
+                        withContext(Dispatchers.IO) {
+                            OfflinePositionStore(applicationContext).use { it.recordHuntingMode(userId, profileId, false) }
+                        }
+                    }
+                    throw failure
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
