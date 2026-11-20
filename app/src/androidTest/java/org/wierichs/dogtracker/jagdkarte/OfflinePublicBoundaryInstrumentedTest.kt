@@ -43,10 +43,12 @@ class OfflinePublicBoundaryInstrumentedTest {
         try {
             store.save(feature(), Instant.parse("2026-11-10T08:00:00Z"))
             val updated = store.save(feature().copy(name = "Waldrevier Nord",
-                properties = JSONObject().put("district_name", "Waldrevier Nord")), Instant.parse("2026-11-11T08:00:00Z"))
+                properties = JSONObject().put("district_name", "Waldrevier Nord"),
+                boundaryRepaired = true), Instant.parse("2026-11-11T08:00:00Z"))
             assertEquals(1, store.all().size)
             assertEquals("Waldrevier Nord", updated.feature.name)
             assertEquals("Waldrevier Nord", store.find("offline-test", "feature-1")!!.feature.name)
+            assertTrue(store.find("offline-test", "feature-1")!!.feature.boundaryRepaired)
         } finally { root.deleteRecursively() }
     }
 

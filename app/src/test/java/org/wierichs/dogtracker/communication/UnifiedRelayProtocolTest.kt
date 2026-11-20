@@ -48,6 +48,31 @@ class UnifiedRelayProtocolTest {
         assertFalse(directory.current(now + 120_000))
     }
 
+    @Test fun huntEndRequiresServerSignatureAndExactSessionAndCannotBeRenewed() {
+        val nowInstant = Instant.ofEpochMilli(now)
+        val signed = document(JSONObject().put("document_type", "hunt_end").put("profile_id", profile)
+            .put("session_id", device).put("ended_at", nowInstant.toString())
+            .put("expires_at", nowInstant.plusSeconds(86_400).toString()))
+        val bytes = signed.toString().toByteArray()
+        val verified = VerifiedHuntingEnd.verify(bytes, capabilities, profile, device, nowInstant)
+        assertArrayEquals(bytes, verified.toByteArray())
+        assertThrows(IllegalArgumentException::class.java) {
+            VerifiedHuntingEnd.verify(bytes, capabilities, profile, profile, nowInstant)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VerifiedHuntingEnd.verify(bytes, capabilities, device, device, nowInstant)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VerifiedHuntingEnd.verify(bytes, capabilities, profile, device, nowInstant.plusSeconds(86_400))
+        }
+        val signature = signed.getString("signature")
+        val corrupted = (if (signature[0] == 'A') "B" else "A") + signature.drop(1)
+        assertThrows(IllegalArgumentException::class.java) {
+            VerifiedHuntingEnd.verify(signed.put("signature", corrupted).toString().toByteArray(),
+                capabilities, profile, device, nowInstant)
+        }
+    }
+
     @Test fun broadcastPermissionRequiresExplicitSignedParticipantGrant() {
         val dog = "b16cb2bc-6dca-40bb-8e10-fc33b4d9272e"
         val guest = "c16cb2bc-6dca-40bb-8e10-fc33b4d9272e"
@@ -57,9 +82,10 @@ class UnifiedRelayProtocolTest {
             .put(entry(dog, "dog").put("can_broadcast", true))
             .put(entry(guest, "participant"))
         val signed = document(JSONObject().put("document_type", "offline_directory").put("profile_id", profile)
-            .put("device_id", device).put("issued_at", Instant.ofEpochMilli(now).toString())
+            .put("device_id", device).put("session_id", guest).put("issued_at", Instant.ofEpochMilli(now).toString())
             .put("expires_at", Instant.ofEpochMilli(now + 120_000).toString()).put("devices", devices))
         val directory = VerifiedRelayDirectory.verifyOffline(signed, capabilities, device, profile, now)
+        assertEquals(guest, directory.huntingSessionId)
         assertTrue(directory.canBroadcast(device))
         assertFalse(directory.canBroadcast(dog))
         assertFalse(directory.canBroadcast(guest))

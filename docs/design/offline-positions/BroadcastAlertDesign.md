@@ -2,11 +2,13 @@
 
 **Für Phase 4+** (nach stabiler Positions-Anzeige)
 
-> **Arbeitsentwurf, nicht freigegeben.** Die Autorisierung von Empfängern,
-> Zuordnung registrierter Hunde zu erreichbaren Geräten, Schlüsselverteilung,
-> Benachrichtigungs- und Alarmverhalten sowie Rollenregeln sind noch zu
-> spezifizieren. Ein lokaler Rollencheck oder die bloße Vertrauensannahme
-> ersetzt keine überprüfbare Geräteberechtigung.
+> **Historischer Arbeitsentwurf, nicht der implementierte Vertrag.** Direkte
+> Nearby-Rundnachrichten und Signale für eigene Hunde sind inzwischen in
+> begrenztem Umfang implementiert. Die folgenden Architektur- und UI-Beispiele
+> sind unverbindliche Vorschläge und nicht als aktuelle Aufgabenliste oder
+> Sicherheitsnachweis zu verstehen. Der tatsächliche Stand und offene
+> Abnahmen stehen im [Kommunikationskonzept](../../../CommunicationConcept.md)
+> und in den [Testaufgaben](../../testing/Testaufgaben.md).
 
 ---
 
@@ -362,60 +364,35 @@ private fun playSound() {
 
 ---
 
-## ✅ Checkliste Phase 4a (Broadcast)
+## Implementierter Umfang und mögliche Erweiterungen
 
-- [ ] `BroadcastTemplate` Datenstruktur
-- [ ] SQLite `offline_broadcasts` Tabelle
-- [ ] `OfflineBroadcastStore.kt` CRUD
-- [ ] `OfflinePositionMessage.kt` Typ erweitern
-- [ ] `NearbyRelayTransport.handleBroadcast()` implementieren
-- [ ] UI: "Nachricht senden" Button in JagdkarteScreen
-- [ ] UI: Template-Dialog
-- [ ] Android Notification anzeigen
-- [ ] Unit-Tests: Speicherung, Validierung
-- [ ] Instrumented-Tests: Nearby-Übertragung
-- [ ] Doku aktualisieren
-
-**Aufwand:** ~12-15 Stunden
-
----
-
-## ✅ Checkliste Phase 4b (Alert)
-
-- [ ] `OfflineAlert` Datenstruktur
-- [ ] `OfflineAlertStore.kt` CRUD mit Dedup-Ledger
-- [ ] SQLite `offline_alerts` Tabelle
-- [ ] Hundeliste laden (von `DogTrackerPairing`)
-- [ ] UI: "Hunde anrufen" Dialog mit Checkboxes
-- [ ] UI: Intensitäts-Selector
-- [ ] `NearbyRelayTransport.handleAlert()` implementieren
-- [ ] Vibration + Sound Effekte testen
-- [ ] Wakelock für Hintergrund-Verarbeitung
-- [ ] Unit-Tests: Zielgruppen-Validierung
-- [ ] Instrumented-Tests: Alert-Empfang bei Bildschirm aus
-- [ ] Doku aktualisieren
-
-**Aufwand:** ~18-22 Stunden
+- Rundnachrichten mit festen Vorlagen werden direkt an verbundene Teilnehmer
+  gesendet; sie haben eine Empfangsbestätigung, aber keine Nachlieferung.
+- Ein registrierendes Konto kann seinem erreichbaren eigenen Hundegerät direkt
+  ein Klingel- oder Vibrationssignal senden. Die Rückmeldung unterscheidet
+  bestätigte, nicht erreichbare, nicht bestätigte und unterdrückte Signale.
+- Mehrfachauswahl, Intensitätsregelung, Nachrichtenhistorie und nachgelagerte
+  Zustellung sind Ideen aus diesem Entwurf, keine zugesagten Funktionen.
+  Ihre Berechtigung und ihr Aufwand wären vor einer Umsetzung neu zu prüfen.
 
 ---
 
 ## 🚨 Kritische Punkte
 
 ### Sicherheit
-- ✅ Broadcasts & Alerts nutzen gleiche AES-Schlüsselverteilung wie Positionen
-- ✅ RSA-Signaturen bestätigen Absender
-- ✅ Rollenprüfung lokal vor dem Senden (kein Zugriff auf Server)
+Der tatsächliche Transport und die Berechtigungen stehen im
+[Kommunikationskonzept](../../../CommunicationConcept.md). Eine bloße lokale
+Rollenprüfung oder Vertrauensannahme ersetzt keine Geräteberechtigung.
 
 ### Batterie-Impact (Alert-Nachricht)
 - ⚠️ Vibration: ~20-50 mA je Vibration, OK
 - ⚠️ Sound: Abhängig von Länge, kurz halten
 - ⚠️ Nearby bleibt während Alert aktiv (zieht Strom)
-- ✅ Lösung: Alert-Nachricht hat nur 5 Min. TTL, alte werden gelöscht
+- Die Ablauf- und Wiederholungsregeln wären für eine Erweiterung festzulegen.
 
 ### Zielgruppen-Validierung
-- ⚠️ `target_dog_ids` enthält nur Device-IDs
-- ⚠️ Hundegeräte müssen ihre eigene ID kennen
-- ✅ ID wird beim Pairing speichert in `DeviceTokenStorage`
+- Bei einer Mehrfachauswahl wären Zielzuordnung und Berechtigung erneut zu
+  spezifizieren; die obigen Datenstrukturen sind nur Entwürfe.
 
 ---
 
@@ -431,4 +408,5 @@ Mögliche Erweiterung (Phase 5+):
 
 ---
 
-**Nächster Schritt:** Nach Phase 3 (Positionen stabil) mit Phase 4a starten.
+Die ursprünglichen Aufwandsangaben und Checklisten sind durch den inzwischen
+abweichenden Implementierungsstand überholt.

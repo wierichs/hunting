@@ -96,6 +96,79 @@ class ProfileInvitationInstrumentedTest {
         "hunting_mode":false
     }]"""
 
+    @Test fun locationProfileUsesExistingImportContractAndSavesItsCircle() = runBlocking {
+        val profileId = "5ebfd0bf-a38b-4b87-8628-0cb48298255e"
+        val requests = mutableListOf<String>()
+        val repository = JagdkarteRepository(context,
+            authRequestOverride = { _, _ -> error("Unexpected authentication request") },
+            requestOverride = { path, method, body, _ ->
+                requests += path
+                assertEquals("POST", method)
+                val json = body as JSONObject
+                when (path) {
+                    "rest/v1/rpc/create_hunting_profile" -> {
+                        assertEquals("user-imports", json.getString("p_source_id"))
+                        assertEquals("Meine Hunde", json.getString("p_district_name"))
+                        " [{\"id\":\"$profileId\"}] ".trim()
+                    }
+
+                    "rest/v1/rpc/set_hunting_profile_boundary" -> {
+                        assertEquals(profileId, json.getString("p_profile_id"))
+                        assertTrue(locationInsideBoundary(json.getJSONObject("p_geometry"), 51.0, 7.0))
+                        "{}"
+                    }
+                    else -> error("Unexpected request: $path")
+                }
+            })
+        assertEquals(profileId, repository.createLocationProfile(" Meine Hunde ", MarkerCoordinates(51.0, 7.0)))
+        assertEquals(listOf("rest/v1/rpc/create_hunting_profile",
+            "rest/v1/rpc/set_hunting_profile_boundary"), requests)
+    }
+
+    @Test fun huntingModeStatusReadsOnlyTheSelectedProfilesMode() = runBlocking {
+        val profileId = "5ebfd0bf-a38b-4b87-8628-0cb48298255e"
+        var active = false
+        val repository = JagdkarteRepository(context, requestOverride = { path, method, _, bearer ->
+            assertEquals("rest/v1/hunting_profiles?select=hunting_mode&id=eq.$profileId", path)
+            assertEquals("GET", method)
+            assertEquals("fixture-access", bearer)
+            """[{"hunting_mode":$active}]"""
+        })
+        assertEquals(false, repository.huntingMode(profileId))
+        active = true
+        assertEquals(true, repository.huntingMode(profileId))
+    }
+
+    @Test fun locationProfileDialogReportsMissingFixAndCanRetryWithoutCreatingTwice() {
+        var fixes = 0
+        val creations = mutableListOf<String>()
+        val created = AtomicReference<String?>(null)
+        composeRule.setContent {
+            MaterialTheme {
+                LocationProfileDialog(
+                    onCreate = { name, location ->
+                        assertEquals(MarkerCoordinates(51.0, 7.0), location)
+                        creations += name
+                        "created-profile"
+                    },
+                    onCreated = { created.set(it) },
+                    onDismiss = {},
+                    locate = {
+                        fixes++
+                        check(fixes > 1) { "Kein aktueller GPS-Standort verfuegbar." }
+                        MarkerCoordinates(51.0, 7.0)
+                    })
+            }
+        }
+        composeRule.onNodeWithText("Reviername").performTextInput("Meine Hunde")
+        composeRule.onNodeWithText("Erstellen").performClick()
+        composeRule.onNodeWithText("Kein aktueller GPS-Standort verfuegbar.").assertIsDisplayed()
+        composeRule.runOnIdle { assertTrue(creations.isEmpty()) }
+        composeRule.onNodeWithText("Erstellen").performClick()
+        composeRule.waitUntil { created.get() != null }
+        composeRule.runOnIdle { assertEquals(listOf("Meine Hunde"), creations) }
+    }
+
     @Test fun dogPairingStatusUsesTheSignedInAccountAndTheExactScannedDogAndToken() = runBlocking {
         val dogId = "5ebfd0bf-a38b-4b87-8628-0cb48298255e"
         val token = "a".repeat(64)

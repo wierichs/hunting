@@ -165,8 +165,34 @@ Jagdmodus sichtbar. Das Abschalten der eigenen Standortfreigabe stoppt
 neue Positionen, beendet aber nicht den Jagdmodus des Reviers.
 
 Nur ein Online-Gerät kann den Jagdmodus über den Server ändern. Ein
-Offline-Gerät erfährt das Ende erst beim erneuten Online-Abruf und
-blendet dann die Positionen aus. Nearby überträgt den Status derzeit nicht.
+Jagdkarte-Gerät mit aktivem Nearby-Relais kann das bestätigte Ende auch
+offline von einem anderen authentifizierten Teilnehmergerät erfahren.
+Ein Jagdstart erzeugt eine Durchlauf-ID, ein Ende wird mit derselben ID
+transaktional gespeichert. `location-relay` signiert ein gespeichertes Ende
+auf Anfrage berechtigter Reviermitglieder. Die Meldung verfällt 24 Stunden
+nach dem Ende, auch wenn sie später erneut angefordert wird. Das signierte
+Offline-Verzeichnis enthält die Durchlauf-ID. Android prüft Signatur,
+Revier und Durchlauf und speichert das Ende vor der Empfangsquittung.
+Die Karte blendet Teilnehmer- und Hundepositionen aus; die eigene lokale
+Position bleibt unabhängig. Der laufende Dienst stoppt den regulären
+Relay-Verkehr und gibt nur noch das signierte Original an erreichbare
+Teilnehmergeräte weiter, solange Nachweis und Offline-Berechtigung gültig
+sind. Es gibt keine allgemeine Mehrhop-Weitergabe von Positionen und der
+eigenständige DogTracker ist an diesem Jagdende-Verfahren nicht beteiligt.
+Ein neuer Jagdstart wird nicht per Nearby übertragen; ein offline verbliebenes
+Gerät muss für den neuen Durchlauf wieder online gehen.
+
+Bei geöffneter Karte wird ein ausgeschalteter Jagdmodus online etwa alle
+30 Sekunden mit einer Statusabfrage geprüft. Bei einem Start und spätestens
+nach fünf Minuten wird der vollständige Revierstand geladen; Fehler und
+Netzwerklatenz können die Erkennung verzögern.
+
+Die Migration `202611200001_hunting_session_end.sql` und das aktualisierte
+`location-relay` wurden laut Nutzer im gemeinsamen Entwicklungsprojekt
+bereitgestellt; für andere Zielprojekte ist die Bereitstellung separat
+erforderlich. Bestehende Android-Versionen können das zusätzliche Feld
+im Offline-Verzeichnis ignorieren. Alte Verzeichnisse ohne Durchlauf-ID
+berechtigen nicht zur Übernahme eines Offline-Jagdendes.
 Format, Speicher und bestätigte Gerätetests sind bei den
 [Offline-Positionsnachrichten](docs/design/offline-positions/OfflinePositionMessageFormat.md)
 dokumentiert. Supabase-Änderungen gehören ausschließlich ins PWA-Projekt;
@@ -256,7 +282,7 @@ Serverbestätigung bei eingestelltem 30-Sekunden-Standortintervall.
 Das sind Einzelmessungen. Die DogTracker-Messung trennt die Zeit für
 eine neue GPS-Position nicht von der Zeit für den Upload.
 
-## Mögliche Verbesserung für eine Folgeversion: erster Standort ohne Internet
+## Erster eigener Standort ohne Internet
 
 - **Beobachtung aus dem Feldtest (18.11.2026):** Ohne Internet dauerte es
   deutlich länger, bis ein eigener Standort verfügbar war. Eine mögliche
@@ -267,11 +293,15 @@ eine neue GPS-Position nicht von der Zeit für den Upload.
   Android-Standort-API bietet keinen unterstützten Weg, über Nearby empfangene
   A-GNSS-Hilfsdaten in den GNSS-Empfänger einzuspeisen. Fremde Positionen
   werden nicht als eigener Standort verwendet.
-- **Möglicher Ansatz:** Standort beim ohnehin vorgesehenen Start der Jagdteilnahme
-  oder des Hundetrackings möglichst früh anfordern, ohne einen zusätzlichen
-  Bedienschritt. Prüfen, ob ein letzter eigener Fix mit sichtbarer Messzeit
-  vorübergehend lokal angezeigt werden kann; ihn nicht als frische Messung
-  versenden. Der Messauftrag steht separat in den
+- **Android-Umsetzung:** Die Jagdkarte fordert den ersten eigenen GPS-Fix nun
+  parallel zum Start des Revier-Relais an und kann ihn nach erfolgreichem
+  Relay-Start verwenden. Vor der Übertragung wird erneut geprüft, dass die
+  Messung höchstens 30 Sekunden alt ist; ein zwischenzeitlich veralteter Fix
+  wird verworfen. Der DogTracker fordert GPS weiterhin direkt beim
+  ausdrücklichen Tracking-Start an.
+- **Noch offen:** Ein letzter eigener Fix wird nicht separat lokal angezeigt.
+  Der Zeitgewinn der früheren Anforderung ist noch nicht auf Geräten gemessen.
+  Der Messauftrag steht separat in den
   [Testaufgaben](docs/testing/Testaufgaben.md#kommunikation-und-gerätebetrieb).
 
 ## Grenzen

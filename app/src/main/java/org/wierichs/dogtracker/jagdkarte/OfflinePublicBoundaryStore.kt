@@ -30,6 +30,7 @@ internal class OfflinePublicBoundaryStore(context: Context) {
         val json = JSONObject().put("source", PublicBoundarySourceStore.sourceToJson(savedFeature.source))
             .put("featureId", savedFeature.id).put("name", savedFeature.name)
             .put("geometry", savedFeature.geometry).put("properties", savedFeature.properties)
+            .put("boundaryRepaired", savedFeature.boundaryRepaired)
             .put("savedAt", savedAt.toString())
         val bytes = json.toString().toByteArray(Charsets.UTF_8)
         require(bytes.size <= MAX_FEATURE_BYTES) { "Diese Reviergrenze ist groesser als 4 MB und wird nicht offline gespeichert." }
@@ -69,7 +70,8 @@ internal class OfflinePublicBoundaryStore(context: Context) {
         val feature = publicBoundaryFeatureFromJson(featureJson, source, 0)
             ?: error("Gespeicherte Reviergrenze ist ungueltig.")
         check(file.name == metadataFile(source.id, feature.id).name)
-        return SavedPublicBoundary(feature, Instant.parse(json.getString("savedAt")), file.length())
+        return SavedPublicBoundary(feature.copy(boundaryRepaired = json.optBoolean("boundaryRepaired")),
+            Instant.parse(json.getString("savedAt")), file.length())
     }
 
     private fun metadataFile(sourceId: String, featureId: String): File {

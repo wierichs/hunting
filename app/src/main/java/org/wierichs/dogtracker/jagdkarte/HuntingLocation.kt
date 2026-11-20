@@ -18,6 +18,14 @@ import org.locationtech.jts.io.geojson.GeoJsonReader
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+internal fun isRecentLocationFix(
+    ageNanos: Long?,
+    accuracyMeters: Float?,
+    maxAgeNanos: Long = 30_000_000_000L
+): Boolean =
+    ageNanos != null && ageNanos in 0L..maxAgeNanos &&
+        accuracyMeters != null && accuracyMeters.isFinite()
+
 internal fun locationInsideBoundary(boundary: JSONObject?, latitude: Double, longitude: Double): Boolean {
     if (boundary == null || !latitude.isFinite() || !longitude.isFinite() ||
         latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return false
@@ -41,8 +49,8 @@ internal suspend fun freshLocation(context: Context): Location = withTimeoutOrNu
             .addOnSuccessListener { location ->
                 if (!continuation.isActive) return@addOnSuccessListener
                 val age = location?.let { SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos }
-                if (location == null || age == null || age !in 0L..30_000_000_000L ||
-                    !location.hasAccuracy() || !location.accuracy.isFinite()) {
+                val accuracy = location?.takeIf { it.hasAccuracy() }?.accuracy
+                if (!isRecentLocationFix(age, accuracy)) {
                     continuation.resumeWithException(IllegalStateException("Kein aktueller GPS-Standort verfuegbar."))
                 } else {
                     continuation.resume(location)

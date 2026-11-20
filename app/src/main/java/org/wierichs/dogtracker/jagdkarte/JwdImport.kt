@@ -232,8 +232,8 @@ private fun normalizeGeoJsonRing(points: JSONArray, label: String): JSONArray {
     } }
 }
 
-internal fun normalizeGeoJsonGeometry(geometry: JSONObject, label: String): Pair<JSONObject, Int> {
-    val normalized = when (geometry.optString("type")) {
+internal fun normalizeGeoJsonCoordinates(geometry: JSONObject, label: String): JSONObject =
+    when (geometry.optString("type")) {
         "Polygon" -> {
             val rings = geometry.optJSONArray("coordinates")
                 ?: throw IllegalArgumentException("$label: ungueltige Polygonkoordinaten.")
@@ -263,6 +263,8 @@ internal fun normalizeGeoJsonGeometry(geometry: JSONObject, label: String): Pair
         }
         else -> throw IllegalArgumentException("$label: GeoJSON braucht eine Polygon- oder MultiPolygon-Geometrie.")
     }
+internal fun normalizeGeoJsonGeometry(geometry: JSONObject, label: String): Pair<JSONObject, Int> {
+    val normalized = normalizeGeoJsonCoordinates(geometry, label)
     val parsed = GeoJsonReader().read(normalized.toString())
     require(parsed.isValid && !parsed.isEmpty) { "$label: ungueltige Polygongeometrie." }
     val pacifiedCount = if (normalized.optString("type") == "Polygon") {

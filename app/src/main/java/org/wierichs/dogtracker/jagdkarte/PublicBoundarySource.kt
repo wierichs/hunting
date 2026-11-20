@@ -8,7 +8,14 @@ import java.util.UUID
 import android.content.Context
 import androidx.core.content.edit
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
+import org.locationtech.jts.geom.Polygonal
+import org.locationtech.jts.geom.TopologyException
+import org.locationtech.jts.geom.util.GeometryFixer
+import org.locationtech.jts.io.ParseException
+import org.locationtech.jts.io.geojson.GeoJsonReader
+import org.locationtech.jts.io.geojson.GeoJsonWriter
 
 internal enum class PublicBoundaryService(val id: String) {
     GEOJSON("geojson"), WFS("wfs"), OGC_API("ogcapi"), ARCGIS("arcgis"), SNAPSHOT("snapshot");
@@ -44,8 +51,11 @@ internal data class PublicBoundaryFeature(
     val name: String,
     val geometry: JSONObject,
     val properties: JSONObject,
-    val source: PublicBoundarySource
+    val source: PublicBoundarySource,
+    val boundaryRepaired: Boolean = false
 )
+
+internal const val REPAIRED_BOUNDARY_NOTICE = "Grenze automatisch korrigiert – bitte prüfen"
 
 internal fun validatePublicBoundarySource(source: PublicBoundarySource): PublicBoundarySource {
     require(source.id.matches(Regex("[a-z0-9][a-z0-9._-]{0,79}"))) { "Ungueltige Quellenkennung." }
@@ -82,22 +92,42 @@ internal fun validatePublicBoundarySource(source: PublicBoundarySource): PublicB
     return source.copy(id = source.id.trim(), label = source.label.trim(), url = uri.toASCIIString())
 }
 
-internal fun publicBoundaryFeatureFromJson(feature: JSONObject, source: PublicBoundarySource, index: Int): PublicBoundaryFeature? {
+internal fun publicBoundaryFeatureFromJson(
+    feature: JSONObject, source: PublicBoundarySource, index: Int, repairInvalidBoundary: Boolean = false
+): PublicBoundaryFeature? {
     if (feature.optString("type") != "Feature") return null
     val properties = feature.optJSONObject("properties") ?: JSONObject()
     val rawGeometry = feature.optJSONObject("geometry") ?: return null
     if (rawGeometry.optString("type") !in setOf("Polygon", "MultiPolygon")) return null
     val name = geoJsonFeatureName(properties, "Unbenanntes Revier ${index + 1}", source.nameFields)
     require(name.length <= 200) { "Reviername darf hoechstens 200 Zeichen enthalten." }
-    val (geometry, _) = normalizeGeoJsonGeometry(rawGeometry, "${source.label}, Feature ${index + 1}")
+    val label = "${source.label}, Feature ${index + 1}"
+    val normalized = normalizeGeoJsonCoordinates(rawGeometry, label)
+    val parsed = GeoJsonReader().read(normalized.toString())
+    require(!parsed.isEmpty) { "$label: leere Polygongeometrie." }
+    val boundaryRepaired = !parsed.isValid
+    val geometry = if (boundaryRepaired) {
+        require(repairInvalidBoundary) { "$label: ungueltige Polygongeometrie." }
+        val repaired = GeometryFixer.fix(parsed)
+        require(repaired is Polygonal && !repaired.isEmpty && repaired.isValid && repaired.area > 0) {
+            "$label: Polygongeometrie konnte nicht repariert werden."
+        }
+        val writer = GeoJsonWriter(16).apply { setEncodeCRS(false) }
+        normalizeGeoJsonGeometry(JSONObject(writer.write(repaired)), label).first
+    } else normalized
     val externalId = source.idFields.firstNotNullOfOrNull { field ->
         properties.opt(field)?.takeIf { it !is JSONObject && it !is JSONArray && it.toString().isNotBlank() }?.toString()
     } ?: feature.opt("id")?.takeIf { it !is JSONObject && it !is JSONArray && it.toString().isNotBlank() }?.toString()
     val id = externalId?.takeIf { it.length <= 240 } ?: contentId(source.id, name, geometry.toString())
-    return PublicBoundaryFeature(id, name, geometry, properties, source)
+    return PublicBoundaryFeature(id, name, geometry, properties, source, boundaryRepaired)
 }
 
-internal fun publicBoundaryFeaturesFromJson(json: JSONObject, source: PublicBoundarySource): List<PublicBoundaryFeature> {
+internal data class PublicBoundaryLoad(
+    val features: List<PublicBoundaryFeature>,
+    val skippedCount: Int = 0
+)
+
+internal fun publicBoundaryFeaturesFromJson(json: JSONObject, source: PublicBoundarySource): PublicBoundaryLoad {
     val features = when (json.optString("type")) {
         "FeatureCollection" -> json.optJSONArray("features")
             ?: throw IllegalArgumentException("Der Dienst hat keine FeatureCollection geliefert.")
@@ -106,12 +136,22 @@ internal fun publicBoundaryFeaturesFromJson(json: JSONObject, source: PublicBoun
     }
     val results = ArrayList<PublicBoundaryFeature>(features.length())
     val ids = mutableSetOf<String>()
+    var skipped = 0
     for (index in 0 until features.length()) {
-        val feature = features.optJSONObject(index) ?: continue
-        val parsed = publicBoundaryFeatureFromJson(feature, source, index) ?: continue
-        if (ids.add(parsed.id)) results += parsed
+        val parsed = try {
+            features.optJSONObject(index)?.let { publicBoundaryFeatureFromJson(it, source, index, repairInvalidBoundary = true) }
+        } catch (_: IllegalArgumentException) {
+            null
+        } catch (_: JSONException) {
+            null
+        } catch (_: ParseException) {
+            null
+        } catch (_: TopologyException) {
+            null
+        }
+        if (parsed == null) skipped++ else if (ids.add(parsed.id)) results += parsed
     }
-    return results
+    return PublicBoundaryLoad(results, skipped)
 }
 
 internal fun userBoundarySourceId(): String = "custom-${UUID.randomUUID()}"

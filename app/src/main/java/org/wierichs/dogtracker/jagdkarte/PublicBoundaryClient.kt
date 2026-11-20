@@ -115,58 +115,64 @@ internal class PublicBoundaryClient(
         .callTimeout(PublicBoundaryRequests.MAX_TOTAL_TIME_MILLIS, TimeUnit.MILLISECONDS)
         .build()
 
-    suspend fun search(source: PublicBoundarySource, query: String = ""): List<PublicBoundaryFeature> =
+    suspend fun load(source: PublicBoundarySource): PublicBoundaryLoad =
         withContext(Dispatchers.IO) {
             val checked = validatePublicBoundarySource(source)
             val budget = PublicBoundaryRequestBudget()
-            val features = when (checked.service) {
+            when (checked.service) {
                 PublicBoundaryService.GEOJSON, PublicBoundaryService.SNAPSHOT ->
                     publicBoundaryFeaturesFromJson(getJson(checked.url, budget), checked)
                 PublicBoundaryService.WFS -> loadWfs(checked, budget)
                 PublicBoundaryService.ARCGIS -> loadArcGis(checked, budget)
                 PublicBoundaryService.OGC_API -> loadOgcApi(checked, budget)
             }
-            filterPublicBoundaryFeatures(features, query)
         }
 
-    private suspend fun loadWfs(source: PublicBoundarySource, budget: PublicBoundaryRequestBudget): List<PublicBoundaryFeature> {
+    private suspend fun loadWfs(source: PublicBoundarySource, budget: PublicBoundaryRequestBudget): PublicBoundaryLoad {
         val features = linkedMapOf<String, PublicBoundaryFeature>()
+        var skipped = 0
         for (page in 0 until PublicBoundaryRequests.MAX_PAGES) {
             currentCoroutineContext().ensureActive()
             val json = getJson(PublicBoundaryRequests.wfs(source, page * PublicBoundaryRequests.PAGE_SIZE), budget)
             val pageFeatures = publicBoundaryFeaturesFromJson(json, source)
-            pageFeatures.forEach { features.putIfAbsent(it.id, it) }
+            pageFeatures.features.forEach { features.putIfAbsent(it.id, it) }
+            skipped += pageFeatures.skippedCount
             ensureFeatureLimit(features.size)
             val rawCount = json.optJSONArray("features")?.length() ?: 0
             val matched = json.optString("numberMatched").toLongOrNull()
             if (rawCount < PublicBoundaryRequests.PAGE_SIZE || matched != null && matched <= (page + 1L) * PublicBoundaryRequests.PAGE_SIZE) {
-                return features.values.toList()
+                return PublicBoundaryLoad(features.values.toList(), skipped)
             }
         }
         throw IllegalArgumentException("Der WFS-Datensatz ueberschreitet ${PublicBoundaryRequests.MAX_FEATURES} Features.")
     }
 
-    private suspend fun loadArcGis(source: PublicBoundarySource, budget: PublicBoundaryRequestBudget): List<PublicBoundaryFeature> {
+    private suspend fun loadArcGis(source: PublicBoundarySource, budget: PublicBoundaryRequestBudget): PublicBoundaryLoad {
         val features = linkedMapOf<String, PublicBoundaryFeature>()
+        var skipped = 0
         for (page in 0 until PublicBoundaryRequests.MAX_PAGES) {
             currentCoroutineContext().ensureActive()
             val json = getJson(PublicBoundaryRequests.arcGis(source, page * source.pageSize), budget)
             val pageFeatures = publicBoundaryFeaturesFromJson(json, source)
-            pageFeatures.forEach { features.putIfAbsent(it.id, it) }
+            pageFeatures.features.forEach { features.putIfAbsent(it.id, it) }
+            skipped += pageFeatures.skippedCount
             ensureFeatureLimit(features.size)
             val count = json.optJSONArray("features")?.length() ?: 0
-            if (!json.optBoolean("exceededTransferLimit") && count < source.pageSize) return features.values.toList()
+            if (!json.optBoolean("exceededTransferLimit") && count < source.pageSize) {
+                return PublicBoundaryLoad(features.values.toList(), skipped)
+            }
             if (count == 0) throw IllegalArgumentException("ArcGIS meldet weitere Datensaetze, liefert aber eine leere Seite.")
         }
         throw IllegalArgumentException("Der ArcGIS-Datensatz ueberschreitet ${PublicBoundaryRequests.MAX_FEATURES} Features.")
     }
 
-    private suspend fun loadOgcApi(source: PublicBoundarySource, budget: PublicBoundaryRequestBudget): List<PublicBoundaryFeature> {
+    private suspend fun loadOgcApi(source: PublicBoundarySource, budget: PublicBoundaryRequestBudget): PublicBoundaryLoad {
         val expectedOrigin = PublicBoundaryRequests.origin(source.url)
         val visited = mutableSetOf<String>()
         val features = linkedMapOf<String, PublicBoundaryFeature>()
         var current = source.url
         var received = 0L
+        var skipped = 0
         for (page in 0 until PublicBoundaryRequests.MAX_PAGES) {
             currentCoroutineContext().ensureActive()
             require(visited.add(current)) { "Der OGC-API-Dienst wiederholt einen Paginierungslink." }
@@ -174,10 +180,12 @@ internal class PublicBoundaryClient(
             val rawFeatures = json.optJSONArray("features")
                 ?: throw IllegalArgumentException("Die OGC-API-Antwort enthaelt keine Feature-Liste.")
             received += rawFeatures.length()
-            publicBoundaryFeaturesFromJson(json, source).forEach { features.putIfAbsent(it.id, it) }
+            val pageFeatures = publicBoundaryFeaturesFromJson(json, source)
+            pageFeatures.features.forEach { features.putIfAbsent(it.id, it) }
+            skipped += pageFeatures.skippedCount
             ensureFeatureLimit(features.size)
             val matched = json.optString("numberMatched").toLongOrNull()
-            if (matched != null && received >= matched) return features.values.toList()
+            if (matched != null && received >= matched) return PublicBoundaryLoad(features.values.toList(), skipped)
             val next = (0 until json.optJSONArray("links").orEmptyLength()).asSequence()
                 .mapNotNull { json.getJSONArray("links").optJSONObject(it) }
                 .firstOrNull { it.optString("rel") == "next" }?.optString("href")
@@ -188,7 +196,7 @@ internal class PublicBoundaryClient(
                 if (rawFeatures.length() >= PublicBoundaryRequests.PAGE_SIZE) {
                     throw IllegalArgumentException("OGC API liefert keinen naechsten Seitenlink.")
                 }
-                return features.values.toList()
+                return PublicBoundaryLoad(features.values.toList(), skipped)
             }
             current = PublicBoundaryRequests.paginationUrl(current, next, expectedOrigin)
         }
@@ -260,8 +268,10 @@ internal fun filterPublicBoundaryFeatures(features: List<PublicBoundaryFeature>,
     }
 }
 
+private val boundarySearchDiacritics = Regex("\\p{Mn}+")
+
 private fun normalizeBoundarySearchText(value: String): String = value.trim().lowercase(Locale.ROOT)
     .replace("ä", "a").replace("ö", "o").replace("ü", "u").replace("ß", "ss")
     .replace("ae", "a").replace("oe", "o").replace("ue", "u")
     .let { Normalizer.normalize(it, Normalizer.Form.NFD) }
-    .replace(Regex("\\p{Mn}+"), "")
+    .replace(boundarySearchDiacritics, "")

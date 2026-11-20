@@ -16,6 +16,7 @@ class PublicBoundarySourceTest {
         assertEquals("27", parsed.name)
         assertEquals("41", parsed.id)
         assertEquals("Polygon", parsed.geometry.getString("type"))
+        assertFalse(parsed.boundaryRepaired)
         assertTrue(locationInsideBoundary(parsed.geometry, 51.0, 7.0))
         assertEquals("Testquelle", parsed.source.label)
     }
@@ -26,9 +27,33 @@ class PublicBoundarySourceTest {
         val collection = JSONObject("""{"type":"FeatureCollection","features":[$polygon,
             $polygon,{"type":"Feature","properties":{"name":"Punkt"},"geometry":{"type":"Point","coordinates":[7,51]}}]}""")
         val result = publicBoundaryFeaturesFromJson(collection, source)
-        assertEquals(1, result.size)
-        assertEquals("same", result.single().id)
-        assertEquals("Nord", result.single().name)
+        assertEquals(1, result.skippedCount)
+        assertEquals("same", result.features.single().id)
+        assertEquals("Nord", result.features.single().name)
+    }
+
+    @Test fun brokenFeatureDoesNotHideValidZonsResults() {
+        val collection = JSONObject("""{"type":"FeatureCollection","features":[
+            {"type":"Feature","id":"kleinenbroich","properties":{"jagdbezirk":"Kleinenbroich"},
+             "geometry":{"type":"Polygon","coordinates":[[[6,50],[8,52],[8,50],[6,52],[6,50]]]}},
+            {"type":"Feature","properties":{"jagdbezirk":"Degeneriert"},
+             "geometry":{"type":"Polygon","coordinates":[[[6,50],[7,50],[8,50],[6,50]]]}},
+            {"type":"Feature","properties":{"jagdbezirk":"Zons I"},
+             "geometry":{"type":"Polygon","coordinates":[[[6,50],[8,50],[8,52],[6,52],[6,50]]]}},
+            {"type":"Feature","properties":{"jagdbezirk":"Zons II"},
+             "geometry":{"type":"MultiPolygon","coordinates":[[[[6,50],[8,50],[8,52],[6,52],[6,50]]]]}},
+            {"type":"Feature","properties":{"jagdbezirk":"Nord"},
+             "geometry":{"type":"Polygon","coordinates":[[[6,50],[8,50],[8,52],[6,52],[6,50]]]}}
+        ]}""")
+        val result = publicBoundaryFeaturesFromJson(collection, source.copy(nameFields = listOf("jagdbezirk")))
+        assertEquals(1, result.skippedCount)
+        assertEquals(4, filterPublicBoundaryFeatures(result.features, "").size)
+        assertEquals(listOf("Zons I", "Zons II"), filterPublicBoundaryFeatures(result.features, "Zons").map { it.name })
+        val repaired = result.features.single { it.boundaryRepaired }
+        assertEquals("kleinenbroich", repaired.id)
+        assertEquals("MultiPolygon", repaired.geometry.getString("type"))
+        assertEquals(2, repaired.geometry.getJSONArray("coordinates").length())
+        assertEquals(repaired.geometry.toString(), normalizeGeoJsonGeometry(repaired.geometry, repaired.name).first.toString())
     }
 
     @Test fun missingIdsAreStableForSameSourceAndGeometry() {

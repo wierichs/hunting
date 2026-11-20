@@ -44,6 +44,7 @@ internal class VerifiedRelayDirectory private constructor(
     private val subjects: Map<String, String>,
     private val broadcasters: Set<String>,
     private val dogRegistrants: Map<String, String>,
+    val huntingSessionId: String?,
     private val leaseCurrent: () -> Boolean = { true }
 ) {
     fun accepts(envelope: RelayEnvelope, now: Long = System.currentTimeMillis()): Boolean {
@@ -64,7 +65,7 @@ internal class VerifiedRelayDirectory private constructor(
     fun withOfflineLease(anchor: RelayOfflineLease, bootCount: Int, elapsed: () -> Long): VerifiedRelayDirectory {
         require(anchor.isCurrent(bootCount, elapsed(), expiresAt - issuedAt))
         return VerifiedRelayDirectory(profileId, localDeviceId, issuedAt, expiresAt, publicKeys, deviceKinds, subjects,
-            broadcasters, dogRegistrants) {
+            broadcasters, dogRegistrants, huntingSessionId) {
             anchor.isCurrent(bootCount, elapsed(), expiresAt - issuedAt)
         }
     }
@@ -111,6 +112,9 @@ internal class VerifiedRelayDirectory private constructor(
             val profileId = body.getString("profile_id")
             require(UUID_PATTERN.matches(profileId) && (expectedProfileId == null || profileId == expectedProfileId))
             require(body.getString("document_type") == documentType && body.getString("device_id") == deviceId)
+            val huntingSessionId = if (body.has("session_id")) body.getString("session_id").also {
+                require(UUID_PATTERN.matches(it))
+            } else null
             val issuedAt = Instant.parse(body.getString("issued_at")).toEpochMilli()
             val expiresAt = Instant.parse(body.getString("expires_at")).toEpochMilli()
             require(issuedAt <= now + 30_000 && expiresAt > now && expiresAt > issuedAt &&
@@ -148,7 +152,33 @@ internal class VerifiedRelayDirectory private constructor(
             }
             require(publicKeys.containsKey(deviceId))
             return VerifiedRelayDirectory(profileId, deviceId, issuedAt, expiresAt, publicKeys, deviceKinds, subjects,
-                broadcasters, dogRegistrants)
+                broadcasters, dogRegistrants, huntingSessionId)
+        }
+    }
+}
+
+internal class VerifiedHuntingEnd private constructor(
+    val profileId: String,
+    val sessionId: String,
+    val endedAt: Instant,
+    val expiresAt: Instant,
+    private val wireDocument: String
+) {
+    fun toByteArray(): ByteArray = wireDocument.toByteArray(Charsets.UTF_8)
+
+    companion object {
+        fun verify(bytes: ByteArray, capabilities: RelayCapabilities, profileId: String, sessionId: String,
+            now: Instant = Instant.now()): VerifiedHuntingEnd {
+            require(bytes.size in 1..8192)
+            require(UUID_PATTERN.matches(profileId) && UUID_PATTERN.matches(sessionId))
+            val wireDocument = String(bytes, Charsets.UTF_8)
+            val body = verifyRelayDocument(JSONObject(wireDocument), capabilities)
+            require(body.getString("document_type") == "hunt_end" && body.getString("profile_id") == profileId &&
+                body.getString("session_id") == sessionId)
+            val endedAt = Instant.parse(body.getString("ended_at"))
+            val expiresAt = Instant.parse(body.getString("expires_at"))
+            require(endedAt <= now.plusSeconds(30) && expiresAt > now && expiresAt == endedAt.plusSeconds(86_400))
+            return VerifiedHuntingEnd(profileId, sessionId, endedAt, expiresAt, wireDocument)
         }
     }
 }

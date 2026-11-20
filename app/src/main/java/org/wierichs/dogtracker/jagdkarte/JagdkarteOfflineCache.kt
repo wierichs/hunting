@@ -109,6 +109,7 @@ internal class JagdkarteOfflineCache(context: Context) {
             .put("name", snapshot.profile.name)
             .put("ownerId", snapshot.profile.ownerId)
             .put("huntingMode", snapshot.profile.huntingMode)
+            .put("huntingSessionId", snapshot.profile.huntingSessionId ?: JSONObject.NULL)
             .put("boundary", snapshot.profile.boundary ?: JSONObject.NULL))
         .put("canEdit", false)
         .put("positionLabels", JSONArray().apply {
@@ -139,7 +140,8 @@ internal class JagdkarteOfflineCache(context: Context) {
         val profileJson = json.getJSONObject("profile")
         val boundary = profileJson.opt("boundary").takeUnless { it == null || it == JSONObject.NULL } as? JSONObject
         val profile = HuntingProfile(profileJson.getString("id"), profileJson.getString("name"),
-            profileJson.getString("ownerId"), profileJson.getBoolean("huntingMode"), boundary)
+            profileJson.getString("ownerId"), profileJson.getBoolean("huntingMode"), boundary,
+            huntingSessionId = profileJson.opt("huntingSessionId") as? String)
         val pointsJson = json.getJSONArray("points")
         val points = (0 until pointsJson.length()).map { index ->
             val point = pointsJson.getJSONObject(index)

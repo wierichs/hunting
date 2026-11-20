@@ -96,8 +96,10 @@ und [JagdkarteRepository.kt](app/src/main/java/org/wierichs/dogtracker/jagdkarte
 
 Die öffentliche Suche liest GeoJSON, WFS, OGC API Features und ArcGIS direkt
 vom Gerät; eigene Quellen unterstützen GeoJSON und WFS. Die App validiert
-Polygon-/MultiPolygon-Geometrien mit JTS. Suchvorschauen schreiben keine
-Profile; erst die bestätigte Profilanlage verwendet die bestehenden RPCs.
+Polygon-/MultiPolygon-Geometrien mit JTS und versucht, ungültige Geometrien
+zu reparieren. Reparierte Ergebnisse sind gekennzeichnet und erfordern vor
+der Profilanlage eine ausdrückliche Bestätigung. Suchvorschauen schreiben
+keine Profile; erst die bestätigte Profilanlage verwendet die bestehenden RPCs.
 Eigene Quellen bleiben lokal und verwenden bei der Profilanlage die
 Serverquelle `user-imports`.
 
@@ -173,8 +175,11 @@ Teilnehmer- und Hundepositionen können für dasselbe zuvor online eingerichtete
 Revier auch ohne Internet direkt an erreichbare Teilnehmergeräte gesendet
 werden. Dafür gibt es eigene signierte Positionsnachrichten, getrennt von
 den nur für den Server lesbaren Relay-Umschlägen. Das serverbestätigte
-Jagdende wird derzeit erst beim Online-Abruf des Revierstatus erkannt,
-nicht über Nearby. Sobald Android wieder ein geeignetes Standardnetz meldet,
+Jagdende kann auch offline über authentifizierte Nearby-Teilnehmergeräte
+ankommen und von ihnen weitergegeben werden, solange ihre Berechtigung und
+der Servernachweis gültig sind. Ein neuer Jagdstart wird nicht offline per
+Nearby übertragen. Bei geöffneter Karte wird ein ausgeschalteter Jagdmodus
+online etwa alle 30 Sekunden geprüft. Sobald Android wieder ein geeignetes Standardnetz meldet,
 stößt die App Kartenabruf bzw. Upload automatisch an. Die 120-Sekunden-Grenze
 kennzeichnet das Alter von Nearby-Positionen und ist keine Wartezeit für die
 Wiederverbindung.

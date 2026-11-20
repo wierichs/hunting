@@ -79,13 +79,12 @@ class RelayGatewayService : Service() {
                     JagdkarteOfflineCache(applicationContext).load(repository.userId, profileId)?.snapshot?.profile
                         ?: throw IOException("Gespeicherter Offline-Revierstand fehlt oder ist abgelaufen.", failure)
                 }
-                if (!profile.huntingMode) {
-                    throw JagdkarteApiException(409, "hunting_mode_inactive", "Relaisfreigabe benoetigt aktiven Jagdmodus.")
-                }
                 val engine = RelayGatewayEngine(applicationContext, repository, profile,
                     onIncoming = { envelope -> incoming.trySend { it.acceptEnvelope(envelope) } },
                     onDocument = { bytes, acknowledge -> incoming.trySend { if (it.acceptDocument(bytes)) acknowledge() } },
-                    onPosition = { position, acknowledge -> incoming.trySend { if (it.acceptPosition(position)) acknowledge() } })
+                    onPosition = { position, acknowledge -> incoming.trySend { if (it.acceptPosition(position)) acknowledge() } },
+                    onHuntingEnd = { bytes, acknowledge -> incoming.trySend { if (it.acceptHuntingEnd(bytes)) acknowledge() } },
+                    onForwardingHuntingEnd = { startNotification(onlyHuntingEnd = true) })
                 gateway = engine
                 RelayGateway.engine = engine
                 try {
@@ -117,6 +116,11 @@ class RelayGatewayService : Service() {
                                     break
                                 }
                                 engine.synchronize(refreshOnReconnect = refresh)
+                                if (engine.forwardingFinished()) {
+                                    terminalStatus = "Nearby-Weitergabe des Jagdendes beendet."
+                                    stopSelf()
+                                    break
+                                }
                                 refresh = withTimeoutOrNull(10_000) { reconnect.receive() } != null
                             }
                         } finally {
@@ -149,13 +153,14 @@ class RelayGatewayService : Service() {
         return START_REDELIVER_INTENT
     }
 
-    private fun startNotification() {
+    private fun startNotification(onlyHuntingEnd: Boolean = false) {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Revier-Relais", NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 22, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = NotificationCompat.Builder(this, CHANNEL_ID).setSmallIcon(android.R.drawable.ic_menu_share)
-            .setContentTitle("Jagdbruder-Relais aktiv").setContentText("Verschluesselte Reviermeldungen weiterleiten")
+            .setContentTitle(if (onlyHuntingEnd) "Jagdende per Nearby" else "Jagdbruder-Relais aktiv")
+            .setContentText(if (onlyHuntingEnd) "Nur Jagdende; keine Standortfreigabe" else "Verschluesselte Reviermeldungen weiterleiten")
             .setOngoing(true).setContentIntent(open).build()
         ServiceCompat.startForeground(this, 2101, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         NearbyBroadcastNotifications.createChannel(this)

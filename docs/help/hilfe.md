@@ -26,14 +26,38 @@ die Kartenposition und den Zoom.
 
 ## Ein Revier finden
 
-Öffne über die Lupe die öffentliche Reviersuche, wähle eine Datenquelle und
-suche nach Reviername, Nummer oder Gemeinde. Die Suche benötigt Internet.
+Öffne über die Lupe die öffentliche Reviersuche und wähle eine Datenquelle.
+Die verfügbaren Reviere werden automatisch geladen. Tippe einen Reviernamen,
+eine Nummer oder eine Gemeinde ein, um die Liste direkt zu filtern. Leere
+das Suchfeld, um wieder alle geladenen Reviere zu sehen. Das Laden benötigt
+Internet. Die App versucht, ungültige Flächen aus der öffentlichen Suche zu
+korrigieren. Solche Treffer und ihre Kartenvorschau zeigen den Hinweis
+**Grenze automatisch korrigiert – bitte prüfen**. Diese Korrektur bestätigt
+keinen amtlichen Grenzverlauf. Prüfe die Grenze und bestätige sie ausdrücklich,
+bevor du sie als eigenes Revier übernimmst. Ist keine gültige Fläche
+herstellbar, wird nur dieser Eintrag mit einem Hinweis ausgelassen.
 Prüfe Quellenangabe, Lizenz und Datenstand. Eigene HTTPS-GeoJSON- und
 WFS-Quellen kannst du unter **Suchquellen verwalten** hinzufügen.
 
 Ein Treffer lässt sich zunächst auf der Karte ansehen, ohne ein Profil
 anzulegen. Für ein eigenes Revierprofil musst du angemeldet sein. Einzelne
 Suchtreffer kannst du ausdrücklich für die spätere Offlineansicht speichern.
+
+### Eigenes Profil ohne Revierdatei anlegen
+
+Unter **Revier und Verwaltung → Revier um Standort erstellen** kannst du
+nach der Anmeldung ein Profil ohne Datenquelle oder Import anlegen. Gib nur
+einen Namen ein. Die App ermittelt einen aktuellen genauen Standort und
+erstellt nach **Erstellen** eine kreisförmige Grenze mit **100 m Radius**
+um diesen Messpunkt. Dafür sind Internet und die genaue Standortberechtigung
+erforderlich; ohne aktuellen GPS-Fix wird kein Profil angelegt.
+
+Die Kreisfläche ist keine amtliche Reviergrenze und erteilt keine
+Jagderlaubnis. Du kannst sie später unter **Reviergrenze bearbeiten**
+ändern. Im Profil kannst du wie gewohnt Hunde registrieren und koppeln
+sowie den Jagdmodus einschalten. Hundepositionen werden auch außerhalb
+dieser Kreisgrenze angezeigt; die Zielscheibe zeigt deine eigene Position
+lokal an.
 
 ## Anmelden und registrieren
 
@@ -137,9 +161,14 @@ Im Markerdetail erkennst du eine direkt empfangene Position an
 **Per Nearby empfangen** und ihrer Messzeit. Ohne neue Position wird der
 Marker ab zwei Minuten als veraltet angezeigt, bleibt aber sichtbar.
 Das Ausschalten der eigenen Standortfreigabe beendet nicht den Jagdmodus
-für das Revier. Erfährt deine Karte beim Online-Abruf vom Jagdende,
-verschwinden die gespeicherten Revierpositionen. Wenn das Internet
+für das Revier. Erfährt deine Karte online oder über Nearby vom
+serverbestätigten Jagdende, verschwinden Teilnehmer- und Hundepositionen.
+Eine bereits laufende Nearby-Verbindung kann das bestätigte Jagdende
+befristet auch an weitere Teilnehmergeräte weitergeben. Wenn das Internet
 zurückkehrt, wird die geöffnete Jagdkarte automatisch aktualisiert.
+Solange die Karte geöffnet ist, prüft sie einen ausgeschalteten Jagdmodus
+etwa alle 30 Sekunden. Wird eine Jagd gestartet, lädt sie den Revierstand
+automatisch neu.
 
 Bei Revierwechsel, Abmeldung oder ausgeschaltetem Jagdmodus endet die
 bisherige Teilnahme. Wird die Karte pausiert, endet die eigene
@@ -192,6 +221,21 @@ ihn koppeln. Dafür gibt es zwei Wege:
    passenden Hund **DogTracker-QR scannen** wählen und den Code scannen. Den
    Wartedialog geöffnet lassen und im DogTracker **Kopplung bestaetigen**
    wählen. Jagdkarte zeigt den Erfolg nach der Serverbestätigung.
+
+Die Hunde gehören zu dem Profil, in dem du sie registrierst. Wenn du für
+deinen aktuellen Aufenthaltsort keine Revierdaten hast, kannst du dafür ein
+eigenes Profil verwenden, das ein anderes Gebiet abdeckt. Schalte dort den
+Jagdmodus ein und starte das Tracking wie gewohnt. Hundepositionen können
+auch außerhalb der Grenze dieses Profils auf der Karte erscheinen; das Profil
+erteilt keine Jagderlaubnis. Deine eigene Position kannst du unabhängig davon
+mit der Zielscheibe lokal auf der Karte einblenden. Sie wird dadurch nicht an
+den Server übertragen. Zeitlich begrenzte Markierungen bleiben an die Grenze
+des ausgewählten Profils gebunden.
+
+Für Offlinekarten muss die installierte Kartenabdeckung weiterhin das
+ausgewählte Profil abdecken. Eine Hundeposition außerhalb der Kartenabdeckung
+kann dann ohne passende Online-Kartenbasis auf einem Bereich ohne Kartendaten
+liegen.
 
 Der QR-Scanner verwendet die Google Play-Dienste und benötigt keine eigene
 Kamerafreigabe für Jagdbruder. Der Geräteschlüssel wird nur einmal angezeigt

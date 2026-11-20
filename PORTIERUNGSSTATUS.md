@@ -1,6 +1,6 @@
 # Android-Portierungsstatus
 
-Stand: 18.11.2026. Jagdbruder ergänzt die Jagdkarte-PWA und nutzt dasselbe
+Stand: 20.11.2026. Jagdbruder ergänzt die Jagdkarte-PWA und nutzt dasselbe
 Supabase-Backend. „Umgesetzt“ bedeutet nicht vollständig unter realen
 Bedingungen abgenommen. Offene Prüfungen stehen ausschließlich in den
 [Testaufgaben](docs/testing/Testaufgaben.md).
@@ -13,10 +13,27 @@ Bedingungen abgenommen. Offene Prüfungen stehen ausschließlich in den
 | Markierungen | Anlage, Bearbeitung, Löschen und Verschieben abhängig von Rolle und Standort. Symbole, Größenwahl und Rollenlegende wurden automatisiert geprüft. |
 | Karten | OpenStreetMap, NRW-Luftbilder und Mapsforge statt PWA-PMTiles; lokale öffentliche Grenzen und verschlüsselter Revier-Snapshot. Kein stiller Wechsel von Offlinekarten zu Onlinekarten. |
 | Konto und Hunde | E-Mail-Link oder Zahlencode, Hundeverwaltung und zwei Kopplungswege. QR-Scanner und ein PWA-Gastlink wurden auf Android-Geräten geprüft. |
-| Jagdmodus und Kommunikation | Gerätezustimmung, DogTracker, Ein-Hop-Weitergabe zum Server und direkter Nearby-Austausch. Offline-Anzeige von Teilnehmern, Hund und Eigenposition sowie automatische Online-Wiederverbindung wurden im Grundablauf auf Motorola und Xiaomi bestätigt. Kein Mehrhop. |
+| Jagdmodus und Kommunikation | Gerätezustimmung, DogTracker, Ein-Hop-Weitergabe zum Server und direkter Nearby-Austausch. Das serverbestätigte Jagdende kann über berechtigte Teilnehmergeräte weitergegeben werden; allgemeines Mehrhop-Routing für Positionen gibt es nicht. |
 | Hilfe | Dieselbe [Markdown-Hilfe](docs/help/hilfe.md) steht in der App auch offline zur Verfügung. |
 
-## Zuletzt bestätigte Android-Änderungen
+## Neuere Android-Änderungen
+
+**Profil um eigenen Standort:** Angemeldete Nutzer können unter Revier und
+Verwaltung mit einem Namen ein Profil mit 100 m Radius um einen aktuellen
+GPS-Fix anlegen. Es verwendet die vorhandenen Import-Schnittstellen und
+bleibt nachträglich im Grenzeditor bearbeitbar. Die Fläche ist keine
+amtliche Reviergrenze. Der Gerätetest steht noch aus.
+
+**Öffentliche Reviersuche:** Suchergebnisse werden direkt geladen und gefiltert.
+Korrigierbare ungültige Geometrien werden repariert und als solche gekennzeichnet;
+vor der Übernahme in ein eigenes Revier ist eine Bestätigung erforderlich.
+
+**Jagdende und automatischer Neustart:** Das serverbestätigte Jagdende wurde
+direkt vom online verbundenen Motorola an das offline befindliche Xiaomi
+übertragen. Bei geöffneter Karte prüft die App einen ausgeschalteten Jagdmodus
+online etwa alle 30 Sekunden und lädt bei einem Neustart den vollständigen
+Revierstand. Im Zweigerätetest erfolgte die Anzeige nach etwa 16 Sekunden.
+Ein neuer Jagdstart wird nicht offline über Nearby übertragen.
 
 - **Bewegungsrichtung:** Eine blaue Pfeilspitze sitzt direkt am Teilnehmer-
   oder Hundemarker. Der Zeichentest auf dem Motorola bestätigte die
@@ -35,6 +52,11 @@ Bearbeiter senden nur an aktuell verbundene Teilnehmergeräte, ohne
 Nachlieferung. Der neue Android-Benachrichtigungskanal ermöglicht
 individuelle Ton- und Vibrationseinstellungen.
 
+**Früherer Offline-GPS-Start:** Bei aktiver Jagdteilnahme fordert die Jagdkarte
+den ersten eigenen Fix parallel zum Relay-Start an und verwendet ihn nur,
+solange er höchstens 30 Sekunden alt ist. Ein letzter eigener Fix wird nicht
+separat angezeigt. Der Zeitgewinn ist noch nicht auf Geräten gemessen.
+
 **Eigene Hunde:** Angemeldete Reviermitglieder können eigene Hunde
 registrieren und koppeln. Die Karte kennzeichnet eigene Hunde türkis.
 Nur das registrierende Konto kann das gekoppelte Gerät direkt per Nearby
@@ -43,7 +65,9 @@ stehen noch aus.
 
 Die `location-relay`-Serverstufe einschließlich der Offline-Erweiterung
 wurde laut Nutzer im gemeinsamen Entwicklungsprojekt bereitgestellt und
-geprüft. Daraus folgt keine Bereitstellung in Produktion. Supabase-Änderungen
+geprüft. Die Migration für das serverbestätigte Jagdende und die aktualisierte
+Edge Function wurden laut Nutzer dort ebenfalls bereitgestellt. Daraus folgt
+keine Bereitstellung in Produktion. Supabase-Änderungen
 gehören ausschließlich ins PWA-Projekt und werden separat bereitgestellt.
 Siehe [Serveranleitung](https://github.com/wierichs/wierichs.github.io/blob/main/Jagdkarte/supabase/location-relay.md).
 
@@ -61,13 +85,16 @@ Siehe [Serveranleitung](https://github.com/wierichs/wierichs.github.io/blob/main
   Merge bestehen aus mehreren Serveraufrufen; Aufräumen ist kein atomarer Rollback.
 - Die lokale Kartenkamera liegt in SharedPreferences. Ob sie zusätzlichen
   Schutz benötigt, ist noch zu entscheiden.
+- Eine bei einem Offline-Neustartversuch beobachtete Relais-Authentifizierungs-
+  meldung ist nicht abschließend eingegrenzt. Nach erneuter Internetverbindung
+  funktionierten Relais und Positionen automatisch wieder.
 
 ## Bereits vorgemerkte Entwicklungsoptionen
 
 Diese Punkte sind noch nicht priorisiert und keine Zusage für die nächste Version.
 
-- Serverbestätigtes Jagdende an erreichbare Offline-Geräte über Nearby weitergeben.
-- Eigenen Offline-GPS-Start verbessern: Standortsuche früher starten oder den
-  letzten eigenen Fix mit Messzeit anzeigen, ohne ihn als frisch zu versenden.
-  Siehe [Kommunikationskonzept](CommunicationConcept.md#mögliche-verbesserung-für-eine-folgeversion-erster-standort-ohne-internet).
-- Mehrhop und zusätzliche Transportadapter bleiben optionale Erweiterungen.
+- Letzten eigenen GPS-Fix lokal mit Messzeit anzeigen, ohne ihn als frische
+  Position zu versenden.
+- Schutz der lokal gespeicherten Kartenkamera prüfen und gegebenenfalls verbessern.
+- Allgemeines Mehrhop-Routing und zusätzliche Transportadapter bleiben optionale
+  Erweiterungen; ein möglicher Serverbedarf hängt vom gewählten Konzept ab.

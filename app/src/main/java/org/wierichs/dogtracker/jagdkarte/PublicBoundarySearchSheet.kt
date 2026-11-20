@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
@@ -19,7 +20,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -45,12 +45,13 @@ internal fun PublicBoundarySearchSheet(
     onSignIn: (PublicBoundarySource, PublicBoundaryFeature) -> Unit,
     onPreview: (PublicBoundaryFeature) -> Unit,
     onCreateProfile: suspend (PublicBoundarySource, PublicBoundaryFeature) -> Unit,
-    search: suspend (PublicBoundarySource, String) -> List<PublicBoundaryFeature> = PublicBoundaryClient()::search,
+    load: (suspend (PublicBoundarySource) -> PublicBoundaryLoad)? = null,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val store = remember { PublicBoundarySourceStore(context) }
     val offlineStore = remember { OfflinePublicBoundaryStore(context) }
+    val client = remember { PublicBoundaryClient() }
     val scope = rememberCoroutineScope()
     var sources by remember { mutableStateOf(emptyList<PublicBoundarySource>()) }
     var selectedSourceId by remember { mutableStateOf<String?>(store.selectedSourceId()) }
@@ -59,7 +60,7 @@ internal fun PublicBoundarySearchSheet(
     var deletingSource by remember { mutableStateOf<PublicBoundarySource?>(null) }
     var sourceMenuOpen by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf(emptyList<PublicBoundaryFeature>()) }
+    var loadAttempt by remember { mutableIntStateOf(0) }
     var selectedFeature by remember { mutableStateOf<PublicBoundaryFeature?>(null) }
     var pendingOfflineSave by remember { mutableStateOf<PublicBoundaryFeature?>(null) }
     var licenseConfirmed by remember { mutableStateOf(false) }
@@ -102,6 +103,22 @@ internal fun PublicBoundarySearchSheet(
         formError = ""
     }
     val source = sources.firstOrNull { it.id == selectedSourceId }
+    var loaded by remember(source, loadAttempt) { mutableStateOf<PublicBoundaryLoad?>(null) }
+    var loadError by remember(source, loadAttempt) { mutableStateOf<String?>(null) }
+    LaunchedEffect(source, loadAttempt) {
+        if (source == null) return@LaunchedEffect
+        try {
+            loaded = if (load == null) client.load(source) else load(source)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            loadError = failure.message ?: "Datenquelle konnte nicht geladen werden."
+        }
+    }
+
+    val results = remember(loaded, query) {
+        filterPublicBoundaryFeatures(loaded?.features.orEmpty(), query)
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -162,7 +179,6 @@ internal fun PublicBoundarySearchSheet(
                                     selectedSourceId = option.id
                                     store.selectSource(option.id)
                                     sourceMenuOpen = false
-                                    results = emptyList()
                                     message = ""
                                 })
                             }
@@ -170,27 +186,6 @@ internal fun PublicBoundarySearchSheet(
                     }
                     OutlinedTextField(query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(),
                         label = { Text("Reviername, Nummer oder Gemeinde") }, singleLine = true)
-                    Button(enabled = source != null && query.trim().length >= 2 && !busy, onClick = {
-                        val selectedSource = source ?: return@Button
-                        busy = true
-                        message = "Datenquelle wird abgefragt ..."
-                        results = emptyList()
-                        scope.launch {
-                            try {
-                                results = search(selectedSource, query.trim())
-                                message = if (results.isEmpty()) "Keine passenden Reviere gefunden." else "${results.size} Treffer"
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (failure: Exception) {
-                                message = failure.message ?: "Datenquelle konnte nicht geladen werden."
-                            } finally { busy = false }
-                        }
-                    }, modifier = Modifier.fillMaxWidth()) {
-                        if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Default.Search, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (busy) "Suche laeuft" else "Suchen")
-                    }
                     source?.let { current ->
                         Text("${current.attribution.ifBlank { current.label }} · ${current.license}",
                             style = MaterialTheme.typography.labelSmall)
@@ -211,7 +206,35 @@ internal fun PublicBoundarySearchSheet(
                         }) { Icon(Icons.Default.Edit, null); Spacer(Modifier.width(6.dp)); Text("Quellen verwalten") }
                     }
                     if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
+                    val error = loadError
+                    val data = loaded
+                    when {
+                        error != null -> Column {
+                            Text("Reviere konnten nicht geladen werden: $error",
+                                color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            TextButton(onClick = { loadAttempt++ }) { Text("Erneut laden") }
+                        }
+                        data != null -> Column {
+                            Text(when {
+                                data.features.isEmpty() -> "Keine verwendbaren Reviere in dieser Quelle."
+                                results.isEmpty() -> "Keine passenden Reviere gefunden."
+                                query.isBlank() -> "${results.size} Reviere"
+                                else -> "${results.size} Treffer"
+                            }, style = MaterialTheme.typography.bodySmall)
+                            if (data.skippedCount > 0) Text(
+                                if (data.skippedCount == 1) "1 Eintrag ohne verwendbare Reviergrenze wurde ausgelassen."
+                                else "${data.skippedCount} Einträge ohne verwendbare Reviergrenze wurden ausgelassen.",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        source != null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Reviere werden geladen ...", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    val listState = key(source, query) { rememberLazyListState() }
                     LazyColumn(Modifier.weight(1f).fillMaxWidth().heightIn(max = 320.dp),
+                        state = listState,
                         contentPadding = PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         items(results, key = { "${it.source.id}:${it.id}" }) { feature ->
                             Column {
@@ -220,10 +243,13 @@ internal fun PublicBoundarySearchSheet(
                                     page = PublicSearchPage.FEATURE_DETAILS
                                 }.semantics { contentDescription = "Revierdetails: ${feature.name}" },
                                     headlineContent = { Text(feature.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                                    supportingContent = { Text(feature.properties.optString("gemeinde").takeUnless { it.isBlank() }
-                                        ?: feature.source.label, maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                                    supportingContent = {
+                                        Text(if (feature.boundaryRepaired) REPAIRED_BOUNDARY_NOTICE
+                                            else feature.properties.optString("gemeinde").takeUnless { it.isBlank() }
+                                                ?: feature.source.label, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    })
                                 HorizontalDivider()
-                            }
+                        }
                         }
                     }
                 }
@@ -353,6 +379,8 @@ internal fun PublicBoundarySearchSheet(
                     val feature = selectedFeature
                     if (feature == null) Text("Kein Revier ausgewaehlt.")
                     else {
+                        var repairConfirmed by remember(feature) { mutableStateOf(false) }
+                        val canClaim = !busy && (!feature.boundaryRepaired || repairConfirmed)
                         val saved = savedBoundaries.any {
                             it.feature.source.id == feature.source.id && it.feature.id == feature.id
                         }
@@ -361,6 +389,8 @@ internal fun PublicBoundarySearchSheet(
                             Text(feature.source.label, style = MaterialTheme.typography.titleSmall)
                             Text(feature.source.attribution.ifBlank { feature.source.label })
                             Text("Lizenz: ${feature.source.license}")
+                            if (feature.boundaryRepaired) Text(REPAIRED_BOUNDARY_NOTICE,
+                                style = MaterialTheme.typography.titleSmall)
                             feature.properties.keys().asSequence().take(12).forEach { key ->
                                 val value = feature.properties.opt(key)
                                 if (value != null && value != JSONObject.NULL && value !is JSONObject && value !is JSONArray) {
@@ -389,12 +419,20 @@ internal fun PublicBoundarySearchSheet(
                                     Text(if (saved) "Offline entfernen" else "Offline speichern")
                                 }
                             }
-                            if (!signedIn) TextButton(onClick = {
+                            if (feature.boundaryRepaired) Row(
+                                Modifier.fillMaxWidth().toggleable(repairConfirmed, enabled = !busy, role = Role.Checkbox) {
+                                    repairConfirmed = it
+                                }, verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(repairConfirmed, onCheckedChange = null, enabled = !busy)
+                                Text("Ich habe die korrigierte Grenze geprüft und möchte sie übernehmen.")
+                            }
+                            if (!signedIn) TextButton(enabled = canClaim, onClick = {
                                 selectedFeature = null
                                 onDismiss()
                                 onSignIn(feature.source, feature)
                             }, modifier = Modifier.fillMaxWidth()) { Text("Anmelden, um eigenes Revier anzulegen") }
-                            else Button(enabled = !busy, onClick = {
+                            else Button(enabled = canClaim, onClick = {
                                 busy = true
                                 scope.launch {
                                     try {
@@ -421,6 +459,7 @@ internal fun PublicBoundarySearchSheet(
                         Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState()),
                             verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(feature.name, style = MaterialTheme.typography.titleMedium)
+                            if (feature.boundaryRepaired) Text(REPAIRED_BOUNDARY_NOTICE)
                             Text(feature.source.attribution.ifBlank { feature.source.label })
                             Text("Lizenz: ${feature.source.license}")
                             if (requiresLicenseConfirmation) Row(

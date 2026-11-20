@@ -33,7 +33,9 @@ internal data class RelayGatewayStatus(
     val profileId: String? = null,
     val status: String = "",
     val pending: Int = 0,
-    val confirmed: Int = 0
+    val confirmed: Int = 0,
+    val huntingSessionId: String? = null,
+    val forwardingHuntEnd: Boolean = false
 )
 
 internal enum class PositionSharing { NEARBY_ONLY, SERVER_QUEUED }
@@ -100,12 +102,17 @@ internal object RelayGateway {
     }
 
     suspend fun enqueue(profileId: String, location: Location): PositionSharing? {
-        val current = engine?.takeIf { state.value.active && it.profileId == profileId } ?: return null
+        val current = engine?.takeIf { state.value.active && !state.value.forwardingHuntEnd && it.profileId == profileId }
+            ?: return null
         return current.enqueueLocation(location)
     }
 
     suspend fun cancelOwn(profileId: String) {
         engine?.takeIf { it.profileId == profileId }?.cancelOwn()
+    }
+
+    suspend fun refreshHuntingEnd(profileId: String) {
+        engine?.takeIf { it.profileId == profileId }?.onServerHuntingModeDisabled()
     }
 
     suspend fun sendBroadcast(profileId: String, template: BroadcastTemplate) {
@@ -130,7 +137,9 @@ internal class RelayGatewayEngine(
     private val profile: HuntingProfile,
     private val onIncoming: (RelayEnvelope) -> Unit,
     private val onDocument: (ByteArray, () -> Unit) -> Unit,
-    private val onPosition: ((OfflinePositionMessage, () -> Unit) -> Unit)? = null
+    private val onPosition: ((OfflinePositionMessage, () -> Unit) -> Unit)? = null,
+    private val onHuntingEnd: ((ByteArray, () -> Unit) -> Unit)? = null,
+    private val onForwardingHuntingEnd: () -> Unit = {}
 ) {
     val profileId: String get() = profile.id
     private val appContext = context.applicationContext
@@ -147,22 +156,49 @@ internal class RelayGatewayEngine(
     private var sharingEpoch: String? = null
     private var sharingStopPending = false
     @Volatile private var outgoing = emptyList<NearbyPacket>()
+    @Volatile private var huntingEnd: VerifiedHuntingEnd? = null
+    @Volatile private var endPacket: NearbyPacket? = null
+    @Volatile private var endOnly = false
+
+    fun forwardingFinished(): Boolean = endOnly &&
+        (directory?.current() != true || huntingEnd?.expiresAt?.isAfter(java.time.Instant.now()) == false)
 
     suspend fun initialize() = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val saved = RelayOfflineAuthorization.load(appContext, AUTHORIZATION_FILE, positionUserId, null, profileId)
+                ?.takeIf { !profile.huntingMode || profile.huntingSessionId == null ||
+                    it.directory.huntingSessionId == profile.huntingSessionId }
+            if (saved != null) {
+                capabilities = saved.capabilities
+                directory = saved.directory
+            }
+            val savedSession = saved?.directory?.huntingSessionId
+            val storedEnd = savedSession?.let { session ->
+                OfflinePositionStore(appContext).use { it.loadEndForForwarding(positionUserId, profileId, session) }
+            }?.let { verifyHuntingEnd(it) }
+            if (!profile.huntingMode && savedSession == null) {
+                throw JagdkarteApiException(409, "hunting_mode_inactive", "Relaisfreigabe benoetigt aktiven Jagdmodus.")
+            }
             val offline = try {
                 if (!hasRelayInternetRoute(appContext)) throw IOException("Keine Internetverbindung.")
-                refreshAuthorization()
+                if (storedEnd == null && profile.huntingMode) {
+                    try { refreshAuthorization() }
+                    catch (failure: JagdkarteApiException) {
+                        if (savedSession == null || failure.errorCode != "hunting_mode_inactive") throw failure
+                        enterEndOnly()
+                    }
+                }
                 false
             } catch (failure: IOException) {
                 if (failure is SSLException) throw failure
-                val saved = RelayOfflineAuthorization.load(appContext, AUTHORIZATION_FILE, repository.userId, null, profileId)
-                    ?: throw IOException("Offline-Relaisberechtigung fehlt oder ist abgelaufen; bitte online erneuern.", failure)
-                capabilities = saved.capabilities
-                directory = saved.directory
-                deviceId = saved.directory.localDeviceId
+                if (saved == null) throw IOException("Offline-Relaisberechtigung fehlt oder ist abgelaufen; bitte online erneuern.", failure)
                 nextRefresh = SystemClock.elapsedRealtime() + 10_000
                 true
+            }
+            if (deviceId == null) deviceId = directory?.localDeviceId
+            val sessionId = directory?.huntingSessionId
+            val endedBefore = sessionId != null && OfflinePositionStore(appContext).use {
+                it.isSessionEnded(positionUserId, profileId, sessionId)
             }
             val id = deviceId!!
             store = SqliteMessageStore(appContext, "relay_gateway_$id.db")
@@ -171,26 +207,31 @@ internal class RelayGatewayEngine(
             transport = NearbyRelayTransport(appContext, id, { directory }, onIncoming, { status -> update(status) },
                 pendingPackets = { outgoing }, onIncomingDocument = onDocument, onIncomingPosition = onPosition,
                 canPublishPosition = {
-                    readHuntingPermissions(appContext).ready && !TrackerPreferences.isTracking(appContext)
-                }, broadcasts = broadcastMailbox)
+                    !endOnly && readHuntingPermissions(appContext).ready && !TrackerPreferences.isTracking(appContext)
+                }, broadcasts = broadcastMailbox, huntingEndPacket = {
+                    endPacket?.takeIf { huntingEnd?.expiresAt?.isAfter(java.time.Instant.now()) == true }
+                }, onHuntingEnd = onHuntingEnd, regularTrafficAllowed = { !endOnly })
+            if (storedEnd != null) enterEndOnly(storedEnd)
+            else if (!profile.huntingMode || endedBefore) enterEndOnly()
             refreshOutgoing()
             transport!!.start()
-            RelayGateway.broadcastSession.value = RelayBroadcastSession(profileId, positionUserId, broadcastMailbox)
+            if (!endOnly) RelayGateway.broadcastSession.value = RelayBroadcastSession(profileId, positionUserId, broadcastMailbox)
             RelayGateway.state.value = RelayGatewayStatus(active = true, profileId = profileId,
-                status = if (offline) "Offline-Relaisfreigabe aktiv; Servererneuerung ausstehend."
-                    else "Relaisfreigabe aktiv; bereit fuer signierte Reviermeldungen.", pending = pendingCount())
+                status = if (endOnly) endStatus() else if (offline) "Offline-Relaisfreigabe aktiv; Servererneuerung ausstehend."
+                    else "Relaisfreigabe aktiv; bereit fuer signierte Reviermeldungen.", pending = pendingCount(),
+                huntingSessionId = sessionId, forwardingHuntEnd = endOnly)
         }
     }
 
     suspend fun sendBroadcast(template: BroadcastTemplate) = withContext(Dispatchers.IO) {
         mutex.withLock {
-            check(!closed) { "Nearby ist für dieses Revier nicht bereit." }
+            check(!closed && !endOnly) { "Nearby ist für dieses Revier nicht bereit." }
             checkNotNull(transport).sendBroadcast(template)
         }
     }
 
     suspend fun signalDog(dogId: String, signal: DogSignal): DogSignalResult = withContext(Dispatchers.IO) {
-        val nearby = mutex.withLock { transport?.takeUnless { closed } }
+        val nearby = mutex.withLock { transport?.takeUnless { closed || endOnly } }
         nearby?.signalDog(dogId, signal) ?: DogSignalResult.UNAVAILABLE
     }
 
@@ -208,6 +249,10 @@ internal class RelayGatewayEngine(
         val response = repository.relayPost(JSONObject().put("action", "offline_directory").put("device_id", id))
         val lease = RelayOfflineLease(boot, requestElapsed, System.currentTimeMillis())
         val verified = RelayOfflineAuthorization.verify(appContext, capability, response, id, profileId, lease)
+        val previousSession = directory?.huntingSessionId
+        if (previousSession != null && verified.directory.huntingSessionId != previousSession) {
+            throw JagdkarteApiException(409, "hunting_session_changed", "Ein neuer Jagddurchlauf ist aktiv.")
+        }
         require(repository.userId.isNotBlank())
         RelayOfflineAuthorization.save(appContext, AUTHORIZATION_FILE, repository.userId, id, capability, response, lease)
         capabilities = capability
@@ -221,7 +266,7 @@ internal class RelayGatewayEngine(
             check(readHuntingPermissions(appContext).ready) {
                 "Jagdfreigabe oder erforderliche Berechtigung wurde entzogen."
             }
-            val current = checkNotNull(directory?.takeIf { !closed && it.current() }) {
+            val current = checkNotNull(directory?.takeIf { !closed && !endOnly && it.current() }) {
                 "Relaisberechtigung ist abgelaufen. Online-Verbindung erforderlich."
             }
             require(locationInsideBoundary(profile.boundary, location.latitude, location.longitude)) { "Standort ausserhalb des Reviers." }
@@ -268,7 +313,7 @@ internal class RelayGatewayEngine(
 
     suspend fun acceptEnvelope(envelope: RelayEnvelope) = withContext(Dispatchers.IO) {
         mutex.withLock {
-            if (closed || directory?.accepts(envelope) != true) return@withLock
+            if (closed || endOnly || directory?.accepts(envelope) != true) return@withLock
             val database = store ?: return@withLock
             if (database.findPending(relayStorageId(envelope.originDeviceId, envelope.messageId)) != null ||
                 database.findPending(receiptId(envelope.originDeviceId, envelope.messageId)) != null) return@withLock
@@ -283,16 +328,16 @@ internal class RelayGatewayEngine(
     suspend fun acceptPosition(position: OfflinePositionMessage): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
             val currentDirectory = directory ?: return@withLock false
-            if (closed || positionUserId.isBlank() || !readHuntingPermissions(appContext).ready ||
+            if (closed || endOnly || positionUserId.isBlank() || !readHuntingPermissions(appContext).ready ||
                 TrackerPreferences.isTracking(appContext) || !position.verify(currentDirectory)
             ) return@withLock false
-            OfflinePositionStore(appContext).use { it.save(positionUserId, position) }
+            OfflinePositionStore(appContext).use { it.save(positionUserId, position, currentDirectory.huntingSessionId) }
         }
     }
 
     suspend fun acceptDocument(bytes: ByteArray): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
-            if (closed) return@withLock false
+            if (closed || endOnly) return@withLock false
             val receipt = try {
                 VerifiedRelayReceipt.verify(JSONObject(String(bytes, Charsets.UTF_8)), capabilities!!, profileId)
             } catch (_: Exception) {
@@ -303,6 +348,94 @@ internal class RelayGatewayEngine(
             true
         }
     }
+
+    suspend fun acceptHuntingEnd(bytes: ByteArray): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (closed || directory?.current() != true) return@withLock false
+            val verified = verifyHuntingEnd(bytes) ?: return@withLock false
+            enterEndOnly(verified)
+            true
+        }
+    }
+
+    suspend fun onServerHuntingModeDisabled() = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (closed || directory?.huntingSessionId == null) return@withLock
+            enterEndOnly()
+            if (hasRelayInternetRoute(appContext)) fetchHuntingEndIfReachable()
+        }
+    }
+
+    private fun verifyHuntingEnd(bytes: ByteArray): VerifiedHuntingEnd? {
+        val session = directory?.huntingSessionId ?: return null
+        val capability = capabilities ?: return null
+        return try {
+            VerifiedHuntingEnd.verify(bytes, capability, profileId, session)
+        } catch (_: IllegalArgumentException) {
+            android.util.Log.w("RelayGateway", "Jagdende-Nachweis passt nicht oder ist ungueltig.")
+            null
+        } catch (_: org.json.JSONException) {
+            android.util.Log.w("RelayGateway", "Jagdende-Nachweis enthaelt kein gueltiges Dokument.")
+            null
+        } catch (_: java.time.format.DateTimeParseException) {
+            android.util.Log.w("RelayGateway", "Jagdende-Nachweis enthaelt keine gueltige Zeit.")
+            null
+        }
+    }
+
+    private suspend fun fetchHuntingEnd() {
+        val session = directory?.huntingSessionId ?: return
+        if (huntingEnd != null) return
+        val response = try {
+            repository.relayPost(JSONObject().put("action", "hunt_end").put("profile_id", profileId).put("session_id", session))
+        } catch (failure: JagdkarteApiException) {
+            if (failure.status == 404 && failure.errorCode == "hunt_end_not_found") return
+            throw failure
+        }
+        val verified = checkNotNull(verifyHuntingEnd(response.toString().toByteArray(Charsets.UTF_8))) {
+            "Server-Nachweis fuer das Jagdende konnte nicht geprueft werden."
+        }
+        enterEndOnly(verified)
+    }
+
+    private suspend fun fetchHuntingEndIfReachable() {
+        try { fetchHuntingEnd() }
+        catch (failure: Exception) {
+            if (failure is CancellationException || failure is SSLException ||
+                failure is JagdkarteApiException && failure.status in setOf(401, 403)) throw failure
+            update("Jagdende-Nachweis vorlaeufig nicht abrufbar.")
+            android.util.Log.w("RelayGateway", "Jagdende-Nachweis konnte nicht abgerufen werden.", failure)
+        }
+    }
+
+    private fun enterEndOnly(end: VerifiedHuntingEnd? = null) {
+        if (end != null && huntingEnd != null) return
+        if (end != null) {
+            OfflinePositionStore(appContext).use { it.recordVerifiedEnd(positionUserId, end) }
+            val bytes = JSONObject().put("action", HUNT_END_NEARBY_ACTION)
+                .put("signed_end", String(end.toByteArray(), Charsets.UTF_8)).toString().toByteArray(Charsets.UTF_8)
+            huntingEnd = end
+            endPacket = NearbyPacket(nearbyPacketDigest(bytes), bytes, receipt = true, huntingEnd = true)
+        }
+        if (!endOnly) {
+            endOnly = true
+            sharingEpoch = null
+            transport?.clearOwnPosition()
+            outgoing = emptyList()
+            RelayGateway.broadcastSession.value = null
+            onForwardingHuntingEnd()
+        }
+        val database = store
+        if (database != null) for (type in listOf(RelayEnvelope.MESSAGE_TYPE, RECEIPT_TYPE)) {
+            database.pendingOfType(type, MAX_PENDING + 1).forEach { database.acknowledge(it.message.messageId) }
+        }
+        RelayGateway.state.value = RelayGateway.state.value.copy(forwardingHuntEnd = true,
+            status = endStatus(),
+            pending = 0, huntingSessionId = directory?.huntingSessionId)
+        transport?.sendPendingToAll()
+    }
+
+    private fun endStatus() = if (huntingEnd == null) HUNT_END_PENDING_STATUS else HUNT_END_STATUS
 
     private fun applyReceipt(receipt: VerifiedRelayReceipt) {
         val database = store ?: return
@@ -321,6 +454,11 @@ internal class RelayGatewayEngine(
         mutex.withLock {
             if (closed) return@withLock
             store!!.removeExpired()
+            if (hasRelayInternetRoute(appContext)) fetchHuntingEndIfReachable()
+            if (endOnly) {
+                if (!forwardingFinished()) transport?.sendPendingToAll()
+                return@withLock
+            }
             if (!hasRelayInternetRoute(appContext)) {
                 if (directory?.current() != true) {
                     outgoing = emptyList()
@@ -336,6 +474,11 @@ internal class RelayGatewayEngine(
                 try { refreshAuthorization(); transport?.start() }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) {
+                    if (failure is JagdkarteApiException && failure.errorCode == "hunting_mode_inactive" &&
+                        directory?.huntingSessionId != null) {
+                        enterEndOnly()
+                        return@withLock
+                    }
                     if (failure is JagdkarteApiException && failure.status in setOf(401, 403, 409)) throw failure
                     nextRefresh = SystemClock.elapsedRealtime() + 10_000
                     if (directory?.current() != true) {
@@ -375,6 +518,11 @@ internal class RelayGatewayEngine(
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
+                if (failure is JagdkarteApiException && failure.errorCode == "hunting_mode_inactive" &&
+                    directory?.huntingSessionId != null) {
+                    enterEndOnly()
+                    return@withLock
+                }
                 if (failure is JagdkarteApiException && failure.status in setOf(401, 403, 409)) throw failure
                 update("Kein bestaetigter Upload; Meldungen bleiben bis zum Ablauf gespeichert.")
             }
@@ -385,7 +533,7 @@ internal class RelayGatewayEngine(
 
     suspend fun cancelOwn() = withContext(Dispatchers.IO) {
         mutex.withLock {
-            if (closed || store == null) return@withLock
+            if (closed || endOnly || store == null) return@withLock
             transport?.clearOwnPosition()
             sharingEpoch = null
             sharingStopPending = true
@@ -430,6 +578,7 @@ internal class RelayGatewayEngine(
 
     private fun refreshOutgoing() {
         val database = store ?: return
+        if (endOnly) return
         database.removeExpired()
         val receipts = database.pendingOfType(RECEIPT_TYPE, MAX_PENDING + 1)
         receipts.take((receipts.size - MAX_PENDING).coerceAtLeast(0)).forEach { database.acknowledge(it.message.messageId) }
@@ -455,6 +604,8 @@ internal class RelayGatewayEngine(
 
     companion object {
         private const val MAX_PENDING = 500
+        private const val HUNT_END_STATUS = "Positionsfreigabe beendet; Nearby gibt nur das bestaetigte Jagdende weiter."
+        private const val HUNT_END_PENDING_STATUS = "Positionsfreigabe beendet; signierter Nachweis steht noch aus."
         private const val AUTHORIZATION_FILE = "gateway_relay_authorization_v2"
         private const val RECEIPT_TYPE = "relay.receipt"
         private val ENDPOINT = BackendConfiguration.relayEndpoint

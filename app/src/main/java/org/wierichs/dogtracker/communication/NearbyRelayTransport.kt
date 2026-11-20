@@ -44,7 +44,10 @@ internal class NearbyRelayTransport(
     private val onIncomingPosition: ((OfflinePositionMessage, () -> Unit) -> Unit)? = null,
     private val canPublishPosition: () -> Boolean = { false },
     private val broadcasts: NearbyBroadcasts? = null,
-    private val onDogSignal: ((DogSignal) -> Boolean)? = null
+    private val onDogSignal: ((DogSignal) -> Boolean)? = null,
+    private val huntingEndPacket: () -> NearbyPacket? = { null },
+    private val onHuntingEnd: ((ByteArray, () -> Unit) -> Unit)? = null,
+    private val regularTrafficAllowed: () -> Boolean = { true }
 ) {
     private val appContext = context.applicationContext
     private val client = Nearby.getConnectionsClient(appContext)
@@ -305,7 +308,7 @@ internal class NearbyRelayTransport(
             disconnect(endpointId, "Relay-Berechtigung abgelaufen oder widerrufen.")
             return
         }
-        val packets = pendingPackets?.invoke() ?: run {
+        val packets = if (!regularTrafficAllowed()) emptyList() else pendingPackets?.invoke() ?: run {
             val messages = SqliteMessageStore(appContext).use { store ->
                 (store.newestPendingOfType(RelayEnvelope.OUTGOING_MESSAGE_TYPE, MAX_MESSAGES_PER_SYNC) +
                     store.newestPendingOfType(RelayEnvelope.MESSAGE_TYPE, MAX_MESSAGES_PER_SYNC))
@@ -318,12 +321,14 @@ internal class NearbyRelayTransport(
             }.take(MAX_MESSAGES_PER_SYNC).toList()
         }
         val positionPacket = ownPosition?.takeIf { (position, _) ->
+            regularTrafficAllowed() &&
             directory.deviceKind(peerId) == "participant" && directory.subjectId(peerId) != null &&
                 position.profileId == directory.profileId &&
                 position.senderDeviceId == localDeviceId &&
                 position.subjectId == directory.subjectId(localDeviceId) && canPublishPosition()
         }?.second
-        val validPackets = (listOfNotNull(positionPacket) + packets).filter { it.bytes.size <= 8192 }
+        val endPacket = huntingEndPacket().takeIf { directory.deviceKind(peerId) == "participant" }
+        val validPackets = (listOfNotNull(endPacket, positionPacket) + packets).filter { it.bytes.size <= 8192 }
         val selected = sendWindow.select(endpointId, validPackets, SystemClock.elapsedRealtime())
         selected.forEach { attempt ->
             sendPacket(endpointId, session, attempt)
@@ -332,6 +337,7 @@ internal class NearbyRelayTransport(
     }
 
     private fun sendPacket(endpointId: String, session: RelayPeerSession, attempt: NearbySendAttempt) {
+        if (!attempt.packet.huntingEnd && !regularTrafficAllowed()) return
         if (sessions[endpointId] !== session || !authenticated(session)) {
             sendWindow.failed(endpointId, attempt)
             return
@@ -385,7 +391,17 @@ internal class NearbyRelayTransport(
         } catch (_: org.json.JSONException) {
             null
         }
-        if (json?.optString("action") in setOf(DOG_SIGNAL_ACTION, DOG_SIGNAL_ACK)) {
+        val action = json?.optString("action")
+        if (action == HUNT_END_NEARBY_ACTION) {
+            val directory = authorization() ?: return
+            val peer = session.authenticatedPeerId(directory) ?: return
+            if (sessions[endpointId] !== session || directory.deviceKind(peer) != "participant") return
+            val document = json.opt("signed_end") as? String ?: return
+            onHuntingEnd?.invoke(document.toByteArray(Charsets.UTF_8)) { acknowledgeReceipt(endpointId, session, bytes) }
+            return
+        }
+        if (!regularTrafficAllowed() && action != "peer_receipt_ack") return
+        if (action in setOf(DOG_SIGNAL_ACTION, DOG_SIGNAL_ACK)) {
             receiveDogSignal(endpointId, session, checkNotNull(json))
             return
         }
@@ -555,7 +571,10 @@ internal class NearbyRelayTransport(
 internal fun nearbyPacketDigest(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding()
     .encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(bytes))
 
-internal data class NearbyPacket(val id: String, val bytes: ByteArray, val receipt: Boolean = false)
+internal const val HUNT_END_NEARBY_ACTION = "server_hunt_end"
+
+internal data class NearbyPacket(val id: String, val bytes: ByteArray, val receipt: Boolean = false,
+    val huntingEnd: Boolean = false)
 internal data class NearbySendAttempt(val packet: NearbyPacket, val generation: Long)
 
 internal class NearbySendWindow(

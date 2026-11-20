@@ -18,6 +18,11 @@ App-Versionen, Geräte, Netzbedingungen und Ergebnis festhalten.
 
 ## Reviere, Dateien und Karten
 
+- [ ] **Revier um Standort erstellen**: mit frischem GPS-Fix ein benanntes
+  Profil anlegen, 100-m-Kreis und nachträgliche Grenzbearbeitung prüfen.
+  Verweigerte genaue Standortberechtigung, fehlenden Fix und fehlendes
+  Internet prüfen; Fehler müssen sichtbar bleiben. Hunde koppeln und im
+  Jagdmodus auch außerhalb des Kreises anzeigen.
 - [ ] Live-Suche je Quellprotokoll und eigene Quellen prüfen: Geometrie,
   Quellenangaben, Grenzen und Anlage eines Profils.
 - [ ] JWD-/JSON-/GeoJSON-Neuimport und Merge: Löcher, Mehrfach-Features,
@@ -74,11 +79,39 @@ App-Versionen, Geräte, Netzbedingungen und Ergebnis festhalten.
   Sichtkontakt und im Wald messen, unter anderem bei 100, 200 und 300 Metern.
   Akzeptanzwerte vor der Feldabnahme festlegen. Mindestens zwei Offline-Geräte
   einsetzen; für Serverweitergabe zusätzlich ein Online-Gateway vorsehen.
-- [ ] Optionaler Prüfauftrag zur Folgeversion: Zeit bis zum eigenen GNSS-Fix
-  online und offline messen, jeweils nach kürzlicher Nutzung und längerer Pause.
+- [ ] Früh gestartete GPS-Anforderung abnehmen: Zeit bis zum ersten eigenen
+  GNSS-Fix online und offline messen, jeweils nach kürzlicher Nutzung und
+  längerer Pause. Für die Jagdkarte Relay-Start und Fix-Zeit getrennt
+  erfassen; prüfen, dass ein über 30 Sekunden alter Fix nicht gesendet wird.
 
 ## Zielumgebung vor einer Produktionsfreigabe
 
+- [ ] Serverbestätigtes Jagdende mit drei Jagdkarte-Geräten abnehmen:
+  A ist online und beendet den Jagdmodus, B und C sind offline. Zuerst
+  verbindet sich nur B mit A, danach trennt sich B von A und verbindet sich
+  mit C. Auf B und C müssen Teilnehmer- und Hundepositionen verschwinden,
+  die eigene lokale Position muss verfügbar bleiben. B darf nach dem Ende
+  nur noch den Nachweis weitergeben. Duplikate, ein abgelaufener Nachweis
+  und ein Nachweis zum früheren Durchlauf dürfen keine neue Jagd beenden.
+  Direkter Zweigerätetest Motorola → offline Xiaomi am 20.11.2026 erfolgreich;
+  nach erneuter Online-Verbindung und manueller Aktualisierung zeigte das
+  Xiaomi Positionen des neuen Durchlaufs. Mehrhop, gezielte Wiederholung eines
+  alten Endnachweises stehen noch aus.
+- [x] Auf dem online verbundenen Xiaomi im Testrevier nach Jagdende warten
+  und den Jagdmodus auf dem Motorola wieder einschalten. Ohne manuelles
+  Aktualisieren muss der neue Stand nach etwa 30 Sekunden zuzüglich
+  Netzwerkzeit erscheinen. Laut Gerätetest wechselte das Xiaomi nach etwa
+  16 Sekunden auf „An“ und zeigte wieder Positionen.
+- [ ] Beim automatischen Wiederanlauf die Übertragung frischer Positionen
+  ausdrücklich über Nearby prüfen.
+- [ ] Jagdende und erneuten Jagdstart bei durchgehend offline verbleibendem
+  Teilnehmer unterstützen: Beim wiederholten Zweigerätetest übernahm das
+  offline bleibende Xiaomi das Jagdende und blieb nach dem erneuten Start auf
+  „Aus“; Positionen wurden nicht angezeigt. Eine zuvor erinnerte „An“-Anzeige
+  bestätigte sich nicht. Zuvor wurde auch eine ungültige Relais-Authentifizierung
+  oder Revierberechtigung gemeldet; nach Wiederverbindung funktionierte es
+  automatisch wieder. Die genaue Ursache der Fehlermeldung bleibt offen; ein
+  serverbestätigter Offline-Nachweis für einen neuen Start ist nicht umgesetzt.
 - [ ] Migrationen und `location-relay` im tatsächlichen Zielprojekt sowie
   Kompatibilität mit PWA und bestehenden Hundetracker-Schnittstellen prüfen.
   Bereitstellung und Geräteinstallationen separat abstimmen.

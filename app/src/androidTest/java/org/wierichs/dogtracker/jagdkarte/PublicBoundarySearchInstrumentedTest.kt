@@ -65,12 +65,12 @@ class PublicBoundarySearchInstrumentedTest {
     @Test fun anonymousSearchUsesSelectedSourceAndCanPreviewWithoutCreatingProfile() {
         val sourceStore = PublicBoundarySourceStore(context)
         val previous = sourceStore.selectedSourceId()
-        sourceStore.selectSource("bielefeld")
+        val initialSource = sourceStore.all().first { it.id == "rhein-kreis-neuss" }
+        sourceStore.selectSource(initialSource.id)
         val feature = PublicBoundaryFeature("122", "Testrevier Mitte", JSONObject("""{
             "type":"Polygon","coordinates":[[[8.5,52.0],[8.6,52.0],[8.6,52.1],[8.5,52.1],[8.5,52.0]]]}
         """), JSONObject().put("revierda_1", "Testrevier Mitte"), sourceStore.all().first { it.id == "bielefeld" })
-        var searchedSource = ""
-        var searchedText = ""
+        val loadedSources = mutableListOf<String>()
         var previewed: PublicBoundaryFeature? = null
         var promptedSource: PublicBoundarySource? = null
         var created = false
@@ -80,21 +80,26 @@ class PublicBoundarySearchInstrumentedTest {
                 PublicBoundarySearchSheet(signedIn = false,
                     onSignIn = { source, _ -> promptedSource = source }, onPreview = { previewed = it },
                     onCreateProfile = { _, _ -> created = true; error("Anonymous profile creation must not run") },
-                    search = { source, query ->
-                        searchedSource = source.id
-                        searchedText = query
-                        listOf(feature)
+                    load = { source ->
+                        loadedSources += source.id
+                        if (source.id == "bielefeld") {
+                            PublicBoundaryLoad(listOf(feature, feature.copy(id = "123", name = "Testrevier Nord",
+                                properties = JSONObject().put("revierda_1", "Testrevier Nord"))), skippedCount = 1)
+                        } else PublicBoundaryLoad(emptyList())
                     }, onDismiss = { dismissed = true })
             } }
-            rule.onNodeWithText("Bielefeld, Nordrhein-Westfalen").assertIsDisplayed()
+            rule.onNodeWithText(initialSource.label).performClick()
+            rule.onNodeWithText("Bielefeld, Nordrhein-Westfalen").performClick()
+            rule.onNodeWithText("2 Reviere").assertIsDisplayed()
+            rule.onNodeWithText("1 Eintrag ohne verwendbare Reviergrenze wurde ausgelassen.").assertIsDisplayed()
             rule.onNodeWithText("Reviername, Nummer oder Gemeinde").performTextInput("Mitte")
-            rule.onNodeWithText("Suchen").performClick()
+            rule.onNodeWithText("1 Treffer").assertIsDisplayed()
+            rule.onNodeWithText("Testrevier Nord").assertDoesNotExist()
             rule.onNodeWithText("Testrevier Mitte").assertIsDisplayed()
             rule.onNodeWithContentDescription("Revierdetails: Testrevier Mitte").performScrollTo().performClick()
             rule.onNodeWithText("Auf Karte zeigen").performClick()
             rule.runOnIdle {
-                assertEquals("bielefeld", searchedSource)
-                assertEquals("Mitte", searchedText)
+                assertEquals(listOf(initialSource.id, "bielefeld"), loadedSources)
                 assertEquals(feature, previewed)
                 assertFalse(created)
                 assertTrue(dismissed)
@@ -102,28 +107,31 @@ class PublicBoundarySearchInstrumentedTest {
         } finally { previous?.let(sourceStore::selectSource) }
     }
 
-    @Test fun unauthenticatedClaimCarriesSelectedFeatureIntoSignInAction() {
+    @Test fun repairedBoundaryRequiresConfirmationBeforeSignInForClaim() {
         val sourceStore = PublicBoundarySourceStore(context)
         val previous = sourceStore.selectedSourceId()
         sourceStore.selectSource("bielefeld")
         val source = sourceStore.all().first { it.id == "bielefeld" }
         val feature = PublicBoundaryFeature("claim-id", "Testrevier", JSONObject("""{
             "type":"Polygon","coordinates":[[[8.5,52.0],[8.6,52.0],[8.6,52.1],[8.5,52.1],[8.5,52.0]]]}
-        """), JSONObject(), source)
+        """), JSONObject(), source, boundaryRepaired = true)
         var prompted: PublicBoundaryFeature? = null
         var claimed = false
         try {
             rule.setContent { MaterialTheme {
                 PublicBoundarySearchSheet(signedIn = false, onSignIn = { _, selected -> prompted = selected },
                     onPreview = {}, onCreateProfile = { _, _ -> claimed = true },
-                    search = { _, _ -> listOf(feature) }, onDismiss = {})
+                    load = { PublicBoundaryLoad(listOf(feature)) }, onDismiss = {})
             } }
             rule.onNodeWithText("Reviername, Nummer oder Gemeinde").performTextInput("Test")
-            rule.onNodeWithText("Suchen").performClick()
             rule.waitUntil(5_000) {
                 rule.onAllNodesWithContentDescription("Revierdetails: Testrevier").fetchSemanticsNodes().isNotEmpty()
             }
             rule.onNodeWithContentDescription("Revierdetails: Testrevier").performScrollTo().performClick()
+            rule.onNodeWithText(REPAIRED_BOUNDARY_NOTICE).assertExists()
+            rule.onNodeWithText("Anmelden", substring = true).assertIsNotEnabled()
+            rule.onNodeWithText("Ich habe die korrigierte Grenze geprüft und möchte sie übernehmen.")
+                .performScrollTo().performClick()
             rule.onNodeWithText("Anmelden", substring = true).performScrollTo().performClick()
             rule.runOnIdle {
                 assertEquals(feature, prompted)
@@ -142,9 +150,9 @@ class PublicBoundarySearchInstrumentedTest {
             rule.setContent { MaterialTheme {
                 PublicBoundarySearchSheet(signedIn = false, onSignIn = { _, _ -> }, onPreview = {},
                     onCreateProfile = { _, _ -> error("Test darf kein Profil schreiben.") },
-                    search = { source, _ ->
+                    load = { source ->
                         searched = source
-                        emptyList()
+                        PublicBoundaryLoad(emptyList())
                     }, onDismiss = { dismissed = true })
             } }
             rule.onNodeWithContentDescription("Suchquellen verwalten").performClick()
@@ -158,9 +166,7 @@ class PublicBoundarySearchInstrumentedTest {
             rule.onNodeWithText("Speichern").performClick()
             rule.onNodeWithContentDescription("Zurueck").performClick()
             rule.onNodeWithText("Meine Gemeinde").assertIsDisplayed()
-            rule.onNodeWithText("Reviername, Nummer oder Gemeinde").performTextInput("Wald")
-            rule.onNodeWithText("Suchen").performClick()
-            rule.onNodeWithText("Keine passenden Reviere gefunden.").assertIsDisplayed()
+            rule.onNodeWithText("Keine verwendbaren Reviere in dieser Quelle.").assertIsDisplayed()
             rule.runOnIdle {
                 assertEquals("custom", searched?.id?.substringBefore('-'))
                 assertEquals(PublicBoundaryService.GEOJSON, searched?.service)
@@ -191,10 +197,9 @@ class PublicBoundarySearchInstrumentedTest {
             rule.setContent { MaterialTheme {
                 PublicBoundarySearchSheet(signedIn = false, onSignIn = { _, _ -> }, onPreview = {},
                     onCreateProfile = { _, _ -> error("Test darf kein Profil schreiben.") },
-                    search = { _, _ -> listOf(feature) }, onDismiss = {})
+                    load = { PublicBoundaryLoad(listOf(feature)) }, onDismiss = {})
             } }
             rule.onNodeWithText("Reviername, Nummer oder Gemeinde").performTextInput("Wald")
-            rule.onNodeWithText("Suchen").performClick()
             rule.waitUntil(5_000) {
                 rule.onAllNodesWithContentDescription("Revierdetails: Waldrevier").fetchSemanticsNodes().isNotEmpty()
             }
@@ -228,11 +233,13 @@ class PublicBoundarySearchInstrumentedTest {
                 NativeHuntingMap(snapshot = null, now = java.time.Instant.now(), modifier = Modifier.fillMaxSize(),
                     onChooseLocation = { false }, previewBoundary = preview.value,
                     previewBoundaryLabel = if (preview.value == null) "" else "Testtreffer",
+                    previewBoundaryRepaired = true,
                     previewBoundaryKey = if (preview.value == null) "" else "source:feature",
                     onClearBoundaryPreview = { preview.value = null })
             } }
             rule.waitUntil(10_000) { rule.runOnIdle { currentMap().zoomLevelDouble >= 11.0 } }
             rule.onNodeWithText("Vorschau: Testtreffer").assertIsDisplayed()
+            rule.onNodeWithText(REPAIRED_BOUNDARY_NOTICE).assertIsDisplayed()
             rule.onNodeWithContentDescription("Vorschau schliessen").performClick()
             rule.runOnIdle {
                 assertNull(preview.value)

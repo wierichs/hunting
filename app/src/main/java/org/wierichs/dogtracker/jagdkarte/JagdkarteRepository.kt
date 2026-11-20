@@ -28,7 +28,8 @@ internal data class HuntingProfile(
     val ownerId: String,
     val huntingMode: Boolean,
     val boundary: JSONObject?,
-    val ownerEmail: String? = null
+    val ownerEmail: String? = null,
+    val huntingSessionId: String? = null
 )
 
 internal fun canDeleteHuntingProfile(profile: HuntingProfile, userId: String): Boolean =
@@ -351,7 +352,7 @@ internal class JagdkarteRepository(
     suspend fun profiles(): List<HuntingProfile> = authenticated { token ->
         loadProfiles(token).also { profiles ->
             OfflinePositionStore(appContext).use { store ->
-                profiles.forEach { store.recordHuntingMode(userId, it.id, it.huntingMode) }
+                profiles.forEach { store.recordHuntingMode(userId, it.id, it.huntingMode, sessionId = it.huntingSessionId) }
             }
         }
     }
@@ -368,10 +369,7 @@ internal class JagdkarteRepository(
     }
 
     private fun loadProfiles(token: String): List<HuntingProfile> {
-        val profiles = parseProfiles(JSONArray(request(
-            "rest/v1/hunting_profiles?select=id,district_name,owner_id,hunting_mode,boundary_geojson&order=district_name",
-            bearer = token
-        )))
+        val profiles = readProfiles(token, "&order=district_name")
         val sharedProfileIds = profiles.filter { it.ownerId != userId }.map { it.id }
         if (sharedProfileIds.isEmpty()) return profiles
         val ownerEmails = try {
@@ -387,7 +385,10 @@ internal class JagdkarteRepository(
 
     suspend fun snapshot(profileId: String): HuntingSnapshot = authenticated { token ->
         val profile = loadProfile(token, profileId)
-        OfflinePositionStore(appContext).use { it.recordHuntingMode(userId, profile.id, profile.huntingMode) }
+        OfflinePositionStore(appContext).use {
+            it.recordHuntingMode(userId, profile.id, profile.huntingMode, sessionId = profile.huntingSessionId)
+        }
+
         val canEdit = canEditProfile(token, profile)
         val points = mutableListOf<HuntingMapPoint>()
         val positionLabels = mutableMapOf<Pair<MapPointKind, String>, HuntingPositionLabel>()
@@ -433,6 +434,14 @@ internal class JagdkarteRepository(
             }
         }
         HuntingSnapshot(profile, points, canEdit, positionLabels = positionLabels)
+    }
+
+    suspend fun huntingMode(profileId: String): Boolean = authenticated { token ->
+        val rows = JSONArray(request(
+            "rest/v1/hunting_profiles?select=hunting_mode&id=eq.${uuid(profileId)}", bearer = token))
+        val row = rows.optJSONObject(0)
+            ?: throw JagdkarteApiException(403, "profile_unavailable", "Kein Zugriff auf dieses Revier.")
+        row.getBoolean("hunting_mode")
     }
 
     suspend fun createMarker(profileId: String, draft: HuntingMarkerDraft, currentLocation: MarkerCoordinates?) = authenticated { token ->
@@ -500,18 +509,34 @@ internal class JagdkarteRepository(
     }
 
     suspend fun importJwdProfile(imported: JwdImportedProfile): String = authenticated { token ->
-        val featureId = "jwd-${UUID.randomUUID()}"
+        createCustomProfile(token, imported.name, imported.boundary, imported.facilities, "jwd")
+    }
+
+    suspend fun createLocationProfile(name: String, coordinates: MarkerCoordinates): String = authenticated { token ->
+        require(name.trim().length in 1..200) { "Der Reviername muss 1 bis 200 Zeichen lang sein." }
+        createCustomProfile(token, name.trim(),
+            locationProfileBoundary(coordinates.latitude, coordinates.longitude), emptyList(), "location")
+    }
+
+    private fun createCustomProfile(
+        token: String,
+        name: String,
+        boundary: JSONObject,
+        facilities: List<JwdImportedFacility>,
+        featurePrefix: String
+    ): String {
+        val featureId = "$featurePrefix-${UUID.randomUUID()}"
         val createBody = JSONObject().put("p_source_id", "user-imports")
-            .put("p_feature_id", featureId).put("p_district_name", imported.name)
+            .put("p_feature_id", featureId).put("p_district_name", name)
         val createdProfile = request("rest/v1/rpc/create_hunting_profile", "POST", createBody, token)
         val profileId = createdProfileIdFromResponse(createdProfile)
             ?: error("Das Revierprofil wurde ohne Profil-ID angelegt.")
         try {
             request("rest/v1/rpc/set_hunting_profile_boundary", "POST", JSONObject()
-                .put("p_profile_id", profileId).put("p_geometry", imported.boundary), token)
-            if (imported.facilities.isNotEmpty()) {
+                .put("p_profile_id", profileId).put("p_geometry", boundary), token)
+            if (facilities.isNotEmpty()) {
                 val markers = JSONArray()
-                imported.facilities.forEach { facility ->
+                facilities.forEach { facility ->
                     markers.put(JSONObject().put("profile_id", profileId).put("type_id", facility.typeId)
                         .put("title", facility.title).put("notes", facility.notes).put("created_by", userId)
                         .put("latitude", facility.latitude).put("longitude", facility.longitude))
@@ -524,7 +549,7 @@ internal class JagdkarteRepository(
             }.exceptionOrNull()?.let(failure::addSuppressed)
             throw failure
         }
-        profileId
+        return profileId
     }
 
     suspend fun createPublicBoundaryProfile(source: PublicBoundarySource, feature: PublicBoundaryFeature): String = authenticated { token ->
@@ -606,10 +631,21 @@ internal class JagdkarteRepository(
         Unit
     }
 
-    private fun loadProfile(token: String, profileId: String): HuntingProfile = parseProfiles(JSONArray(request(
-        "rest/v1/hunting_profiles?select=id,district_name,owner_id,hunting_mode,boundary_geojson&id=eq.${uuid(profileId)}",
-        bearer = token
-    ))).singleOrNull() ?: throw JagdkarteApiException(403, "profile_unavailable", "Kein Zugriff auf dieses Revier.")
+    private fun loadProfile(token: String, profileId: String): HuntingProfile =
+        readProfiles(token, "&id=eq.${uuid(profileId)}").singleOrNull()
+            ?: throw JagdkarteApiException(403, "profile_unavailable", "Kein Zugriff auf dieses Revier.")
+
+    private fun readProfiles(token: String, filter: String): List<HuntingProfile> {
+        val fields = "id,district_name,owner_id,hunting_mode,boundary_geojson"
+        val route = "rest/v1/hunting_profiles?select=$fields"
+        val body = try {
+            request("$route,hunting_session_id$filter", bearer = token)
+        } catch (failure: JagdkarteApiException) {
+            if (failure.errorCode != "42703") throw failure
+            request("$route$filter", bearer = token)
+        }
+        return parseProfiles(JSONArray(body))
+    }
 
     private fun canEditProfile(token: String, profile: HuntingProfile): Boolean {
         if (profile.ownerId == userId) return true
@@ -773,7 +809,8 @@ internal class JagdkarteRepository(
     private fun parseProfiles(array: JSONArray): List<HuntingProfile> = (0 until array.length()).map { index ->
         val row = array.getJSONObject(index)
         HuntingProfile(row.getString("id"), row.getString("district_name"), row.getString("owner_id"),
-            row.optBoolean("hunting_mode"), row.optJSONObject("boundary_geojson"))
+            row.optBoolean("hunting_mode"), row.optJSONObject("boundary_geojson"),
+            huntingSessionId = row.opt("hunting_session_id") as? String)
     }
 
     private fun rows(json: String, block: (JSONObject) -> Unit) {

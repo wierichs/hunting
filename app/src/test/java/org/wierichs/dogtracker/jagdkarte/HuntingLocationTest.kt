@@ -20,6 +20,44 @@ class HuntingLocationTest {
         ]
     }""")
 
+    @Test fun startupLocationIsReusableOnlyWhileItsFixIsRecentAndAccurate() {
+        assertTrue(isRecentLocationFix(0L, 5f))
+        assertTrue(isRecentLocationFix(30_000_000_000L, 5f))
+        assertFalse(isRecentLocationFix(-1L, 5f))
+        assertFalse(isRecentLocationFix(30_000_000_001L, 5f))
+        assertFalse(isRecentLocationFix(1L, Float.NaN))
+        assertFalse(isRecentLocationFix(null, 5f))
+    }
+
+    @Test fun locationProfileHasAClosedHundredMeterBoundaryAroundTheFix() {
+        listOf(47.3 to 6.0, 51.0 to 7.0, 55.0 to 15.0).forEach { (latitude, longitude) ->
+            val circle = locationProfileBoundary(latitude, longitude)
+            assertTrue(locationInsideBoundary(circle, latitude, longitude))
+            val ring = circle.getJSONArray("coordinates").getJSONArray(0)
+            assertEquals(ring.getJSONArray(0).toString(), ring.getJSONArray(ring.length() - 1).toString())
+            for (index in 0 until ring.length() - 1) {
+                val point = ring.getJSONArray(index)
+                val latitudeDelta = Math.toRadians(point.getDouble(1) - latitude)
+                val longitudeDelta = Math.toRadians(point.getDouble(0) - longitude)
+                val haversine = kotlin.math.sin(latitudeDelta / 2).let { it * it } +
+                    kotlin.math.cos(Math.toRadians(latitude)) *
+                    kotlin.math.cos(Math.toRadians(point.getDouble(1))) *
+                    kotlin.math.sin(longitudeDelta / 2).let { it * it }
+                val distance = 2 * 6_371_000.0 * kotlin.math.asin(kotlin.math.sqrt(haversine))
+                assertEquals(100.0, distance, 0.01)
+            }
+            assertTrue(locationInsideBoundary(circle, latitude + 0.0008, longitude))
+            assertFalse(locationInsideBoundary(circle, latitude + 0.001, longitude))
+        }
+    }
+
+    @Test fun locationProfileRejectsInvalidCentersAndDateLineCrossings() {
+        assertThrows(IllegalArgumentException::class.java) { locationProfileBoundary(Double.NaN, 7.0) }
+        assertThrows(IllegalArgumentException::class.java) { locationProfileBoundary(91.0, 7.0) }
+        assertThrows(IllegalArgumentException::class.java) { locationProfileBoundary(51.0, 181.0) }
+        assertThrows(IllegalArgumentException::class.java) { locationProfileBoundary(51.0, 180.0) }
+    }
+
     @Test fun polygonUsesLongitudeLatitudeAndExcludesHoles() {
         assertTrue(locationInsideBoundary(boundary, 51.5, 7.5))
         assertTrue(locationInsideBoundary(boundary, 50.0, 6.0))
